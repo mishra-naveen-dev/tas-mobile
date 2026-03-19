@@ -26,20 +26,8 @@ class AllowanceRequestViewSet(viewsets.ModelViewSet):
     # 🔥 FIXED FUNCTION (PROPER INDENTATION)
 
     def perform_create(self, serializer):
-        distance = serializer.validated_data.get('total_distance', 0)
-
-        # 🔥 GET ADMIN RATE
-        config = AllowanceConfig.objects.last()
-
-        per_km = config.per_km if config else 10  # fallback
-
-        distance_allowance = distance * per_km
-        total_amount = distance_allowance  # only per km (no fixed)
-
         serializer.save(
             employee=self.request.user,
-            distance_allowance=distance_allowance,
-            total_amount=total_amount,
             status='PENDING'
         )
 

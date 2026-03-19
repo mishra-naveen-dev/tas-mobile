@@ -28,16 +28,6 @@ class AllowanceRequest(models.Model):
     # Optional CRM linking
     loan_id = models.CharField(max_length=50, blank=True, null=True)
 
-    # Amounts
-    fixed_allowance = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0)
-    distance_allowance = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0)
-    misc_amount = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0)
-    total_amount = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0)
-
     # Approval tracking
     submitted_at = models.DateTimeField(null=True, blank=True)
     approved_by = models.ForeignKey(
