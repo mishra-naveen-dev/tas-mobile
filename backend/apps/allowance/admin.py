@@ -10,7 +10,7 @@ admin.site.register(AllowanceConfig)
 @admin.register(AllowanceRequest)
 class AllowanceRequestAdmin(admin.ModelAdmin):
     list_display = ('employee', 'travel_date', 'total_distance',
-                    'total_amount', 'status', 'created_at')
+                    'status', 'created_at')
     list_filter = ('status', 'travel_date', 'created_at')
     search_fields = ('employee__employee_id', 'employee__username')
     readonly_fields = ('created_at', 'updated_at')
