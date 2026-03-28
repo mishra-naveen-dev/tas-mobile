@@ -14,6 +14,7 @@ router.register(r'areas', AreaViewSet, basename='area')
 router.register(r'roles', RoleViewSet, basename='role')
 router.register(r'users', UserViewSet, basename='user')
 
+
 urlpatterns = [
     path('', include(router.urls)),
 ]

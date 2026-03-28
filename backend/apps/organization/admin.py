@@ -1,6 +1,5 @@
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import State, District, Branch, Center, Area, Role, User
+from .models import State, District, Branch, Center, Area, Role, User, LoginLog
 
 
 @admin.register(State)
@@ -50,21 +49,28 @@ class RoleAdmin(admin.ModelAdmin):
 
 
 @admin.register(User)
-class UserAdmin(BaseUserAdmin):
-    fieldsets = BaseUserAdmin.fieldsets + (
-        ('Organization', {'fields': ('employee_id',
-         'state', 'district', 'branch', 'center', 'area')}),
-        ('Profile', {'fields': ('phone', 'designation',
-         'department', 'profile_picture', 'role')}),
-        ('Status', {'fields': ('is_verified', 'force_password_change')}),
-    )
-    list_display = ('username', 'email', 'employee_id',
-                    'get_role', 'is_active', 'is_verified')
-    list_filter = ('role', 'is_active', 'is_verified', 'created_at')
-    search_fields = ('username', 'email', 'employee_id',
-                     'first_name', 'last_name')
-    readonly_fields = ('created_at', 'updated_at', 'last_login', 'date_joined')
+class UserAdmin(admin.ModelAdmin):
+    list_display = ('username', 'employee_id', 'email', 'role', 'is_active')
+    search_fields = ('username', 'employee_id', 'email')
+    list_filter = ('role', 'is_active')
 
-    def get_role(self, obj):
-        return obj.role.get_name_display() if obj.role else 'N/A'
-    get_role.short_description = 'Role'
+    fieldsets = (
+        ('Basic Info', {
+            'fields': ('username', 'password', 'email', 'phone', 'employee_id')
+        }),
+        ('Role & Status', {
+            'fields': ('role', 'is_active', 'is_verified', 'force_password_change')
+        }),
+        ('Hierarchy', {
+            'fields': ('state', 'district', 'branch', 'center', 'area')
+        }),
+        ('Profile', {
+            'fields': ('designation', 'department', 'profile_picture')
+        }),
+    )
+
+
+@admin.register(LoginLog)
+class LoginLogAdmin(admin.ModelAdmin):
+    list_display = ('user', 'login_time', 'ip_address')
+    search_fields = ('user__username', 'ip_address')

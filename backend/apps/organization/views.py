@@ -5,8 +5,11 @@ from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import State, District, Branch, Center, Area, Role, User
 from .serializers import (StateSerializer, DistrictSerializer, BranchSerializer,
-                          CenterSerializer, AreaSerializer, RoleSerializer,
+                          CenterSerializer, AreaSerializer, RoleSerializer, UserCreateSerializer,
                           UserListSerializer, UserDetailSerializer)
+
+
+from django.contrib.auth.hashers import make_password
 
 
 class StateViewSet(viewsets.ModelViewSet):
@@ -72,12 +75,16 @@ class RoleViewSet(viewsets.ReadOnlyModelViewSet):
 
 class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
+
     filter_backends = [DjangoFilterBackend,
                        filters.SearchFilter, filters.OrderingFilter]
+
     filterset_fields = ['role', 'is_active',
                         'is_verified', 'area', 'center', 'branch']
+
     search_fields = ['username', 'email',
                      'employee_id', 'first_name', 'last_name']
+
     ordering = ['first_name', 'last_name']
 
     def get_queryset(self):
@@ -86,26 +93,38 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == 'retrieve':
             return UserDetailSerializer
+        elif self.action == 'create':
+            return UserCreateSerializer
         return UserListSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
     @action(detail=False, methods=['get'])
     def me(self, request):
-        """Get current user profile"""
         serializer = UserDetailSerializer(request.user)
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'])
     def set_password(self, request, pk=None):
-        """Change user password"""
         user = self.get_object()
+
         if not request.user.is_staff and request.user.id != user.id:
-            return Response({'detail': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {'detail': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         password = request.data.get('password')
+
         if not password:
-            return Response({'password': ['Password required']}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'password': ['Password required']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         user.set_password(password)
         user.force_password_change = False
         user.save()
+
         return Response({'detail': 'Password updated successfully'})

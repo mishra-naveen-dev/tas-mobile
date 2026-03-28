@@ -85,16 +85,21 @@ DB_ENGINE = config('DATABASE_ENGINE', default='sqlite3')
 if DB_ENGINE == 'mssql':
     DATABASES = {
         'default': {
-            'ENGINE': 'mssql',
-            'NAME': config('DB_NAME', default='traveling_allowance'),
-            'USER': config('DB_USER', default='sa'),
-            'PASSWORD': config('DB_PASSWORD', default=''),
-            'HOST': config('DB_HOST', default='localhost'),
-            'PORT': config('DB_PORT', default='1433'),
-            'OPTIONS': {
-                'driver': 'ODBC Driver 17 for SQL Server',
-            },
-        }
+            'default': {
+                'ENGINE': 'mssql',
+                'NAME': config('DB_NAME', default='TAS_DB'),
+                'USER': config('DB_USER', default=''),
+                'PASSWORD': config('DB_PASSWORD', default=''),
+                'HOST': config('DB_HOST', default='DESKTOP-0K3GTKB'),
+                'PORT': config('DB_PORT', default='1433'),
+
+                'OPTIONS': {
+                    'driver': 'ODBC Driver 18 for SQL Server',
+                    'trusted_connection': 'yes',
+                    'extra_params': 'TrustServerCertificate=yes;',
+                },
+
+            }}
     }
 else:
     # Default to SQLite for development

@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import BaseUserManager
 
 
 # Organization Hierarchy Models
@@ -116,11 +117,36 @@ class Role(models.Model):
         return self.get_name_display()
 
 
+class UserManager(BaseUserManager):
+    def create_user(self, username, email=None, password=None, **extra_fields):
+        if not username:
+            raise ValueError("Username is required")
+
+        user = self.model(username=username, email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        from apps.organization.models import Role
+
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+
+        # 🔥 SET ROLE AUTOMATICALLY
+        role, _ = Role.objects.get_or_create(name='SUPER_ADMIN')
+
+        extra_fields['role'] = role
+
+        return self.create_user(username, email, password, **extra_fields)
+
 # Custom User Model
+
+
 class User(AbstractUser):
-    """Extended User model"""
     employee_id = models.CharField(
         max_length=50, unique=True, null=True, blank=True)
+    email = models.EmailField(unique=True)
     phone = models.CharField(max_length=15, blank=True)
 
     # Hierarchy
@@ -136,13 +162,20 @@ class User(AbstractUser):
         State, on_delete=models.SET_NULL, null=True, blank=True, related_name='employees')
 
     # Role
-    role = models.ForeignKey(
-        Role, on_delete=models.PROTECT, default=4)  # Default to EMPLOYEE
-
+    role = models.ForeignKey(Role, on_delete=models.PROTECT)
+    objects = UserManager()
     # Status
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
-    force_password_change = models.BooleanField(default=True)  # First login
+    force_password_change = models.BooleanField(default=True)
+
+    # Admin tracking
+    created_by = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL)
+    is_deleted = models.BooleanField(default=False)
+
+    # Login tracking
+    last_login_ip = models.CharField(max_length=50, null=True, blank=True)
 
     # Profile
     profile_picture = models.ImageField(
@@ -153,8 +186,15 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    class Meta:
-        ordering = ['first_name', 'last_name']
-
     def __str__(self):
         return f"{self.get_full_name()} ({self.employee_id})"
+
+
+class LoginLog(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    login_time = models.DateTimeField(auto_now_add=True)
+    ip_address = models.CharField(max_length=50, null=True, blank=True)
+    device = models.CharField(max_length=200, null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.login_time}"
