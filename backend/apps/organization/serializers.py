@@ -89,6 +89,15 @@ class UserCreateSerializer(serializers.ModelSerializer):
             'department',
             'password'
         ]
+        extra_kwargs = {
+            'state': {'required': False, 'allow_null': True},
+            'district': {'required': False, 'allow_null': True},
+            'branch': {'required': False, 'allow_null': True},
+            'center': {'required': False, 'allow_null': True},
+            'area': {'required': False, 'allow_null': True},
+            'designation': {'required': False, 'allow_null': True},
+            'department': {'required': False, 'allow_blank': True},
+        }
 
     def create(self, validated_data):
         password = validated_data.pop('password', 'Temp@123')
