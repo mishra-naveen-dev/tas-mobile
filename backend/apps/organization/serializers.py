@@ -99,6 +99,39 @@ class UserCreateSerializer(serializers.ModelSerializer):
             'department': {'required': False, 'allow_blank': True},
         }
 
+    def validate_state(self, value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            from apps.organization.models import State
+            try:
+                return State.objects.get(code=value)
+            except State.DoesNotExist:
+                return None
+        return value
+
+    def validate_branch(self, value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            from apps.organization.models import Branch
+            try:
+                return Branch.objects.get(code=value)
+            except Branch.DoesNotExist:
+                return None
+        return value
+
+    def validate_designation(self, value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            from apps.organization.models import Designation
+            try:
+                return Designation.objects.get(id=int(value))
+            except (Designation.DoesNotExist, ValueError):
+                return None
+        return value
+
     def create(self, validated_data):
         password = validated_data.pop('password', 'Temp@123')
 
