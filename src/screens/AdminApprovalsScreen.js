@@ -25,14 +25,18 @@ const AdminApprovalsScreen = ({ navigation }) => {
     const fetchData = useCallback(async () => {
         try {
             const [allowanceRes, correctionRes, deviceRes] = await Promise.all([
-                api.getAllAllowanceRequests({ status: 'PENDING' }),
-                api.getCorrectionRequests({ status: 'PENDING' }),
-                api.getDevices({ status: 'PENDING' })
+                api.getAllAllowanceRequests(),
+                api.getCorrectionRequests(),
+                api.getDevices()
             ]);
             
-            setAllowances(allowanceRes.data?.results || allowanceRes.data || []);
-            setCorrections(correctionRes.data?.results || correctionRes.data || []);
-            setDevices(deviceRes.data?.results || deviceRes.data || []);
+            const allowanceData = allowanceRes.data?.results || allowanceRes.data || [];
+            const correctionData = correctionRes.data?.results || correctionRes.data || [];
+            const deviceData = deviceRes.data?.results || deviceRes.data || [];
+            
+            setAllowances(allowanceData.filter(item => item.status === 'PENDING'));
+            setCorrections(correctionData.filter(item => item.status === 'PENDING'));
+            setDevices(deviceData.filter(item => item.status === 'PENDING'));
         } catch (err) {
             console.log('Error fetching approvals:', err);
         } finally {
