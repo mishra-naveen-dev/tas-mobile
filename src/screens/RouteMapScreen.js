@@ -528,7 +528,7 @@ const styles = StyleSheet.create({
         marginLeft: spacing.xs,
     },
     bottomPadding: {
-        height: spacing.xxl,
+        height: 120,
     },
 });
 

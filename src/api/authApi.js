@@ -15,6 +15,13 @@ export const loginUser = async (username, password) => {
     });
 };
 
+export const changePassword = async (newPassword, token, currentPassword) => {
+    return api.post('/auth/change-password/', {
+        current_password: currentPassword,
+        new_password: newPassword,
+    });
+};
+
 export const logoutUser = async () => {
     const keys = ['access', 'refresh', 'user', 'device_id', 'device_info', 'last_punch'];
     const AsyncStorage = require('@react-native-async-storage/async-storage').default;

@@ -1,12 +1,14 @@
 
 
-import React from 'react';
+
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     TouchableOpacity,
-    ScrollView
+    ScrollView,
+    Platform
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,9 +16,15 @@ import Icon from 'react-native-vector-icons/Feather';
 
 import GlassCard from '../components/GlassCard';
 import { colors, typography, spacing } from '../theme/tokens';
+import SkeletonLoader from '../components/SkeletonLoader';
 
 const HistoryHubScreen = ({ navigation }) => {
+    const [loading, setLoading] = useState(true);
 
+    useEffect(() => {
+        const timer = setTimeout(() => setLoading(false), 1200);
+        return () => clearTimeout(timer);
+    }, []);
 
     const modules = [
         {
@@ -42,18 +50,57 @@ const HistoryHubScreen = ({ navigation }) => {
         }
     ];
 
-    // ✅ SAFE NAVIGATION HANDLER
     const handleNavigation = (route) => {
         try {
-            navigation.navigate(route);
+            const state = navigation.getState();
+            if (state && state.routes) {
+                const routeExists = state.routes.some(r => r.name === route);
+                if (routeExists) {
+                    navigation.navigate(route);
+                } else {
+                    navigation.navigate(route);
+                }
+            } else {
+                navigation.navigate(route);
+            }
         } catch (err) {
             console.log("Navigation Error:", err);
+            try {
+                navigation.navigate(route);
+            } catch (e) {
+                console.log("Alternative navigation also failed:", e);
+            }
         }
     };
 
-    return (
-        <SafeAreaView style={styles.container}>
+    if (loading) {
+        return (
+            <SafeAreaView style={styles.container} edges={['top']}>
+                <ScrollView showsVerticalScrollIndicator={false}>
+                    <View style={styles.header}>
+                        <SkeletonLoader width={140} height={24} borderRadius={6} />
+                        <SkeletonLoader width={200} height={14} borderRadius={4} style={{ marginTop: 8 }} />
+                    </View>
+                    <View style={styles.scrollContent}>
+                        {[1, 2, 3].map((item) => (
+                            <SkeletonLoader key={item} height={90} borderRadius={16} style={{ marginBottom: 12 }}>
+                                <View style={styles.skeletonCard}>
+                                    <SkeletonLoader width={56} height={56} borderRadius={16} />
+                                    <View style={styles.skeletonText}>
+                                        <SkeletonLoader width="50%" height={16} borderRadius={4} />
+                                        <SkeletonLoader width="70%" height={12} borderRadius={4} style={{ marginTop: 8 }} />
+                                    </View>
+                                </View>
+                            </SkeletonLoader>
+                        ))}
+                    </View>
+                </ScrollView>
+            </SafeAreaView>
+        );
+    }
 
+    return (
+        <SafeAreaView style={styles.container} edges={['top']}>
             {/* HEADER */}
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>History Hub</Text>
@@ -71,7 +118,6 @@ const HistoryHubScreen = ({ navigation }) => {
                         onPress={() => handleNavigation(mod.route)}
                     >
                         <GlassCard style={styles.moduleCard}>
-
                             {/* ICON */}
                             <View
                                 style={[
@@ -102,12 +148,10 @@ const HistoryHubScreen = ({ navigation }) => {
                                 size={24}
                                 color={colors.textMuted}
                             />
-
                         </GlassCard>
                     </TouchableOpacity>
                 ))}
             </ScrollView>
-
         </SafeAreaView>
     );
 };
@@ -125,6 +169,7 @@ const styles = StyleSheet.create({
 
     header: {
         padding: spacing.xl,
+        paddingTop: Platform.OS === 'android' ? spacing.lg : spacing.md,
         backgroundColor: colors.primaryDark,
         borderBottomLeftRadius: 24,
         borderBottomRightRadius: 24,
@@ -145,9 +190,17 @@ const styles = StyleSheet.create({
 
     scrollContent: {
         paddingHorizontal: spacing.lg,
-        paddingBottom: spacing.xxl,
+        paddingBottom: 120,
     },
-
+    skeletonCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: spacing.lg,
+    },
+    skeletonText: {
+        flex: 1,
+        marginLeft: spacing.md,
+    },
     moduleCard: {
         flexDirection: 'row',
         alignItems: 'center',

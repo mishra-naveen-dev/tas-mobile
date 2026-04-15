@@ -1,6 +1,6 @@
 // src/screens/PunchScreen.js
 
-import React, { useState, useEffect, useContext, useRef } from 'react';
+import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
 import {
     View,
     Text,
@@ -17,11 +17,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Geolocation from 'react-native-geolocation-service';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/Feather';
+import NetInfo from '@react-native-community/netinfo';
 
 import api from '../api/api';
 import LocationService from '../services/LocationService';
 import BackgroundTrackingService from '../services/BackgroundTrackingService';
 import { AuthContext } from '../context/AuthContext';
+import OfflineService, { CacheKeys } from '../services/OfflineService';
 
 import InputField from '../components/InputField';
 import PrimaryButton from '../components/PrimaryButton';
@@ -37,6 +39,8 @@ const PunchScreen = ({ navigation }) => {
     const [pendingPoints, setPendingPoints] = useState(0);
     const [todayPunches, setTodayPunches] = useState([]);
     const [routeCoordinates, setRouteCoordinates] = useState([]);
+    const [isOffline, setIsOffline] = useState(false);
+    const [lastKnownLocation, setLastKnownLocation] = useState(null);
     const mapRef = useRef(null);
 
     const [data, setData] = useState({
@@ -58,38 +62,108 @@ const PunchScreen = ({ navigation }) => {
         punch_type: 'PUNCH_IN',
     });
 
-    const updateData = (key, value) => {
-        setData(prev => ({ ...prev, [key]: value }));
-    };
+    const updateData = useCallback((key, value) => {
+        setData(prev => {
+            if (prev[key] === value) return prev;
+            return { ...prev, [key]: value };
+        });
+    }, []);
 
     const fetchLocation = async () => {
         setLocationLoading(true);
         updateData('current_address', 'Pinging Hardware Service...');
 
+        // Check network status
+        const online = await api.isOnline();
+        setIsOffline(!online);
+
+        // If offline, try to get last known location from cache
+        if (!online) {
+            const cachedLocation = await OfflineService.get(CacheKeys.LAST_LOCATION);
+            if (cachedLocation.isCached && cachedLocation.data) {
+                const lastLoc = cachedLocation.data;
+                updateData('latitude', lastLoc.latitude);
+                updateData('longitude', lastLoc.longitude);
+                updateData('current_address', lastLoc.address + ' (Cached - Offline)');
+                setLastKnownLocation(lastLoc);
+                setLocationLoading(false);
+                Alert.alert(
+                    "Offline Mode",
+                    "Using cached location. Location may be outdated. Connect to internet for accurate GPS."
+                );
+                return lastLoc;
+            } else {
+                Alert.alert(
+                    "Offline Mode",
+                    "No cached location available. Please connect to internet to get GPS coordinates."
+                );
+                updateData('current_address', 'Offline - No cached location');
+                setLocationLoading(false);
+                return null;
+            }
+        }
+
         const result = await LocationService.getCurrentLocationInfo();
 
         if (result.error) {
-            Alert.alert("Location Service Error", result.error);
-            updateData('current_address', 'Service Failure');
+            // Try to use cached location as fallback
+            const cachedLocation = await OfflineService.get(CacheKeys.LAST_LOCATION);
+            if (cachedLocation.isCached && cachedLocation.data) {
+                const lastLoc = cachedLocation.data;
+                updateData('latitude', lastLoc.latitude);
+                updateData('longitude', lastLoc.longitude);
+                updateData('current_address', lastLoc.address + ' (Cached)');
+                setLastKnownLocation(lastLoc);
+                Alert.alert(
+                    "Location Warning",
+                    "GPS failed. Using last known cached location."
+                );
+            } else {
+                Alert.alert("Location Service Error", result.error);
+                updateData('current_address', 'Service Failure');
+            }
             setLocationLoading(false);
-            return false;
+            return result.error ? null : result;
         }
+
+        // Cache the successful location
+        await OfflineService.set(CacheKeys.LAST_LOCATION, {
+            latitude: result.latitude,
+            longitude: result.longitude,
+            address: result.address,
+            timestamp: Date.now()
+        });
 
         updateData('latitude', result.latitude);
         updateData('longitude', result.longitude);
         updateData('current_address', result.address);
 
+        setLastKnownLocation(result);
         setLocationLoading(false);
         return result;
     };
 
     useEffect(() => {
+        // Listen for network changes
+        const unsubscribe = NetInfo.addEventListener(state => {
+            setIsOffline(!state.isConnected || state.isInternetReachable === false);
+        });
+
         BackgroundTrackingService.initialize().then(() => {
             setIsTracking(BackgroundTrackingService.isCurrentlyTracking());
             setPendingPoints(BackgroundTrackingService.getPendingPointsCount());
         });
 
         fetchTodayPunches();
+
+        // Check for cached location on load
+        const loadCachedLocation = async () => {
+            const cached = await OfflineService.get(CacheKeys.LAST_LOCATION);
+            if (cached.isCached && cached.data) {
+                setLastKnownLocation(cached.data);
+            }
+        };
+        loadCachedLocation();
 
         const interval = setInterval(() => {
             setPendingPoints(BackgroundTrackingService.getPendingPointsCount());
@@ -98,7 +172,10 @@ const PunchScreen = ({ navigation }) => {
             }
         }, 60000);
 
-        return () => clearInterval(interval);
+        return () => {
+            unsubscribe();
+            clearInterval(interval);
+        };
     }, [isTracking]);
 
     const fetchTodayPunches = async () => {
@@ -178,7 +255,7 @@ const PunchScreen = ({ navigation }) => {
                 Alert.alert(
                     "Success",
                     "Punch In recorded and tracking started! Your route will be captured continuously.",
-                    [{ text: 'OK', onPress: () => navigation.goBack() }]
+                    [{ text: 'OK', onPress: handleGoBack }]
                 );
             } else if (data.punch_type === 'PUNCH_OUT') {
                 await BackgroundTrackingService.stopTracking();
@@ -186,11 +263,11 @@ const PunchScreen = ({ navigation }) => {
                 Alert.alert(
                     "Success",
                     "Punch Out recorded and tracking stopped!",
-                    [{ text: 'OK', onPress: () => navigation.goBack() }]
+                    [{ text: 'OK', onPress: handleGoBack }]
                 );
             } else {
                 Alert.alert("Success", "Punch has been successfully submitted", [
-                    { text: 'OK', onPress: () => navigation.goBack() }
+                    { text: 'OK', onPress: handleGoBack }
                 ]);
             }
 
@@ -214,6 +291,18 @@ const PunchScreen = ({ navigation }) => {
         }
     }, [isPunchedIn]);
 
+    const handleGoBack = () => {
+        const state = navigation.getState();
+        if (state && state.routes.length <= 1) {
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'MainTabs' }],
+            });
+        } else {
+            navigation.goBack();
+        }
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             {locationLoading && (
@@ -224,7 +313,7 @@ const PunchScreen = ({ navigation }) => {
             )}
 
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                <TouchableOpacity onPress={handleGoBack} style={styles.backBtn}>
                     <Icon name="arrow-left" size={24} color={colors.textDark} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>
@@ -239,20 +328,32 @@ const PunchScreen = ({ navigation }) => {
                     <View style={styles.trackingStatus}>
                         <View style={styles.trackingStatusLeft}>
                             <Icon 
-                                name={isTracking ? "activity" : "pause-circle"} 
+                                name={isTracking ? "activity" : isOffline ? "wifi-off" : "pause-circle"} 
                                 size={20} 
-                                color={isTracking ? colors.success : colors.warning} 
+                                color={isTracking ? colors.success : isOffline ? colors.warning : colors.textMuted} 
                             />
                             <Text style={styles.trackingStatusText}>
                                 {isTracking 
                                     ? `Tracking Active (${pendingPoints} pending)` 
-                                    : 'Tracking Inactive'}
+                                    : isOffline 
+                                        ? 'Offline Mode' 
+                                        : 'Tracking Inactive'}
                             </Text>
                         </View>
-                        <View style={styles.punchCount}>
-                            <Text style={styles.punchCountText}>{todayPunches.length} punches</Text>
+                        <View style={[styles.punchCount, isOffline && styles.offlineBadge]}>
+                            <Text style={[styles.punchCountText, isOffline && styles.offlineBadgeText]}>
+                                {todayPunches.length} punches
+                            </Text>
                         </View>
                     </View>
+                    {isOffline && (
+                        <View style={styles.offlineInfo}>
+                            <Icon name="info" size={14} color={colors.warning} />
+                            <Text style={styles.offlineInfoText}>
+                                Using cached location. Data will sync when online.
+                            </Text>
+                        </View>
+                    )}
                 </GlassCard>
 
                 <GlassCard style={styles.card}>
@@ -549,6 +650,26 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.xs,
         color: '#fff',
         fontWeight: 'bold',
+    },
+    offlineBadge: {
+        backgroundColor: colors.warning,
+    },
+    offlineBadgeText: {
+        color: '#fff',
+    },
+    offlineInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: spacing.sm,
+        padding: spacing.xs,
+        backgroundColor: colors.warning + '15',
+        borderRadius: 6,
+    },
+    offlineInfoText: {
+        fontSize: typography.sizes.xs,
+        color: colors.warning,
+        marginLeft: spacing.xs,
+        flex: 1,
     },
     locationContainer: {
         flexDirection: 'row',

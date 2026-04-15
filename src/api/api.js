@@ -1,6 +1,8 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, DeviceInfo } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import OfflineService, { CacheKeys } from '../services/OfflineService';
 
 const PROD_URL = 'https://tas-backend-8emb.onrender.com/api/v1';
 const LOCAL_EMULATOR_URL = 'http://10.0.2.2:8000/api/v1';
@@ -17,10 +19,8 @@ const generateDeviceFingerprint = async () => {
         const manufacturer = await DeviceInfo.getManufacturer();
         const systemVersion = await DeviceInfo.getSystemVersion();
         
-        // Create fingerprint from hardware info
         const fingerprint = `${uniqueId}|${model}|${manufacturer}|${systemVersion}`;
         
-        // Simple hash
         let hash = 0;
         for (let i = 0; i < fingerprint.length; i++) {
             const char = fingerprint.charCodeAt(i);
@@ -75,6 +75,7 @@ const getDeviceInfo = async () => {
 
 const api = axios.create({
     baseURL: getBaseURL(),
+    timeout: 15000,
 });
 
 api.interceptors.request.use(async (config) => {
@@ -153,6 +154,61 @@ const clearAuthData = async () => {
     await AsyncStorage.multiRemove(['access', 'refresh', 'user', 'device_id', 'device_fingerprint', 'device_info']);
 };
 
+// ================= Network Status Check =================
+api.isOnline = async () => {
+    const state = await NetInfo.fetch();
+    return state.isConnected && state.isInternetReachable !== false;
+};
+
+// ================= Offline-First Fetch Methods =================
+
+// Fetch with automatic caching and offline fallback
+api.fetchWithCache = async (key, url, options = {}) => {
+    const {
+        cacheKey,
+        cacheOptions = {},
+        fetchOptions = {},
+        offlineFallback = true
+    } = options;
+
+    // Try to get cached data first
+    const cached = await OfflineService.get(cacheKey || key);
+    
+    // Return cached data immediately if available
+    if (cached.isCached && cached.data) {
+        // Also fetch fresh data in background if online
+        if (await api.isOnline()) {
+            api.get(url, fetchOptions).then(async (res) => {
+                const data = res.data?.results || res.data || [];
+                await OfflineService.set(cacheKey || key, data, { metadata: { url } });
+            }).catch(err => console.log('Background fetch failed:', err));
+        }
+        return { data: cached.data, isCached: true, isStale: cached.isStale };
+    }
+
+    // No cache, try network
+    if (await api.isOnline()) {
+        try {
+            const res = await api.get(url, fetchOptions);
+            const data = res.data?.results || res.data || [];
+            await OfflineService.set(cacheKey || key, data, { metadata: { url } });
+            return { data, isCached: false, isStale: false };
+        } catch (error) {
+            console.log('Fetch error:', error);
+            if (offlineFallback) {
+                return { data: cached.data || [], isCached: false, isStale: true, error };
+            }
+            throw error;
+        }
+    }
+
+    // Offline and no cache
+    if (offlineFallback) {
+        return { data: cached.data || [], isCached: false, isStale: true, offline: true };
+    }
+    throw new Error('Network unavailable');
+};
+
 // ================= Role-based API methods =================
 
 // Admin APIs
@@ -184,27 +240,54 @@ api.createPunchRecord = (data) => {
     return api.post('/attendance/punches/', data);
 };
 
-api.getDailySummary = () => {
-    return api.get('/attendance/punches/daily_summary/');
+// With offline caching
+api.getDailySummary = async () => {
+    const result = await api.fetchWithCache('daily_summary', '/attendance/punches/daily_summary/', {
+        cacheKey: CacheKeys.DASHBOARD_SUMMARY,
+        offlineFallback: true
+    });
+    return { data: result.data };
 };
 
-api.getTodayPunches = () => {
-    return api.get('/attendance/punches/today_punches/');
+api.getTodayPunches = async () => {
+    const result = await api.fetchWithCache('today_punches', '/attendance/punches/today_punches/', {
+        cacheKey: CacheKeys.TODAY_PUNCHES,
+        offlineFallback: true
+    });
+    return { data: result.data };
 };
 
-api.getPunchHistory = () => {
-    return api.get('/attendance/punches/');
+api.getPunchHistory = async () => {
+    const result = await api.fetchWithCache('punch_history', '/attendance/punches/', {
+        cacheKey: CacheKeys.PUNCH_HISTORY,
+        offlineFallback: true
+    });
+    return { data: result.data };
 };
 
-api.getHistoricalSummary = (dateStr) => {
-    return api.get(`/attendance/punches/daily_summary/?date=${dateStr}`);
+api.getHistoricalSummary = async (dateStr) => {
+    const result = await api.fetchWithCache(
+        `daily_summary_${dateStr}`,
+        `/attendance/punches/daily_summary/?date=${dateStr}`,
+        {
+            cacheKey: `${CacheKeys.DAILY_SUMMARY}_${dateStr}`,
+            offlineFallback: true
+        }
+    );
+    return { data: result.data };
 };
 
-api.getAllowanceHistory = () => {
-    return api.get('/allowance/requests/');
+api.getAllowanceHistory = async () => {
+    const result = await api.fetchWithCache('allowance_history', '/allowance/requests/', {
+        cacheKey: CacheKeys.ALLOWANCE_HISTORY,
+        offlineFallback: true
+    });
+    return { data: result.data };
 };
 
 api.getDeviceId = getDeviceId;
 api.getPlatform = getPlatform;
+api.OfflineService = OfflineService;
+api.CacheKeys = CacheKeys;
 
 export default api;
