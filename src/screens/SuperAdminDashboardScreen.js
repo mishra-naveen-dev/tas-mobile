@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import {
     View,
     Text,
@@ -6,14 +6,18 @@ import {
     ScrollView,
     TouchableOpacity,
     RefreshControl,
-    Alert
+    Alert,
+    ActivityIndicator
 } from 'react-native';
-import { useAuth } from '../context/AuthContext';
+import { AuthContext } from '../context/AuthContext';
 import api from '../api/api';
-import { colors } from '../theme/tokens';
 
 const SuperAdminDashboardScreen = ({ navigation }) => {
-    const { user } = useAuth();
+    const authContext = useContext(AuthContext);
+    
+    // Fallback if auth context is not available
+    const user = authContext?.user || { first_name: 'Super Admin', last_name: '' };
+    
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -113,20 +117,20 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: '#F8F9FA',
     },
     header: {
         padding: 20,
-        backgroundColor: colors.primary,
+        backgroundColor: '#4361EE',
     },
     title: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: colors.white,
+        color: '#FFFFFF',
     },
     subtitle: {
         fontSize: 14,
-        color: colors.white,
+        color: '#FFFFFF',
         opacity: 0.8,
     },
     statsContainer: {
@@ -136,7 +140,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
     },
     statCard: {
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
         padding: 15,
         borderRadius: 10,
         width: '48%',
@@ -147,17 +151,17 @@ const styles = StyleSheet.create({
     statValue: {
         fontSize: 28,
         fontWeight: 'bold',
-        color: colors.primary,
+        color: '#4361EE',
     },
     statLabel: {
         fontSize: 12,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
     menuContainer: {
         padding: 15,
     },
     menuItem: {
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
         padding: 15,
         borderRadius: 10,
         marginBottom: 10,
@@ -166,7 +170,7 @@ const styles = StyleSheet.create({
     menuText: {
         fontSize: 16,
         fontWeight: '600',
-        color: colors.text,
+        color: '#2B2D42',
     },
     quickActions: {
         padding: 15,
@@ -177,13 +181,13 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     actionButton: {
-        backgroundColor: colors.primary,
+        backgroundColor: '#4361EE',
         padding: 15,
         borderRadius: 10,
         marginBottom: 10,
     },
     actionText: {
-        color: colors.white,
+        color: '#FFFFFF',
         fontWeight: 'bold',
         textAlign: 'center',
     },
