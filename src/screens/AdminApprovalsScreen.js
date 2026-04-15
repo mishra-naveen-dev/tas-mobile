@@ -14,7 +14,7 @@ import { AuthContext } from '../context/AuthContext';
 import api from '../api/api';
 
 const AdminApprovalsScreen = ({ navigation }) => {
-    const { logout } = useContext(AuthContext) || {};
+    const { logout, user } = useContext(AuthContext) || {};
     const [allowances, setAllowances] = useState([]);
     const [corrections, setCorrections] = useState([]);
     const [devices, setDevices] = useState([]);
@@ -148,7 +148,10 @@ const AdminApprovalsScreen = ({ navigation }) => {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Icon name="arrow-left" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Pending Approvals</Text>
+                <View style={styles.headerCenter}>
+                    <Text style={styles.headerTitle}>Pending Approvals</Text>
+                    <Text style={styles.headerSubtitle}>{user?.first_name} {user?.last_name} (ID: {user?.employee_id || user?.id || 'N/A'})</Text>
+                </View>
                 <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
                     <Icon name="log-out" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
@@ -196,10 +199,19 @@ const styles = StyleSheet.create({
         padding: 15,
         backgroundColor: '#4361EE',
     },
+    headerCenter: {
+        alignItems: 'center',
+    },
     headerTitle: {
         fontSize: 18,
         fontWeight: 'bold',
         color: '#FFFFFF',
+    },
+    headerSubtitle: {
+        fontSize: 12,
+        color: '#FFFFFF',
+        opacity: 0.8,
+        marginTop: 2,
     },
     backBtn: {
         padding: 5,

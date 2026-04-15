@@ -79,6 +79,7 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
                 </View>
                 <Text style={styles.title}>Super Admin Dashboard</Text>
                 <Text style={styles.subtitle}>{user?.first_name} {user?.last_name}</Text>
+                <Text style={styles.userId}>ID: {user?.employee_id || user?.id || 'N/A'}</Text>
             </View>
 
             <View style={styles.statsContainer}>
@@ -162,6 +163,12 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#FFFFFF',
         opacity: 0.8,
+    },
+    userId: {
+        fontSize: 12,
+        color: '#FFFFFF',
+        opacity: 0.6,
+        marginTop: 2,
     },
     statsContainer: {
         flexDirection: 'row',
