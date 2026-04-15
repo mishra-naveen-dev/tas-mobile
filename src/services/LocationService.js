@@ -2,9 +2,17 @@
 
 import { PermissionsAndroid, Platform } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
-import BackgroundGeolocation from 'react-native-background-geolocation';
 import NetInfo from '@react-native-community/netinfo';
-import api from './api';
+import api from '../api/api';
+
+// Optional background geolocation - will be disabled if not installed
+let BackgroundGeolocation;
+try {
+    BackgroundGeolocation = require('react-native-background-geolocation').default;
+} catch (e) {
+    console.log('Background geolocation not available - using basic tracking');
+    BackgroundGeolocation = null;
+}
 
 const GOOGLE_API_KEY = "AIzaSyDM0WAR3vYxXNqSklb868wEmtDftQvYDkQ";
 
@@ -254,6 +262,11 @@ class LocationService {
     static startBackgroundTracking(onLocationUpdate) {
         if (this.backgroundTrackingEnabled) return;
         
+        if (!BackgroundGeolocation) {
+            console.log('[LocationService] Background tracking not available - use basic GPS tracking');
+            return;
+        }
+        
         this.locationCallback = onLocationUpdate;
         
         BackgroundGeolocation.ready({
@@ -298,12 +311,18 @@ class LocationService {
         });
     }
 
-    static stopBackgroundTracking() {
+static stopBackgroundTracking() {
         if (!this.backgroundTrackingEnabled) return;
+        
+        if (!BackgroundGeolocation) {
+            console.log('[LocationService] Background tracking not available');
+            return;
+        }
         
         BackgroundGeolocation.stop();
         this.backgroundTrackingEnabled = false;
     }
+}
 
     static async isNetworkConnected() {
         const netInfo = await NetInfo.fetch();
