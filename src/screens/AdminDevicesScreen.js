@@ -10,7 +10,6 @@ import {
     ActivityIndicator
 } from 'react-native';
 import api from '../api/api';
-import { colors } from '../theme/tokens';
 
 const AdminDevicesScreen = ({ navigation }) => {
     const [devices, setDevices] = useState([]);
@@ -226,11 +225,11 @@ const AdminDevicesScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: '#F8F9FA',
     },
     tabContainer: {
         flexDirection: 'row',
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
     },
     tab: {
         flex: 1,
@@ -239,18 +238,18 @@ const styles = StyleSheet.create({
     },
     activeTab: {
         borderBottomWidth: 3,
-        borderBottomColor: colors.primary,
+        borderBottomColor: '#4361EE',
     },
     tabText: {
         fontSize: 14,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
     activeTabText: {
-        color: colors.primary,
+        color: '#4361EE',
         fontWeight: 'bold',
     },
     deviceCard: {
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
         margin: 10,
         padding: 15,
         borderRadius: 10,
@@ -265,7 +264,7 @@ const styles = StyleSheet.create({
     },
     deviceDetail: {
         fontSize: 14,
-        color: colors.text,
+        color: '#2B2D42',
         marginTop: 5,
     },
     deviceMeta: {
@@ -273,7 +272,7 @@ const styles = StyleSheet.create({
     },
     metaText: {
         fontSize: 12,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
     deviceActions: {
         flexDirection: 'row',
@@ -286,13 +285,13 @@ const styles = StyleSheet.create({
         paddingHorizontal: 15,
     },
     approveBtn: {
-        backgroundColor: colors.success || '#4CC9F0',
+        backgroundColor: '#4CC9F0',
     },
     rejectBtn: {
-        backgroundColor: colors.error || colors.danger || '#F94144',
+        backgroundColor: '#F94144',
     },
     blockBtn: {
-        backgroundColor: colors.warning || '#F8961E',
+        backgroundColor: '#F8961E',
     },
     actionBtnText: {
         color: '#FFFFFF',
@@ -305,17 +304,17 @@ const styles = StyleSheet.create({
     },
     loadingText: {
         marginTop: 10,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
     errorText: {
-        color: colors.error || colors.danger || '#F94144',
+        color: '#F94144',
         fontSize: 16,
         marginBottom: 15,
     },
     retryBtn: {
         paddingHorizontal: 20,
         paddingVertical: 10,
-        backgroundColor: colors.primary,
+        backgroundColor: '#4361EE',
         borderRadius: 5,
     },
     retryText: {
@@ -328,7 +327,7 @@ const styles = StyleSheet.create({
     },
     emptyText: {
         fontSize: 16,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
 });
 
