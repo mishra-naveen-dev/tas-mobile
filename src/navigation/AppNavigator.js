@@ -1,7 +1,7 @@
 import React, { useContext } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { ActivityIndicator, View, Text } from 'react-native';
+import { ActivityIndicator } from 'react-native';
 
 // AUTH SCREENS
 import LoginScreen from '../screens/LoginScreen';
@@ -29,19 +29,6 @@ import SuperAdminDashboardScreen from '../screens/SuperAdminDashboardScreen';
 import { AuthContext } from '../context/AuthContext';
 
 const Stack = createNativeStackNavigator();
-
-// Placeholder screens
-const UserManagementScreen = () => (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <Text>User Management</Text>
-    </View>
-);
-
-const EmployeeTrackingScreen = () => (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <Text>Employee Tracking</Text>
-    </View>
-);
 
 const AppNavigator = () => {
     const authContext = useContext(AuthContext);
@@ -110,8 +97,6 @@ const AppNavigator = () => {
                         <Stack.Screen name="SuperAdminHome" component={SuperAdminDashboardScreen} />
                         <Stack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
                         <Stack.Screen name="AdminDevices" component={AdminDevicesScreen} />
-                        <Stack.Screen name="UserManagement" component={UserManagementScreen} />
-                        <Stack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
                         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
                     </>
                 ) : checkIsAdmin() ? (
@@ -120,7 +105,6 @@ const AppNavigator = () => {
                         <Stack.Screen name="AdminHome" component={AdminDashboardScreen} />
                         <Stack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
                         <Stack.Screen name="AdminDevices" component={AdminDevicesScreen} />
-                        <Stack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
                         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
                     </>
                 ) : (
