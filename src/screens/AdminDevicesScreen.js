@@ -6,7 +6,8 @@ import {
     FlatList,
     TouchableOpacity,
     RefreshControl,
-    Alert
+    Alert,
+    ActivityIndicator
 } from 'react-native';
 import api from '../api/api';
 import { colors } from '../theme/tokens';
@@ -16,13 +17,17 @@ const AdminDevicesScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState(0);
+    const [error, setError] = useState(null);
 
     const fetchData = useCallback(async () => {
         try {
+            setError(null);
             const res = await api.getDevices();
-            setDevices(res.data?.results || res.data || []);
+            const deviceList = res.data?.results || res.data || [];
+            setDevices(deviceList);
         } catch (err) {
             console.log('Error fetching devices:', err);
+            setError('Failed to load devices');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -44,7 +49,7 @@ const AdminDevicesScreen = ({ navigation }) => {
             Alert.alert('Success', 'Device approved');
             fetchData();
         } catch (err) {
-            Alert.alert('Error', 'Failed to approve device');
+            Alert.alert('Error', err.response?.data?.error || 'Failed to approve device');
         }
     };
 
@@ -63,7 +68,7 @@ const AdminDevicesScreen = ({ navigation }) => {
                             Alert.alert('Success', 'Device rejected');
                             fetchData();
                         } catch (err) {
-                            Alert.alert('Error', 'Failed to reject');
+                            Alert.alert('Error', err.response?.data?.error || 'Failed to reject');
                         }
                     }
                 }
@@ -71,7 +76,9 @@ const AdminDevicesScreen = ({ navigation }) => {
         );
     };
 
-    const handleBlock = async (id) => {
+    const handleBlock = async (device) => {
+        const deviceId = device.device_id || device.id;
+        
         Alert.alert(
             'Confirm Block',
             'Block this device? User will not be able to login from this device.',
@@ -82,11 +89,11 @@ const AdminDevicesScreen = ({ navigation }) => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await api.blockDevice(id);
+                            await api.blockDevice(deviceId);
                             Alert.alert('Success', 'Device blocked');
                             fetchData();
                         } catch (err) {
-                            Alert.alert('Error', 'Failed to block device');
+                            Alert.alert('Error', err.response?.data?.error || 'Failed to block device');
                         }
                     }
                 }
@@ -101,44 +108,74 @@ const AdminDevicesScreen = ({ navigation }) => {
     const currentDevices = activeTab === 0 ? pendingDevices : 
                           activeTab === 1 ? approvedDevices : blockedDevices;
 
-    const renderDevice = ({ item }) => (
-        <View style={styles.deviceCard}>
-            <View style={styles.deviceInfo}>
-                <Text style={styles.deviceName}>{item.username}</Text>
-                <Text style={styles.deviceDetail}>{item.device_name || item.device_id}</Text>
-                <View style={styles.deviceMeta}>
-                    <Text style={styles.metaText}>{item.platform} | {item.browser} on {item.os}</Text>
-                    <Text style={styles.metaText}>Last active: {item.last_active ? new Date(item.last_active).toLocaleDateString() : 'N/A'}</Text>
+    const renderDevice = ({ item }) => {
+        // Handle different property names from API
+        const userName = item.user?.username || item.username || item.user_name || 'Unknown User';
+        const deviceName = item.device_name || item.device_id || item.name || 'Unknown Device';
+        const platform = item.platform || 'Unknown';
+        const browser = item.browser || 'Unknown';
+        const os = item.os || 'Unknown OS';
+        const lastActive = item.last_active ? new Date(item.last_active).toLocaleDateString() : 'N/A';
+        
+        return (
+            <View style={styles.deviceCard}>
+                <View style={styles.deviceInfo}>
+                    <Text style={styles.deviceName}>{userName}</Text>
+                    <Text style={styles.deviceDetail}>{deviceName}</Text>
+                    <View style={styles.deviceMeta}>
+                        <Text style={styles.metaText}>{platform} | {browser} on {os}</Text>
+                        <Text style={styles.metaText}>Last active: {lastActive}</Text>
+                    </View>
+                </View>
+                <View style={styles.deviceActions}>
+                    {item.status === 'PENDING' && (
+                        <>
+                            <TouchableOpacity
+                                style={[styles.actionBtn, styles.approveBtn]}
+                                onPress={() => handleApprove(item.id)}
+                            >
+                                <Text style={styles.actionBtnText}>Approve</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.actionBtn, styles.rejectBtn]}
+                                onPress={() => handleReject(item.id)}
+                            >
+                                <Text style={styles.actionBtnText}>Reject</Text>
+                            </TouchableOpacity>
+                        </>
+                    )}
+                    {item.status === 'APPROVED' && (
+                        <TouchableOpacity
+                            style={[styles.actionBtn, styles.blockBtn]}
+                            onPress={() => handleBlock(item)}
+                        >
+                            <Text style={styles.actionBtnText}>Block</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
             </View>
-            <View style={styles.deviceActions}>
-                {item.status === 'PENDING' && (
-                    <>
-                        <TouchableOpacity
-                            style={[styles.actionBtn, styles.approveBtn]}
-                            onPress={() => handleApprove(item.id)}
-                        >
-                            <Text style={styles.actionBtnText}>Approve</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.actionBtn, styles.rejectBtn]}
-                            onPress={() => handleReject(item.id)}
-                        >
-                            <Text style={styles.actionBtnText}>Reject</Text>
-                        </TouchableOpacity>
-                    </>
-                )}
-                {item.status === 'APPROVED' && (
-                    <TouchableOpacity
-                        style={[styles.actionBtn, styles.blockBtn]}
-                        onPress={() => handleBlock(item.id)}
-                    >
-                        <Text style={styles.actionBtnText}>Block</Text>
-                    </TouchableOpacity>
-                )}
+        );
+    };
+
+    if (loading) {
+        return (
+            <View style={[styles.container, styles.centerContent]}>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={styles.loadingText}>Loading devices...</Text>
             </View>
-        </View>
-    );
+        );
+    }
+
+    if (error) {
+        return (
+            <View style={[styles.container, styles.centerContent]}>
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
+                    <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
@@ -249,18 +286,41 @@ const styles = StyleSheet.create({
         paddingHorizontal: 15,
     },
     approveBtn: {
-        backgroundColor: colors.success,
+        backgroundColor: colors.success || '#4CC9F0',
     },
     rejectBtn: {
-        backgroundColor: colors.error,
+        backgroundColor: colors.error || colors.danger || '#F94144',
     },
     blockBtn: {
-        backgroundColor: colors.warning,
+        backgroundColor: colors.warning || '#F8961E',
     },
     actionBtnText: {
-        color: colors.white,
+        color: '#FFFFFF',
         fontWeight: 'bold',
         fontSize: 12,
+    },
+    centerContent: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    loadingText: {
+        marginTop: 10,
+        color: colors.textMuted,
+    },
+    errorText: {
+        color: colors.error || colors.danger || '#F94144',
+        fontSize: 16,
+        marginBottom: 15,
+    },
+    retryBtn: {
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        backgroundColor: colors.primary,
+        borderRadius: 5,
+    },
+    retryText: {
+        color: '#FFFFFF',
+        fontWeight: 'bold',
     },
     emptyContainer: {
         padding: 50,

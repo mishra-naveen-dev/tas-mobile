@@ -5,11 +5,14 @@ export const colors = {
     success: '#4CC9F0',       // Light Blue/Cyan
     warning: '#F8961E',       // Orange
     danger: '#F94144',        // Red
+    error: '#F94144',         // Red (alternative)
     
     background: '#F8F9FA',    // Light Grayish White
     surface: '#FFFFFF',       // Pure White
+    white: '#FFFFFF',        // White
     
     textDark: '#2B2D42',      // Almost Black
+    text: '#2B2D42',        // Default text
     textMuted: '#8D99AE',     // Gray
     
     border: '#EDF2F4',        // Soft Border Color
