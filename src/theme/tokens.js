@@ -4,6 +4,7 @@ export const colors = {
     secondary: '#F72585',     // Vibrant Pink/Red
     success: '#4CC9F0',       // Light Blue/Cyan
     warning: '#F8961E',       // Orange
+    info: '#4CC9F0',         // Cyan/Info Blue
     danger: '#F94144',        // Red
     error: '#F94144',         // Red (alternative)
     

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import {
     View,
     Text,
@@ -9,9 +9,12 @@ import {
     Alert,
     ActivityIndicator
 } from 'react-native';
+import Icon from 'react-native-vector-icons/Feather';
+import { AuthContext } from '../context/AuthContext';
 import api from '../api/api';
 
 const AdminDevicesScreen = ({ navigation }) => {
+    const { logout } = useContext(AuthContext) || {};
     const [devices, setDevices] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -176,8 +179,24 @@ const AdminDevicesScreen = ({ navigation }) => {
         );
     }
 
+    const handleLogout = () => {
+        Alert.alert('Logout', 'Are you sure you want to logout?', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Logout', onPress: logout, style: 'destructive' }
+        ]);
+    };
+
     return (
         <View style={styles.container}>
+            <View style={styles.header}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                    <Icon name="arrow-left" size={24} color="#FFFFFF" />
+                </TouchableOpacity>
+                <Text style={styles.headerTitle}>Device Management</Text>
+                <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+                    <Icon name="log-out" size={24} color="#FFFFFF" />
+                </TouchableOpacity>
+            </View>
             <View style={styles.tabContainer}>
                 <TouchableOpacity
                     style={[styles.tab, activeTab === 0 && styles.activeTab]}
@@ -226,6 +245,24 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#F8F9FA',
+    },
+    header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 15,
+        backgroundColor: '#4361EE',
+    },
+    headerTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#FFFFFF',
+    },
+    backBtn: {
+        padding: 5,
+    },
+    logoutBtn: {
+        padding: 5,
     },
     tabContainer: {
         flexDirection: 'row',

@@ -9,6 +9,7 @@ import {
     Alert,
     ActivityIndicator
 } from 'react-native';
+import Icon from 'react-native-vector-icons/Feather';
 import { AuthContext } from '../context/AuthContext';
 import api from '../api/api';
 
@@ -17,6 +18,7 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
     
     // Fallback if auth context is not available
     const user = authContext?.user || { first_name: 'Super Admin', last_name: '' };
+    const { logout } = authContext || {};
     
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -52,6 +54,13 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
         { title: 'Reports', icon: 'file-text', screen: 'Reports' },
     ];
 
+    const handleLogout = () => {
+        Alert.alert('Logout', 'Are you sure you want to logout?', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Logout', onPress: logout, style: 'destructive' }
+        ]);
+    };
+
     return (
         <ScrollView
             style={styles.container}
@@ -60,6 +69,14 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
             }
         >
             <View style={styles.header}>
+                <View style={styles.headerTop}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                        <Icon name="arrow-left" size={24} color="#FFFFFF" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+                        <Icon name="log-out" size={24} color="#FFFFFF" />
+                    </TouchableOpacity>
+                </View>
                 <Text style={styles.title}>Super Admin Dashboard</Text>
                 <Text style={styles.subtitle}>{user?.first_name} {user?.last_name}</Text>
             </View>
@@ -121,7 +138,20 @@ const styles = StyleSheet.create({
     },
     header: {
         padding: 20,
+        paddingTop: 10,
         backgroundColor: '#4361EE',
+    },
+    headerTop: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    backBtn: {
+        padding: 5,
+    },
+    logoutBtn: {
+        padding: 5,
     },
     title: {
         fontSize: 24,

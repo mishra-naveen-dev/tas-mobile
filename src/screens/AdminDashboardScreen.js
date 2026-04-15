@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import {
     View,
     Text,
@@ -6,14 +6,18 @@ import {
     ScrollView,
     TouchableOpacity,
     RefreshControl,
-    Alert
+    Alert,
+    ActivityIndicator
 } from 'react-native';
-import { useAuth } from '../context/AuthContext';
+import Icon from 'react-native-vector-icons/Feather';
+import { AuthContext } from '../context/AuthContext';
 import api from '../api/api';
-import { colors } from '../theme/tokens';
 
 const AdminDashboardScreen = ({ navigation }) => {
-    const { user } = useAuth();
+    const authContext = useContext(AuthContext);
+    const user = authContext?.user || { first_name: 'Admin', last_name: '' };
+    const { logout } = authContext || {};
+    
     const [stats, setStats] = useState(null);
     const [employees, setEmployees] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -50,6 +54,13 @@ const AdminDashboardScreen = ({ navigation }) => {
         fetchData();
     };
 
+    const handleLogout = () => {
+        Alert.alert('Logout', 'Are you sure you want to logout?', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Logout', onPress: logout, style: 'destructive' }
+        ]);
+    };
+
     return (
         <ScrollView
             style={styles.container}
@@ -58,6 +69,14 @@ const AdminDashboardScreen = ({ navigation }) => {
             }
         >
             <View style={styles.header}>
+                <View style={styles.headerTop}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                        <Icon name="arrow-left" size={24} color="#FFFFFF" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+                        <Icon name="log-out" size={24} color="#FFFFFF" />
+                    </TouchableOpacity>
+                </View>
                 <Text style={styles.title}>Admin Dashboard</Text>
                 <Text style={styles.subtitle}>{user?.first_name} {user?.last_name}</Text>
             </View>
@@ -120,20 +139,33 @@ const AdminDashboardScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: '#F8F9FA',
     },
     header: {
         padding: 20,
-        backgroundColor: colors.primary,
+        paddingTop: 10,
+        backgroundColor: '#4361EE',
+    },
+    headerTop: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    backBtn: {
+        padding: 5,
+    },
+    logoutBtn: {
+        padding: 5,
     },
     title: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: colors.white,
+        color: '#FFFFFF',
     },
     subtitle: {
         fontSize: 14,
-        color: colors.white,
+        color: '#FFFFFF',
         opacity: 0.8,
     },
     statsContainer: {
@@ -142,7 +174,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
     },
     statCard: {
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
         padding: 15,
         borderRadius: 10,
         alignItems: 'center',
@@ -153,17 +185,17 @@ const styles = StyleSheet.create({
     statValue: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: colors.primary,
+        color: '#4361EE',
     },
     statLabel: {
         fontSize: 12,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
     actionsContainer: {
         padding: 15,
     },
     actionButton: {
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
         padding: 15,
         borderRadius: 10,
         marginBottom: 10,
@@ -172,7 +204,7 @@ const styles = StyleSheet.create({
     actionText: {
         fontSize: 16,
         fontWeight: '600',
-        color: colors.text,
+        color: '#2B2D42',
     },
     listContainer: {
         padding: 15,
@@ -183,7 +215,7 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     employeeCard: {
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
         padding: 15,
         borderRadius: 10,
         marginBottom: 10,
@@ -200,14 +232,14 @@ const styles = StyleSheet.create({
     },
     employeeId: {
         fontSize: 12,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
     employeeStats: {
         alignItems: 'flex-end',
     },
     statItem: {
         fontSize: 14,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
 });
 

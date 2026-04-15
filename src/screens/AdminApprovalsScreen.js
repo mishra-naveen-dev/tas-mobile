@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import {
     View,
     Text,
@@ -6,12 +6,15 @@ import {
     FlatList,
     TouchableOpacity,
     RefreshControl,
-    Alert
+    Alert,
+    ActivityIndicator
 } from 'react-native';
+import Icon from 'react-native-vector-icons/Feather';
+import { AuthContext } from '../context/AuthContext';
 import api from '../api/api';
-import { colors } from '../theme/tokens';
 
 const AdminApprovalsScreen = ({ navigation }) => {
+    const { logout } = useContext(AuthContext) || {};
     const [allowances, setAllowances] = useState([]);
     const [corrections, setCorrections] = useState([]);
     const [devices, setDevices] = useState([]);
@@ -132,8 +135,24 @@ const AdminApprovalsScreen = ({ navigation }) => {
     const currentData = activeTab === 0 ? allowances : activeTab === 1 ? corrections : devices;
     const currentType = activeTab === 0 ? 'allowance' : activeTab === 1 ? 'correction' : 'device';
 
+    const handleLogout = () => {
+        Alert.alert('Logout', 'Are you sure you want to logout?', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Logout', onPress: logout, style: 'destructive' }
+        ]);
+    };
+
     return (
         <View style={styles.container}>
+            <View style={styles.header}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                    <Icon name="arrow-left" size={24} color="#FFFFFF" />
+                </TouchableOpacity>
+                <Text style={styles.headerTitle}>Pending Approvals</Text>
+                <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+                    <Icon name="log-out" size={24} color="#FFFFFF" />
+                </TouchableOpacity>
+            </View>
             <View style={styles.tabContainer}>
                 {tabs.map((tab, index) => (
                     <TouchableOpacity
@@ -168,11 +187,29 @@ const AdminApprovalsScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: '#F8F9FA',
+    },
+    header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 15,
+        backgroundColor: '#4361EE',
+    },
+    headerTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#FFFFFF',
+    },
+    backBtn: {
+        padding: 5,
+    },
+    logoutBtn: {
+        padding: 5,
     },
     tabContainer: {
         flexDirection: 'row',
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
         padding: 10,
     },
     tab: {
@@ -182,18 +219,18 @@ const styles = StyleSheet.create({
         borderRadius: 5,
     },
     activeTab: {
-        backgroundColor: colors.primary,
+        backgroundColor: '#4361EE',
     },
     tabText: {
         fontSize: 14,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
     activeTabText: {
-        color: colors.white,
+        color: '#FFFFFF',
         fontWeight: 'bold',
     },
     card: {
-        backgroundColor: colors.white,
+        backgroundColor: '#FFFFFF',
         margin: 10,
         padding: 15,
         borderRadius: 10,
@@ -208,7 +245,7 @@ const styles = StyleSheet.create({
     },
     cardSubtitle: {
         fontSize: 12,
-        color: colors.textMuted,
+        color: '#8D99AE',
         marginTop: 5,
     },
     cardActions: {
@@ -223,13 +260,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     approveBtn: {
-        backgroundColor: colors.success,
+        backgroundColor: '#4CC9F0',
     },
     rejectBtn: {
-        backgroundColor: colors.error,
+        backgroundColor: '#F94144',
     },
     actionBtnText: {
-        color: colors.white,
+        color: '#FFFFFF',
         fontWeight: 'bold',
     },
     emptyContainer: {
@@ -238,7 +275,7 @@ const styles = StyleSheet.create({
     },
     emptyText: {
         fontSize: 16,
-        color: colors.textMuted,
+        color: '#8D99AE',
     },
 });
 
