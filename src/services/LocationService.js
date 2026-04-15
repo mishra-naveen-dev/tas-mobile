@@ -71,8 +71,13 @@ class LocationService {
     }
 
     static async getCurrentLocationInfo() {
+        // For emulator testing - use mock location
+        if (__DEV__) {
+            return this.getEmulatorTestLocation();
+        }
+
         const hasPermission = await this.requestPermission();
-        
+
         if (!hasPermission) {
             return { error: 'Permission Denied by Device/User', latitude: null, longitude: null, address: '' };
         }
@@ -90,9 +95,9 @@ class LocationService {
                     try {
                         const googleUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`;
                         const res = await fetch(googleUrl);
-                        
+
                         if (!res.ok) throw new Error("Network Fault reaching Google Servers.");
-                        
+
                         const json = await res.json();
                         if (json.status !== "OK" || !json.results || json.results.length === 0) {
                             throw new Error(json.error_message || "Target address unresolvable natively.");
@@ -138,14 +143,14 @@ class LocationService {
                 battery_level: batteryLevel,
                 is_background: isBackground
             });
-            
+
             if (response.data.success) {
                 this.currentSessionId = response.data.session_id;
                 this.isTracking = true;
                 this.backgroundTrackingEnabled = isBackground;
                 console.log('[LocationService] Tracking started, session:', this.currentSessionId);
             }
-            
+
             return response.data;
         } catch (error) {
             console.error('[LocationService] Start tracking error:', error);
@@ -158,11 +163,11 @@ class LocationService {
             const response = await api.post('/tracking/session/stop/', {
                 battery_level: batteryLevel
             });
-            
+
             this.isTracking = false;
             this.currentSessionId = null;
             this.backgroundTrackingEnabled = false;
-            
+
             return response.data;
         } catch (error) {
             console.error('[LocationService] Stop tracking error:', error);
@@ -261,14 +266,14 @@ class LocationService {
 
     static startBackgroundTracking(onLocationUpdate) {
         if (this.backgroundTrackingEnabled) return;
-        
+
         if (!BackgroundGeolocation) {
             console.log('[LocationService] Background tracking not available - use basic GPS tracking');
             return;
         }
-        
+
         this.locationCallback = onLocationUpdate;
-        
+
         BackgroundGeolocation.ready({
             locationProvider: BackgroundGeolocation.provider.ANDROID_DISTANCE_FILTER,
             desiredAccuracy: BackgroundGeolocation.HIGH_ACCURACY,
@@ -298,31 +303,44 @@ class LocationService {
                         source: 'GPS',
                         timestamp: location.timestamp
                     };
-                    
+
                     if (this.locationCallback) {
                         this.locationCallback(locationData);
                     }
-                    
+
                     this.sendLocationUpdate(locationData);
                 });
-                
+
                 BackgroundGeolocation.start();
             }
         });
     }
 
-static stopBackgroundTracking() {
+    static stopBackgroundTracking() {
         if (!this.backgroundTrackingEnabled) return;
-        
+
         if (!BackgroundGeolocation) {
             console.log('[LocationService] Background tracking not available');
             return;
         }
-        
+
         BackgroundGeolocation.stop();
         this.backgroundTrackingEnabled = false;
     }
-}
+
+    // For emulator testing - returns mock coordinates in development
+    static async getEmulatorTestLocation() {
+        return {
+            latitude: 28.6139,
+            longitude: 77.2090,
+            address: 'Emulator Test - Connaught Place, New Delhi',
+            accuracy: 15,
+            altitude: 216,
+            speed: 0,
+            heading: 0,
+            source: 'GPS'
+        };
+    }
 
     static async isNetworkConnected() {
         const netInfo = await NetInfo.fetch();
