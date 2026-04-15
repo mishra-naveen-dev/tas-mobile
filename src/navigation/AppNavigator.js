@@ -44,7 +44,19 @@ const EmployeeTrackingScreen = () => (
 );
 
 const AppNavigator = () => {
-    const { token, user, loading, role, isAdmin, isSuperAdmin, isEmployee } = useContext(AuthContext);
+    const authContext = useContext(AuthContext);
+    
+    // Handle case where context might be undefined (during development/testing)
+    if (!authContext) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f5f5f5' }}>
+                <ActivityIndicator size="large" color="#667eea" />
+                <Text style={{ marginTop: 10, color: '#666' }}>Initializing...</Text>
+            </View>
+        );
+    }
+    
+    const { token, user, loading, role, isAdmin, isSuperAdmin, isEmployee } = authContext;
 
     if (loading) {
         return (
@@ -75,11 +87,24 @@ const AppNavigator = () => {
         );
     }
 
+    // Get actual role from user object as fallback
+    const userRole = role || user?.role || user?.user?.role;
+    
+    const checkIsSuperAdmin = () => {
+        if (typeof isSuperAdmin === 'function') return isSuperAdmin();
+        return userRole === 'SUPER_ADMIN';
+    };
+    
+    const checkIsAdmin = () => {
+        if (typeof isAdmin === 'function') return isAdmin();
+        return userRole === 'ADMIN' || userRole === 'SUPER_ADMIN';
+    };
+
     return (
         <NavigationContainer>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
                 
-                {isSuperAdmin() ? (
+                {checkIsSuperAdmin() ? (
                     // Super Admin Navigation
                     <>
                         <Stack.Screen name="SuperAdminHome" component={SuperAdminDashboardScreen} />
@@ -89,7 +114,7 @@ const AppNavigator = () => {
                         <Stack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
                         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
                     </>
-                ) : isAdmin() ? (
+                ) : checkIsAdmin() ? (
                     // Admin Navigation
                     <>
                         <Stack.Screen name="AdminHome" component={AdminDashboardScreen} />
