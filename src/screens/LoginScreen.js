@@ -1,6 +1,7 @@
 import React, { useState, useContext } from 'react';
-import { View, Text, Alert, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Alert, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Icon from 'react-native-vector-icons/Feather';
 
 import { AuthContext } from '../context/AuthContext';
 import { loginUser } from '../api/authApi';
@@ -10,12 +11,27 @@ import PrimaryButton from '../components/PrimaryButton';
 import GlassCard from '../components/GlassCard';
 import { colors, typography, spacing } from '../theme/tokens';
 
+const SUPPORT_EMAIL = 'support@tasenterprise.com';
+const SUPPORT_PHONE = '+91-9876543210';
+
 const LoginScreen = () => {
     const { saveTokensAndUser } = useContext(AuthContext);
 
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
+
+    const handleContactSupport = () => {
+        Alert.alert(
+            'Contact Support',
+            'How would you like to reach us?',
+            [
+                { text: 'Email', onPress: () => Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=Need Help - TAS Mobile`) },
+                { text: 'Phone', onPress: () => Linking.openURL(`tel:${SUPPORT_PHONE}`) },
+                { text: 'Cancel', style: 'cancel' }
+            ]
+        );
+    };
 
     const handleLogin = async () => {
         if (!username || !password) {
@@ -86,6 +102,12 @@ const LoginScreen = () => {
                             style={{ marginTop: spacing.md }}
                         />
                     </GlassCard>
+
+                    {/* Contact Support */}
+                    <TouchableOpacity style={styles.supportContainer} onPress={handleContactSupport}>
+                        <Icon name="help-circle" size={18} color="#FFFFFF" />
+                        <Text style={styles.supportText}>Need Help? Contact Support</Text>
+                    </TouchableOpacity>
                 </View>
             </KeyboardAvoidingView>
         </SafeAreaView>
@@ -127,6 +149,19 @@ const styles = StyleSheet.create({
         color: colors.textDark,
         marginBottom: spacing.xl,
         textAlign: 'center',
+    },
+    supportContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: spacing.xl,
+        padding: spacing.md,
+    },
+    supportText: {
+        color: '#FFFFFF',
+        fontSize: typography.sizes.sm,
+        marginLeft: spacing.sm,
+        textDecorationLine: 'underline',
     }
 });
 
