@@ -120,20 +120,12 @@ const RouteMapScreen = ({ navigation, route }) => {
             }
         });
 
-        return allCoords.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        return allCoords.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     };
 
     const coordinates = getAllCoordinates();
-
-    const getStartEndPoints = () => {
-        if (coordinates.length === 0) return { start: null, end: null };
-        return {
-            start: coordinates[0],
-            end: coordinates[coordinates.length - 1]
-        };
-    };
-
-    const { start, end } = getStartEndPoints();
+    const latestPoint = coordinates.length > 0 ? coordinates[0] : null;
+    const oldestPoint = coordinates.length > 0 ? coordinates[coordinates.length - 1] : null;
 
     const getMapRegion = () => {
         if (coordinates.length === 0) {
@@ -151,6 +143,15 @@ const RouteMapScreen = ({ navigation, route }) => {
                 longitude: coordinates[0].longitude,
                 latitudeDelta: 0.01,
                 longitudeDelta: 0.01
+            };
+        }
+
+        if (latestPoint) {
+            return {
+                latitude: latestPoint.latitude,
+                longitude: latestPoint.longitude,
+                latitudeDelta: 0.05,
+                longitudeDelta: 0.05
             };
         }
 
@@ -217,27 +218,27 @@ const RouteMapScreen = ({ navigation, route }) => {
                         }
                     }}
                 >
-                    {start && (
+                    {latestPoint && (
                         <Marker
-                            coordinate={{ latitude: start.latitude, longitude: start.longitude }}
-                            pinColor="green"
-                            title="Start"
-                            description={`Time: ${formatTime(start.timestamp)}`}
+                            coordinate={{ latitude: latestPoint.latitude, longitude: latestPoint.longitude }}
+                            pinColor="red"
+                            title="Latest Point"
+                            description={`Time: ${formatTime(latestPoint.timestamp)}`}
                         />
                     )}
 
-                    {end && start !== end && (
+                    {oldestPoint && latestPoint !== oldestPoint && (
                         <Marker
-                            coordinate={{ latitude: end.latitude, longitude: end.longitude }}
-                            pinColor="red"
-                            title="Latest Point"
-                            description={`Time: ${formatTime(end.timestamp)}`}
+                            coordinate={{ latitude: oldestPoint.latitude, longitude: oldestPoint.longitude }}
+                            pinColor="green"
+                            title="Start"
+                            description={`Time: ${formatTime(oldestPoint.timestamp)}`}
                         />
                     )}
 
                     {coordinates.length > 1 && (
                         <Polyline
-                            coordinates={coordinates.map(c => ({
+                            coordinates={[...coordinates].reverse().map(c => ({
                                 latitude: c.latitude,
                                 longitude: c.longitude
                             }))}

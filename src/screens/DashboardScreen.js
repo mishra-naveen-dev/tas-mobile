@@ -100,19 +100,22 @@ const DashboardScreen = ({ navigation }) => {
 
     const validRoutePoints = (punches || [])
         .filter(p => p.latitude && p.longitude)
-        .sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
+        .sort((a, b) => new Date(b.punched_at) - new Date(a.punched_at))
         .map(p => ({
             latitude: Number(p.latitude),
             longitude: Number(p.longitude),
+            timestamp: p.punched_at,
         }));
+
+    const latestPoint = validRoutePoints.length > 0 ? validRoutePoints[0] : null;
 
     const centerOnCurrentLocation = () => {
         if (validRoutePoints.length === 0) return;
-        const latestPoint = validRoutePoints[validRoutePoints.length - 1];
+        const latest = validRoutePoints[0];
         if (mapRef.current) {
             mapRef.current.animateToRegion({
-                latitude: latestPoint.latitude,
-                longitude: latestPoint.longitude,
+                latitude: latest.latitude,
+                longitude: latest.longitude,
                 latitudeDelta: 0.01,
                 longitudeDelta: 0.01
             }, 500);
@@ -232,21 +235,22 @@ const DashboardScreen = ({ navigation }) => {
                                     ref={mapRef}
                                     style={styles.mapEmbed}
                                     initialRegion={{
-                                        latitude: validRoutePoints[0]?.latitude || 23.0225,
-                                        longitude: validRoutePoints[0]?.longitude || 72.5714,
+                                        latitude: latestPoint?.latitude || 23.0225,
+                                        longitude: latestPoint?.longitude || 72.5714,
                                         latitudeDelta: 0.05,
                                         longitudeDelta: 0.05,
                                     }}
                                 >
-                                    <Marker coordinate={validRoutePoints[0]} pinColor="green" />
+                                    <Marker coordinate={latestPoint} pinColor="red" title="Latest" />
                                     {validRoutePoints.length > 1 && (
                                         <>
                                             <Marker
-                                                coordinate={validRoutePoints.at(-1)}
-                                                pinColor="red"
+                                                coordinate={validRoutePoints[validRoutePoints.length - 1]}
+                                                pinColor="green"
+                                                title="Start"
                                             />
                                             <Polyline
-                                                coordinates={validRoutePoints}
+                                                coordinates={[...validRoutePoints].reverse()}
                                                 strokeWidth={4}
                                                 strokeColor="#2563EB"
                                             />
