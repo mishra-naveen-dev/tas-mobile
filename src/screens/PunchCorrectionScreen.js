@@ -127,7 +127,7 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         padding: spacing.lg,
-        paddingBottom: spacing.xxl * 2,
+        paddingBottom: 160,
     },
     card: {
         marginBottom: spacing.lg,

@@ -289,7 +289,7 @@ const DashboardScreen = ({ navigation }) => {
 
                 contentContainerStyle={{
                     paddingHorizontal: spacing.md,
-                    paddingBottom: 120,
+                    paddingBottom: 140,
                 }}
             />
 

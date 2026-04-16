@@ -145,7 +145,7 @@ const styles = StyleSheet.create({
 
     scrollContent: {
         paddingHorizontal: spacing.lg,
-        paddingBottom: spacing.xxl,
+        paddingBottom: 160,
     },
 
     moduleCard: {
