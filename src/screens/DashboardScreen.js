@@ -18,6 +18,75 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { colors, typography, spacing } from '../theme/tokens';
 
+const StatItem = ({ icon, value, label, iconColor, bgColor }) => (
+    <View style={styles.statItem}>
+        <View style={[styles.statIconWrapper, { backgroundColor: bgColor }]}>
+            <Icon name={icon} size={22} color={iconColor} />
+        </View>
+        <Text style={styles.statValue}>{value}</Text>
+        <Text style={styles.statLabel}>{label}</Text>
+    </View>
+);
+
+const DashboardHeader = ({ username, onLogout }) => (
+    <View style={styles.header}>
+        <View style={styles.headerLeft}>
+            <Text style={styles.greeting}>Hello, {username || 'Officer'}</Text>
+            <Text style={styles.dateText}>
+                {new Date().toLocaleDateString('en-US', {
+                    weekday: 'short',
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                })}
+            </Text>
+        </View>
+        <TouchableOpacity style={styles.logoutBtn} onPress={onLogout} activeOpacity={0.7}>
+            <Icon name="log-out" size={22} color={colors.primary} />
+        </TouchableOpacity>
+    </View>
+);
+
+const StatsCard = ({ summary }) => (
+    <View style={styles.statsCard}>
+        <View style={styles.statsRow}>
+            <StatItem
+                icon="navigation"
+                value={`${summary?.total_distance_today || 0} km`}
+                label="Distance"
+                iconColor="#DC2626"
+                bgColor="#FEE2E2"
+            />
+            <View style={styles.statDivider} />
+            <StatItem
+                icon="check-circle"
+                value={summary?.punch_count || 0}
+                label="Punches"
+                iconColor="#059669"
+                bgColor="#D1FAE5"
+            />
+        </View>
+        <View style={styles.statsDivider} />
+        <View style={styles.statsRow}>
+            <StatItem
+                icon="dollar-sign"
+                value={`₹${summary?.total_collection || 0}`}
+                label="Collected"
+                iconColor="#D97706"
+                bgColor="#FEF3C7"
+            />
+            <View style={styles.statDivider} />
+            <StatItem
+                icon="trending-up"
+                value={`₹${summary?.total_disbursement || 0}`}
+                label="Disbursement"
+                iconColor="#2563EB"
+                bgColor="#DBEAFE"
+            />
+        </View>
+    </View>
+);
+
 const DashboardScreen = ({ navigation }) => {
     const { token, user, logout } = useContext(AuthContext);
 
@@ -34,7 +103,6 @@ const DashboardScreen = ({ navigation }) => {
         try {
             if (!isRefresh) setLoading(true);
 
-            // 1. Immediately inject cached resilient offline data first for hyper-fast UX
             try {
                 const cachedSummary = await AsyncStorage.getItem('@dashboard_summary');
                 const cachedPunches = await AsyncStorage.getItem('@dashboard_punches');
@@ -44,7 +112,6 @@ const DashboardScreen = ({ navigation }) => {
                 console.log("-> Cache read fault:", cacheErr);
             }
 
-            // 2. Fetch Live data from Render Cloud
             const [summaryRes, punchRes] = await Promise.all([
                 api.get(`/attendance/punches/daily_summary/?t=${Date.now()}`),
                 api.get(`/attendance/punches/today_punches/?t=${Date.now()}`),
@@ -53,7 +120,6 @@ const DashboardScreen = ({ navigation }) => {
             const liveSummary = summaryRes?.data || {};
             const livePunches = punchRes?.data?.results || punchRes?.data || [];
 
-            // 3. Render Live Data and securely cache it!
             setSummary(liveSummary);
             setPunches(livePunches);
 
@@ -61,7 +127,7 @@ const DashboardScreen = ({ navigation }) => {
             AsyncStorage.setItem('@dashboard_punches', JSON.stringify(livePunches));
 
         } catch (err) {
-            console.log("-> Dashboard network fault (falling back to offline cache):", err?.message);
+            console.log("-> Dashboard network fault:", err?.message);
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -97,7 +163,6 @@ const DashboardScreen = ({ navigation }) => {
         </View>
     );
 
-    // ================= MAP ROUTE EXTRACTION =================
     const validRoutePoints = (punches || [])
         .filter(p => p.latitude && p.longitude)
         .sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
@@ -119,82 +184,24 @@ const DashboardScreen = ({ navigation }) => {
         return p.visit_type === filterType;
     });
 
-    //  REPLACE RETURN BLOCK ONLY
-
     return (
         <SafeAreaView style={styles.container}>
-
             <FlatList
                 data={filteredPunches}
                 keyExtractor={(item, index) => index.toString()}
                 renderItem={renderActivityItem}
                 showsVerticalScrollIndicator={false}
-
-                // ================= HEADER =================
                 ListHeaderComponent={
                     <>
-                        {/* HEADER */}
-                        <View style={styles.header}>
-                            <View>
-                                <Text style={styles.greeting}>
-                                    Hello, {user?.username || 'Officer'}
-                                </Text>
-                                <Text style={styles.dateText}>
-                                    {new Date().toDateString()}
-                                </Text>
-                            </View>
+                        <DashboardHeader
+                            username={user?.username}
+                            onLogout={logout}
+                        />
 
-                            <TouchableOpacity onPress={logout} style={styles.logoutBtn}>
-                                <Icon name="log-out" size={24} color={colors.danger} />
-                            </TouchableOpacity>
-                        </View>
+                        <StatsCard summary={summary} />
 
-                        {/* HERO */}
-                        <GlassCard style={styles.heroCard}>
-                            <View style={styles.heroMetric}>
-                                <Icon name="map" size={24} color={colors.primary} />
-                                <Text style={styles.heroValue}>
-                                    {summary?.total_distance_today || 0} km
-                                </Text>
-                                <Text style={styles.heroLabel}>Distance</Text>
-                            </View>
-
-                            <View style={styles.heroDivider} />
-
-                            <View style={styles.heroMetric}>
-                                <Icon name="check-circle" size={24} color={colors.success} />
-                                <Text style={styles.heroValue}>
-                                    {summary?.punch_count || 0}
-                                </Text>
-                                <Text style={styles.heroLabel}>Punches</Text>
-                            </View>
-
-                            <View style={styles.heroDivider} />
-
-                            <View style={styles.heroMetric}>
-                                <Icon name="briefcase" size={24} color={colors.warning} />
-                                <Text style={styles.heroValue}>
-                                    ₹{summary?.total_collection || 0}
-                                </Text>
-                                <Text style={styles.heroLabel}>Collected</Text>
-                            </View>
-                        </GlassCard>
-
-                        {/* BUTTON */}
-                        {/* <View style={{ paddingHorizontal: spacing.md, marginTop: spacing.md }}>
-                            <PrimaryButton
-                                title="Submit Travel Claim"
-                                onPress={() =>
-                                    navigation.navigate('Allowance', {
-                                        distance: summary?.total_distance_today || 0
-                                    })
-                                }
-                            />
-                        </View> */}
-
-                        {/* MAP */}
                         {validRoutePoints.length > 0 && (
-                            <TouchableOpacity 
+                            <TouchableOpacity
                                 style={styles.mapWrap}
                                 onPress={() => navigation.navigate('RouteMap')}
                             >
@@ -208,7 +215,6 @@ const DashboardScreen = ({ navigation }) => {
                                     }}
                                 >
                                     <Marker coordinate={validRoutePoints[0]} pinColor="green" />
-
                                     {validRoutePoints.length > 1 && (
                                         <>
                                             <Marker
@@ -218,7 +224,7 @@ const DashboardScreen = ({ navigation }) => {
                                             <Polyline
                                                 coordinates={validRoutePoints}
                                                 strokeWidth={4}
-                                                strokeColor="blue"
+                                                strokeColor="#2563EB"
                                             />
                                         </>
                                     )}
@@ -230,27 +236,19 @@ const DashboardScreen = ({ navigation }) => {
                             </TouchableOpacity>
                         )}
 
-                        {/* SECTION TITLE */}
-                        <View style={styles.listHeaderRow}>
-
-                            <Text style={styles.sectionTitle}>
-                                Today's Activity
-                            </Text>
-
+                        <View style={styles.sectionHeader}>
+                            <Text style={styles.sectionTitle}>Today's Activity</Text>
                             <TouchableOpacity
                                 style={styles.filterBtn}
                                 onPress={() => setShowFilter(!showFilter)}
                             >
-                                <Icon name="filter" size={18} color={colors.primary} />
+                                <Icon name="filter" size={16} color={colors.primary} />
                                 <Text style={styles.filterText}>{filterType}</Text>
                             </TouchableOpacity>
-
                         </View>
 
-                        {/* FILTER OPTIONS */}
                         {showFilter && (
                             <View style={styles.filterDropdown}>
-
                                 {['ALL', 'COLLECTION', 'DISBURSEMENT'].map(type => (
                                     <TouchableOpacity
                                         key={type}
@@ -263,20 +261,15 @@ const DashboardScreen = ({ navigation }) => {
                                         <Text style={styles.filterItemText}>{type}</Text>
                                     </TouchableOpacity>
                                 ))}
-
                             </View>
                         )}
                     </>
                 }
-
-                // ================= EMPTY STATE =================
                 ListEmptyComponent={
                     <Text style={styles.emptyText}>
                         No activity recorded yet today.
                     </Text>
                 }
-
-                // ================= REFRESH =================
                 refreshControl={
                     <RefreshControl
                         refreshing={refreshing}
@@ -284,13 +277,11 @@ const DashboardScreen = ({ navigation }) => {
                         colors={[colors.primary]}
                     />
                 }
-
                 contentContainerStyle={{
                     paddingHorizontal: spacing.md,
                     paddingBottom: 140,
                 }}
             />
-
         </SafeAreaView>
     );
 };
@@ -298,125 +289,109 @@ const DashboardScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: colors.background,
+        backgroundColor: '#F5F5F5',
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: colors.background,
+        backgroundColor: '#F5F5F5',
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingHorizontal: spacing.md,
         alignItems: 'center',
-        padding: spacing.lg,
-        paddingTop: spacing.md
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.lg,
+    },
+    headerLeft: {
+        flex: 1,
     },
     greeting: {
-        fontSize: typography.sizes.xl,
-        fontWeight: typography.weights.bold,
+        fontSize: 24,
+        fontWeight: '700',
         color: colors.textDark,
     },
     dateText: {
-        fontSize: typography.sizes.sm,
+        fontSize: 13,
         color: colors.textMuted,
-        marginTop: 2,
+        marginTop: 4,
     },
     logoutBtn: {
-        padding: spacing.sm,
-        backgroundColor: colors.surface,
+        width: 44,
+        height: 44,
         borderRadius: 12,
-        ...shadows.soft,
-    },
-    heroCard: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginHorizontal: spacing.md,
-        marginTop: spacing.sm,
-        paddingVertical: spacing.xl,
-        backgroundColor: colors.surface,
-    },
-    heroMetric: {
-        flex: 1,
+        backgroundColor: '#FFFFFF',
         alignItems: 'center',
-    },
-    heroValue: {
-        fontSize: typography.sizes.lg,
-        fontWeight: typography.weights.bold,
-        color: colors.textDark,
-        marginTop: spacing.sm,
-    },
-    heroUnit: {
-        fontSize: typography.sizes.sm,
-        color: colors.textMuted,
-    },
-    heroLabel: {
-        fontSize: typography.sizes.sm,
-        color: colors.textMuted,
-        marginTop: 2,
-    },
-    heroDivider: {
-        width: 1,
-        backgroundColor: colors.border,
-        height: '80%',
-        alignSelf: 'center',
-    },
-    listContainer: {
-        flex: 1,
-        paddingHorizontal: spacing.md,
-        marginTop: spacing.xl,
-    },
-    sectionTitle: {
-        fontSize: typography.sizes.lg,
-        fontWeight: typography.weights.bold,
-        color: colors.textDark,
-        marginBottom: spacing.md,
-    },
-    activityItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: colors.surface,
-        padding: spacing.md,
-        borderRadius: 12,
-        marginBottom: spacing.sm,
-        borderWidth: 1,
-        borderColor: colors.border,
-    },
-    activityIconWrapper: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#F5F7FF',
         justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 3,
+    },
+    statsCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        marginHorizontal: spacing.md,
+        padding: spacing.lg,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+        elevation: 4,
+    },
+    statsRow: {
+        flexDirection: 'row',
         alignItems: 'center',
-        marginRight: spacing.md,
     },
-    activityDetails: {
+    statsDivider: {
+        height: 1,
+        backgroundColor: '#F3F4F6',
+        marginVertical: spacing.md,
+    },
+    statDivider: {
+        width: 1,
+        height: '100%',
+        backgroundColor: '#F3F4F6',
+        marginHorizontal: spacing.md,
+    },
+    statItem: {
         flex: 1,
+        alignItems: 'center',
+        paddingVertical: spacing.sm,
     },
-    activityTitle: {
-        fontSize: typography.sizes.md,
-        fontWeight: typography.weights.bold,
+    statIconWrapper: {
+        width: 48,
+        height: 48,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: spacing.sm,
+    },
+    statValue: {
+        fontSize: 18,
+        fontWeight: '700',
         color: colors.textDark,
-    },
-    activityTime: {
-        fontSize: typography.sizes.sm,
-        color: colors.textMuted,
-        marginTop: 2,
-    },
-    emptyText: {
-        color: colors.textMuted,
         textAlign: 'center',
-        marginTop: spacing.lg,
+    },
+    statLabel: {
+        fontSize: 12,
+        color: colors.textMuted,
+        marginTop: 4,
+        textAlign: 'center',
     },
     mapWrap: {
         height: 180,
         marginHorizontal: spacing.md,
-        marginTop: spacing.md,
-        borderRadius: 12,
+        marginTop: spacing.lg,
+        borderRadius: 16,
         overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 3,
     },
     mapEmbed: {
         flex: 1,
@@ -424,65 +399,112 @@ const styles = StyleSheet.create({
     },
     mapOverlayButton: {
         position: 'absolute',
-        bottom: spacing.sm,
-        right: spacing.sm,
+        bottom: 12,
+        right: 12,
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: colors.primary,
-        paddingHorizontal: spacing.sm,
-        paddingVertical: spacing.xs,
-        borderRadius: 4,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 6,
     },
     mapOverlayButtonText: {
-        color: '#fff',
-        fontSize: typography.sizes.xs,
-        marginLeft: spacing.xs,
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: '600',
+        marginLeft: 6,
     },
-    listHeaderRow: {
+    sectionHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: spacing.md,
         marginTop: spacing.xl,
+        marginBottom: spacing.md,
     },
-
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: colors.textDark,
+    },
     filterBtn: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: colors.surface,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: colors.border,
-    },
-
-    filterText: {
-        marginLeft: 6,
-        fontSize: 12,
-        color: colors.textDark,
-        fontWeight: '600',
-    },
-
-    filterDropdown: {
-        marginHorizontal: spacing.md,
-        marginTop: 6,
-        backgroundColor: colors.surface,
+        backgroundColor: '#FFFFFF',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
         borderRadius: 10,
         borderWidth: 1,
         borderColor: colors.border,
     },
-
-    filterItem: {
-        padding: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.border,
+    filterText: {
+        fontSize: 12,
+        color: colors.textDark,
+        fontWeight: '600',
+        marginLeft: 6,
     },
-
+    filterDropdown: {
+        marginHorizontal: spacing.md,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        marginBottom: spacing.sm,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    filterItem: {
+        padding: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6',
+    },
     filterItemText: {
         fontSize: 14,
         color: colors.textDark,
-    }
+        fontWeight: '500',
+    },
+    activityItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        padding: 14,
+        borderRadius: 14,
+        marginBottom: spacing.sm,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 6,
+        elevation: 2,
+    },
+    activityIconWrapper: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        backgroundColor: '#FEF2F2',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 14,
+    },
+    activityDetails: {
+        flex: 1,
+    },
+    activityTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.textDark,
+    },
+    activityTime: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    emptyText: {
+        color: colors.textMuted,
+        textAlign: 'center',
+        marginTop: spacing.xl,
+        fontSize: 14,
+    },
 });
 
 export default DashboardScreen;
