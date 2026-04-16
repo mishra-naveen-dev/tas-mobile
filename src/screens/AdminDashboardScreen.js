@@ -58,6 +58,7 @@ const AdminDashboardScreen = ({ navigation }) => {
             }
         >
             <View style={styles.header}>
+                <Text style={styles.companyName}>Arman Financial Services Ltd</Text>
                 <Text style={styles.title}>Admin Dashboard</Text>
                 <Text style={styles.subtitle}>{user?.first_name} {user?.last_name}</Text>
             </View>
@@ -125,6 +126,14 @@ const styles = StyleSheet.create({
     header: {
         padding: 20,
         backgroundColor: colors.primary,
+        paddingTop: 50,
+    },
+    companyName: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#FFFFFF',
+        marginBottom: 4,
+        opacity: 0.9,
     },
     title: {
         fontSize: 24,

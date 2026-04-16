@@ -31,6 +31,7 @@ const StatItem = ({ icon, value, label, iconColor, bgColor }) => (
 const DashboardHeader = ({ username, onLogout }) => (
     <View style={styles.header}>
         <View style={styles.headerLeft}>
+            <Text style={styles.companyName}>Arman Financial Services Ltd</Text>
             <Text style={styles.greeting}>Hello, {username || 'Officer'}</Text>
             <Text style={styles.dateText}>
                 {new Date().toLocaleDateString('en-US', {
@@ -353,6 +354,12 @@ const styles = StyleSheet.create({
     },
     headerLeft: {
         flex: 1,
+    },
+    companyName: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: colors.primary,
+        marginBottom: 2,
     },
     greeting: {
         fontSize: 24,
