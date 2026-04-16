@@ -67,7 +67,7 @@ const MapPreview = React.memo(({ points, mapRef, navigation }) => {
         <View style={styles.mapContainer}>
             <MapView
                 ref={mapRef}
-                style={styles.map}
+                style={{ flex: 1, width: '100%', height: '100%' }}
                 initialRegion={{
                     latitude: latestPoint?.latitude || 23.0225,
                     longitude: latestPoint?.longitude || 72.5714,
@@ -75,7 +75,7 @@ const MapPreview = React.memo(({ points, mapRef, navigation }) => {
                     longitudeDelta: 0.05,
                 }}
             >
-                <Marker coordinate={latestPoint} pinColor="red" />
+                {latestPoint && <Marker coordinate={latestPoint} pinColor="red" />}
                 {points.length > 1 && (
                     <>
                         <Marker coordinate={points[points.length - 1]} pinColor="green" />
@@ -278,7 +278,6 @@ const styles = StyleSheet.create({
     listContent: { paddingHorizontal: spacing.md, paddingBottom: 140 },
     listItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: spacing.md, borderRadius: borderRadius.md, marginBottom: spacing.sm, ...shadows.xs },
     listIconWrapper: { width: 40, height: 40, borderRadius: borderRadius.sm, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center', marginRight: spacing.sm },
-    listContent: { flex: 1 },
     listTitle: { fontSize: typography.sizes.base, fontWeight: typography.weights.semibold, color: colors.textDark },
     listSubtitle: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 2 },
     emptyState: { alignItems: 'center', paddingVertical: spacing.xxxl },
