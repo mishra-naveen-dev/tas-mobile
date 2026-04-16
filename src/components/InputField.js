@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TextInput, StyleSheet, Text } from 'react-native';
+import { View, TextInput, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, spacing, typography } from '../theme/tokens';
 
@@ -13,6 +13,7 @@ const InputField = ({
     error
 }) => {
     const [isFocused, setIsFocused] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
 
     return (
         <View style={styles.wrapper}>
@@ -36,11 +37,21 @@ const InputField = ({
                     placeholderTextColor={colors.textMuted}
                     value={value}
                     onChangeText={onChangeText}
-                    secureTextEntry={secureTextEntry}
+                    secureTextEntry={secureTextEntry && !showPassword}
                     keyboardType={keyboardType}
                     onFocus={() => setIsFocused(true)}
                     onBlur={() => setIsFocused(false)}
                 />
+
+                {secureTextEntry && (
+                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
+                        <Icon 
+                            name={showPassword ? 'eye-off' : 'eye'} 
+                            size={20} 
+                            color={colors.textMuted} 
+                        />
+                    </TouchableOpacity>
+                )}
             </View>
             
             {error && <Text style={styles.errorText}>{error}</Text>}
@@ -77,6 +88,10 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.md,
         color: colors.textDark,
         height: '100%',
+    },
+    eyeIcon: {
+        padding: spacing.xs,
+        marginLeft: spacing.sm,
     },
     errorText: {
         color: colors.danger,
