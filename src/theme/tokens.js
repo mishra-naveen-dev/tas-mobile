@@ -2,20 +2,23 @@ export const colors = {
     primary: '#DC2626',
     primaryDark: '#991B1B',
     primaryLight: '#FEE2E2',
-    
-    secondary: '#EF4444',
-    
+
+    secondary: '#7C3AED',
+
     success: '#10B981',
     successLight: '#D1FAE5',
-    
+
+    error: '#EF4444',
+    errorLight: '#FEE2E2',
+
     warning: '#F59E0B',
     warningLight: '#FEF3C7',
-    
+
     danger: '#EF4444',
     dangerLight: '#FEE2E2',
-    
-    info: '#2563EB',
-    infoLight: '#DBEAFE',
+
+    info: '#06B6D4',
+    infoLight: '#CFFAFE',
     
     background: '#F5F7FA',
     surface: '#FFFFFF',
@@ -29,6 +32,11 @@ export const colors = {
     divider: '#F1F5F9',
     
     overlay: 'rgba(0, 0, 0, 0.5)',
+
+    skeleton: '#E2E8F0',
+
+    punchBlue: '#2563EB',
+    punchBlueLight: '#DBEAFE',
 };
 
 export const typography = {

@@ -183,6 +183,42 @@ api.createPunchRecord = (data) => {
     return api.post('/attendance/punches/', data);
 };
 
+// Punch validation helper
+api.validatePunchPayload = (data) => {
+    const errors = [];
+
+    if (!data) {
+        errors.push('Data is required');
+        return { valid: false, errors };
+    }
+
+    if (!data.latitude || typeof data.latitude !== 'number') {
+        errors.push('Valid latitude is required');
+    }
+
+    if (!data.longitude || typeof data.longitude !== 'number') {
+        errors.push('Valid longitude is required');
+    }
+
+    if (!data.visit_type) {
+        errors.push('Visit type is required');
+    }
+
+    if (data.latitude && (data.latitude < -90 || data.latitude > 90)) {
+        errors.push('Latitude must be between -90 and 90');
+    }
+
+    if (data.longitude && (data.longitude < -180 || data.longitude > 180)) {
+        errors.push('Longitude must be between -180 and 180');
+    }
+
+    if (data.amount && typeof data.amount !== 'number') {
+        errors.push('Amount must be a number');
+    }
+
+    return { valid: errors.length === 0, errors };
+};
+
 api.getDailySummary = () => {
     return api.get('/attendance/punches/daily_summary/');
 };

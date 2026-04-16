@@ -2,14 +2,16 @@ import React, { useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, Animated } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography, spacing } from '../theme/tokens';
+import { usePunch } from '../context/PunchContext';
 
 const CustomTabBar = ({ state, descriptors, navigation }) => {
     const pulseAnim = useRef(new Animated.Value(1)).current;
-    const isActive = state.routes[state.index]?.name === 'EmployeePunch';
+    const { isActive: isPunchActive } = usePunch();
+    const isCurrentPunchTab = state.routes[state.index]?.name === 'EmployeePunch';
 
     useEffect(() => {
         let animation;
-        if (isActive) {
+        if (isPunchActive) {
             animation = Animated.loop(
                 Animated.sequence([
                     Animated.timing(pulseAnim, {
@@ -32,7 +34,7 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
         return () => {
             if (animation) animation.stop();
         };
-    }, [isActive]);
+    }, [isPunchActive]);
 
     const tabs = [
         { name: 'EmployeeHome', label: 'Home', icon: 'home' },
@@ -64,7 +66,7 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
                                     <TouchableOpacity
                                         style={[
                                             styles.punchButton,
-                                            { backgroundColor: colors.primary }
+                                            { backgroundColor: isPunchActive ? colors.success : colors.punchBlue }
                                         ]}
                                         onPress={() => navigation.navigate(route.name)}
                                         activeOpacity={0.8}
@@ -173,7 +175,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 8,
-        shadowColor: colors.primary,
+        shadowColor: colors.punchBlue,
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.4,
         shadowRadius: 12,
