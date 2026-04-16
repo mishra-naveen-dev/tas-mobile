@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, SafeAreaView, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Platform, Dimensions } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
-import { colors, typography, spacing } from '../theme/tokens';
+import { colors, typography, spacing, borderRadius, shadows } from '../theme/tokens';
 
 const { width } = Dimensions.get('window');
 
@@ -16,47 +16,29 @@ const TAB_RIGHT = [
 ];
 
 const MENU_ITEMS = [
-    { id: 'profile', label: 'Profile', icon: 'user', color: '#DC2626' },
+    { id: 'profile', label: 'Profile', icon: 'user', color: colors.primary },
     { id: 'devices', label: 'My Devices', icon: 'smartphone', color: '#059669' },
     { id: 'history', label: 'History', icon: 'clock', color: '#D97706' },
     { id: 'settings', label: 'Settings', icon: 'settings', color: '#64748B' },
     { id: 'support', label: 'Support', icon: 'headphones', color: '#7C3AED' },
-    { id: 'logout', label: 'Logout', icon: 'log-out', color: '#DC2626' },
+    { id: 'logout', label: 'Logout', icon: 'log-out', color: colors.danger },
 ];
 
 const TabItem = React.memo(({ label, icon, isActive, onPress }) => (
-    <TouchableOpacity
-        style={styles.tabItem}
-        onPress={onPress}
-        activeOpacity={0.7}
-    >
-        <Icon
-            name={icon}
-            size={24}
-            color={isActive ? '#E53935' : '#9CA3AF'}
-        />
-        <Text
-            style={[
-                styles.tabLabel,
-                { color: isActive ? '#E53935' : '#9CA3AF' }
-            ]}
-            numberOfLines={1}
-        >
+    <TouchableOpacity style={styles.tabItem} onPress={onPress} activeOpacity={0.7}>
+        <Icon name={icon} size={22} color={isActive ? colors.primary : colors.textMuted} />
+        <Text style={[styles.tabLabel, { color: isActive ? colors.primary : colors.textMuted }]} numberOfLines={1}>
             {label}
         </Text>
     </TouchableOpacity>
 ));
 
 const MenuItem = React.memo(({ item, onPress }) => (
-    <TouchableOpacity
-        style={styles.menuItem}
-        onPress={() => onPress(item)}
-        activeOpacity={0.7}
-    >
+    <TouchableOpacity style={styles.menuItem} onPress={() => onPress(item)} activeOpacity={0.7}>
         <View style={[styles.menuIconContainer, { backgroundColor: item.color + '15' }]}>
-            <Icon name={item.icon} size={24} color={item.color} />
+            <Icon name={item.icon} size={22} color={item.color} />
         </View>
-        <Text style={styles.menuLabel}>{item.label}</Text>
+        <Text style={styles.menuLabel} numberOfLines={1}>{item.label}</Text>
     </TouchableOpacity>
 ));
 
@@ -82,81 +64,64 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
         if (route) navigation.navigate(route);
     }, [navigation]);
 
-    const renderLeftTabs = () => (
-        <View style={styles.leftTabs}>
-            {TAB_LEFT.map((tab) => {
-                const routeIndex = getRouteIndex(tab.name);
-                const isFocused = state.index === routeIndex;
-                return (
-                    <TabItem
-                        key={tab.name}
-                        label={tab.label}
-                        icon={tab.icon}
-                        isActive={isFocused}
-                        onPress={() => navigation.navigate(tab.name)}
-                    />
-                );
-            })}
-        </View>
-    );
-
-    const renderRightTabs = () => (
-        <View style={styles.rightTabs}>
-            {TAB_RIGHT.map((tab) => {
-                const routeIndex = getRouteIndex(tab.name);
-                const isFocused = state.index === routeIndex;
-                const onPress = tab.name === 'More'
-                    ? () => setShowMoreMenu(true)
-                    : () => navigation.navigate(tab.name);
-                return (
-                    <TabItem
-                        key={tab.name}
-                        label={tab.label}
-                        icon={tab.icon}
-                        isActive={isFocused}
-                        onPress={onPress}
-                    />
-                );
-            })}
-        </View>
-    );
-
     return (
         <>
+            {/* Main Tab Bar Container */}
             <View style={styles.container}>
-                {/* Floating Punch Button - ABOVE tab bar */}
-                <TouchableOpacity
-                    style={styles.fabButton}
-                    onPress={onPunchPress}
-                    activeOpacity={0.85}
-                >
-                    <View style={styles.fabInner}>
-                        <Icon name="map-pin" size={26} color="#FFFFFF" />
-                        <Text style={styles.fabText}>Punch</Text>
-                    </View>
+                {/* Floating Punch Button */}
+                <TouchableOpacity style={styles.fabButton} onPress={onPunchPress} activeOpacity={0.85}>
+                    <Icon name="map-pin" size={24} color="#FFFFFF" />
+                    <Text style={styles.fabText}>Punch</Text>
                 </TouchableOpacity>
 
                 {/* Tab Bar */}
                 <View style={styles.tabBar}>
-                    {renderLeftTabs()}
+                    {/* Left Tabs */}
+                    <View style={styles.leftTabs}>
+                        {TAB_LEFT.map((tab) => {
+                            const routeIndex = getRouteIndex(tab.name);
+                            const isFocused = state.index === routeIndex;
+                            return (
+                                <TabItem
+                                    key={tab.name}
+                                    label={tab.label}
+                                    icon={tab.icon}
+                                    isActive={isFocused}
+                                    onPress={() => navigation.navigate(tab.name)}
+                                />
+                            );
+                        })}
+                    </View>
+
+                    {/* Center Spacer for FAB */}
                     <View style={styles.centerSpacer} />
-                    {renderRightTabs()}
+
+                    {/* Right Tabs */}
+                    <View style={styles.rightTabs}>
+                        {TAB_RIGHT.map((tab) => {
+                            const routeIndex = getRouteIndex(tab.name);
+                            const isFocused = state.index === routeIndex;
+                            const onPress = tab.name === 'More'
+                                ? () => setShowMoreMenu(true)
+                                : () => navigation.navigate(tab.name);
+                            return (
+                                <TabItem
+                                    key={tab.name}
+                                    label={tab.label}
+                                    icon={tab.icon}
+                                    isActive={isFocused}
+                                    onPress={onPress}
+                                />
+                            );
+                        })}
+                    </View>
                 </View>
             </View>
 
             {/* More Menu Modal */}
-            <Modal
-                visible={showMoreMenu}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setShowMoreMenu(false)}
-            >
-                <TouchableOpacity
-                    style={styles.modalOverlay}
-                    activeOpacity={1}
-                    onPress={() => setShowMoreMenu(false)}
-                >
-                    <SafeAreaView style={styles.modalContainer}>
+            <Modal visible={showMoreMenu} transparent animationType="slide" onRequestClose={() => setShowMoreMenu(false)}>
+                <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowMoreMenu(false)}>
+                    <View style={styles.modalContainer}>
                         <View style={styles.modalContent}>
                             <View style={styles.modalHeader}>
                                 <Text style={styles.modalTitle}>More Options</Text>
@@ -166,15 +131,11 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
                             </View>
                             <View style={styles.menuGrid}>
                                 {MENU_ITEMS.map((item) => (
-                                    <MenuItem
-                                        key={item.id}
-                                        item={item}
-                                        onPress={handleMenuItemPress}
-                                    />
+                                    <MenuItem key={item.id} item={item} onPress={handleMenuItemPress} />
                                 ))}
                             </View>
                         </View>
-                    </SafeAreaView>
+                    </View>
                 </TouchableOpacity>
             </Modal>
         </>
@@ -188,28 +149,20 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         alignItems: 'center',
-        paddingBottom: 34,
     },
     fabButton: {
-        width: 66,
-        height: 66,
-        borderRadius: 33,
-        backgroundColor: '#2563EB',
+        position: 'absolute',
+        bottom: 28,
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: colors.primary,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: -33,
         zIndex: 100,
-        elevation: 12,
-        shadowColor: '#2563EB',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.4,
-        shadowRadius: 12,
+        ...shadows.lg,
         borderWidth: 3,
         borderColor: '#FFFFFF',
-    },
-    fabInner: {
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     fabText: {
         color: '#FFFFFF',
@@ -219,19 +172,15 @@ const styles = StyleSheet.create({
     },
     tabBar: {
         flexDirection: 'row',
-        alignItems: 'flex-end',
+        alignItems: 'center',
         backgroundColor: '#FFFFFF',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        paddingVertical: 12,
-        paddingHorizontal: 8,
-        height: 72,
+        borderTopLeftRadius: borderRadius.lg,
+        borderTopRightRadius: borderRadius.lg,
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.sm,
+        height: 65,
         width: '100%',
-        elevation: 8,
-        shadowColor: '#000000',
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
+        ...shadows.md,
     },
     leftTabs: {
         flex: 1,
@@ -244,44 +193,44 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     centerSpacer: {
-        width: 66,
+        width: 60,
     },
     tabItem: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 4,
-        minWidth: 70,
+        paddingHorizontal: spacing.xxs,
+        minWidth: 60,
     },
     tabLabel: {
         fontSize: 11,
         fontWeight: '600',
-        marginTop: 4,
+        marginTop: 3,
         textAlign: 'center',
     },
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        backgroundColor: colors.overlay,
         justifyContent: 'flex-end',
     },
     modalContainer: {
         backgroundColor: '#FFFFFF',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        paddingBottom: 34,
+        borderTopLeftRadius: borderRadius.xl,
+        borderTopRightRadius: borderRadius.xl,
+        paddingBottom: Platform.OS === 'ios' ? 34 : 16,
     },
     modalContent: {
-        padding: 24,
+        padding: spacing.lg,
     },
     modalHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 24,
+        marginBottom: spacing.lg,
     },
     modalTitle: {
-        fontSize: 20,
-        fontWeight: '700',
+        fontSize: typography.sizes.xl,
+        fontWeight: typography.weights.bold,
         color: colors.textDark,
     },
     menuGrid: {
@@ -290,20 +239,20 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
     },
     menuItem: {
-        width: (width - 48 - 24) / 3,
+        width: (width - spacing.lg * 2 - spacing.md) / 3,
         alignItems: 'center',
-        marginBottom: 24,
+        marginBottom: spacing.lg,
     },
     menuIconContainer: {
-        width: 56,
-        height: 56,
-        borderRadius: 16,
+        width: 52,
+        height: 52,
+        borderRadius: borderRadius.md,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 8,
+        marginBottom: spacing.xs,
     },
     menuLabel: {
-        fontSize: 13,
+        fontSize: typography.sizes.sm,
         color: colors.textDark,
         fontWeight: '500',
         textAlign: 'center',

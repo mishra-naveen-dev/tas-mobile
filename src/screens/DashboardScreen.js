@@ -28,7 +28,7 @@ const ListItem = React.memo(({ item }) => (
         <View style={styles.listIconWrapper}>
             <Icon
                 name={item?.visit_type?.includes('COLLECT') ? 'dollar-sign' : 'map-pin'}
-                size={18}
+                size={16}
                 color={colors.primary}
             />
         </View>
@@ -255,33 +255,33 @@ const DashboardScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
-    heroSection: { backgroundColor: colors.primaryDark, borderBottomLeftRadius: borderRadius.xxl, borderBottomRightRadius: borderRadius.xxl },
-    heroContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', padding: spacing.lg, paddingTop: spacing.md },
+    heroSection: { backgroundColor: colors.primaryDark, borderBottomLeftRadius: borderRadius.xl, borderBottomRightRadius: borderRadius.xl },
+    heroContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', padding: spacing.lg, paddingTop: spacing.sm },
     heroLeft: { flex: 1 },
     heroRight: { alignItems: 'flex-end' },
-    companyBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: borderRadius.full, marginBottom: spacing.sm },
+    companyBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: borderRadius.full, marginBottom: spacing.xs },
     companyName: { fontSize: typography.sizes.xs, fontWeight: typography.weights.bold, color: '#FFFFFF', letterSpacing: 0.5, marginLeft: spacing.xxs },
-    greeting: { fontSize: typography.sizes.xxxl, fontWeight: typography.weights.bold, color: '#FFFFFF' },
+    greeting: { fontSize: typography.sizes.xxl, fontWeight: typography.weights.bold, color: '#FFFFFF', marginTop: spacing.xs },
     dateText: { fontSize: typography.sizes.sm, color: 'rgba(255,255,255,0.75)', marginTop: spacing.xxs },
-    logoutBtn: { width: 40, height: 40, borderRadius: borderRadius.md, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
+    logoutBtn: { width: 38, height: 38, borderRadius: borderRadius.sm, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginTop: spacing.xs },
     contentSection: { paddingHorizontal: spacing.md },
-    mapContainer: { height: 180, marginTop: spacing.lg, borderRadius: borderRadius.lg, overflow: 'hidden', ...shadows.md },
+    mapContainer: { height: 160, marginTop: spacing.md, marginHorizontal: spacing.md, borderRadius: borderRadius.md, overflow: 'hidden', ...shadows.sm },
     map: { flex: 1 },
-    mapControls: { position: 'absolute', top: spacing.sm, right: spacing.sm, backgroundColor: colors.surface, borderRadius: borderRadius.sm, ...shadows.sm },
-    controlBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 1, borderBottomColor: colors.divider },
+    mapControls: { position: 'absolute', top: spacing.xs, right: spacing.xs, backgroundColor: colors.surface, borderRadius: borderRadius.sm, ...shadows.sm },
+    controlBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 1, borderBottomColor: colors.divider },
     controlBtnLast: { borderBottomWidth: 0 },
-    mapCta: { position: 'absolute', bottom: spacing.sm, right: spacing.sm, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.primary, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: borderRadius.sm },
-    mapCtaText: { color: '#FFFFFF', fontSize: typography.sizes.xs, fontWeight: typography.weights.semibold, marginLeft: spacing.xxs },
-    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.xl, marginBottom: spacing.md },
-    sectionTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.semibold, color: colors.textDark },
-    sectionCount: { fontSize: typography.sizes.sm, color: colors.textMuted },
-    listContent: { paddingHorizontal: spacing.md, paddingBottom: 140 },
-    listItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: spacing.md, borderRadius: borderRadius.md, marginBottom: spacing.sm, ...shadows.xs },
-    listIconWrapper: { width: 40, height: 40, borderRadius: borderRadius.sm, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center', marginRight: spacing.sm },
+    mapCta: { position: 'absolute', bottom: spacing.xs, right: spacing.xs, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.primary, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.sm },
+    mapCtaText: { color: '#FFFFFF', fontSize: 10, fontWeight: typography.weights.semibold, marginLeft: 4 },
+    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.lg, marginBottom: spacing.sm, paddingHorizontal: spacing.md },
+    sectionTitle: { fontSize: typography.sizes.md, fontWeight: typography.weights.semibold, color: colors.textDark },
+    sectionCount: { fontSize: typography.sizes.xs, color: colors.textMuted },
+    listContent: { paddingHorizontal: spacing.md, paddingBottom: 120 },
+    listItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: spacing.sm, borderRadius: borderRadius.md, marginHorizontal: spacing.md, marginBottom: spacing.xs, ...shadows.xs },
+    listIconWrapper: { width: 36, height: 36, borderRadius: borderRadius.sm, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center', marginRight: spacing.sm },
     listTitle: { fontSize: typography.sizes.base, fontWeight: typography.weights.semibold, color: colors.textDark },
     listSubtitle: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 2 },
-    emptyState: { alignItems: 'center', paddingVertical: spacing.xxxl },
-    emptyText: { fontSize: typography.sizes.md, color: colors.textMuted, marginTop: spacing.md },
+    emptyState: { alignItems: 'center', paddingVertical: spacing.xl },
+    emptyText: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: spacing.sm },
 });
 
 export default DashboardScreen;

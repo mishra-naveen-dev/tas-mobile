@@ -17,11 +17,11 @@ export const colors = {
     info: '#2563EB',
     infoLight: '#DBEAFE',
     
-    background: '#F8FAFC',
+    background: '#F5F7FA',
     surface: '#FFFFFF',
     
     textDark: '#1E293B',
-    textMedium: '#475569',
+    textMedium: '#64748B',
     textMuted: '#94A3B8',
     textLight: '#CBD5E1',
     
