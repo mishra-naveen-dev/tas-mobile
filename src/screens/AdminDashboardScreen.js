@@ -58,7 +58,9 @@ const AdminDashboardScreen = ({ navigation }) => {
             }
         >
             <View style={styles.header}>
-                <Text style={styles.companyName}>Arman Financial Services Ltd</Text>
+                <View style={styles.companyBadge}>
+                    <Text style={styles.companyBadgeText}>ARMAN FINANCIAL SERVICES LTD</Text>
+                </View>
                 <Text style={styles.title}>Admin Dashboard</Text>
                 <Text style={styles.subtitle}>{user?.first_name} {user?.last_name}</Text>
             </View>
@@ -127,18 +129,27 @@ const styles = StyleSheet.create({
         padding: 20,
         backgroundColor: colors.primary,
         paddingTop: 50,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
     },
-    companyName: {
-        fontSize: 12,
-        fontWeight: '600',
+    companyBadge: {
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 20,
+        alignSelf: 'flex-start',
+        marginBottom: 12,
+    },
+    companyBadgeText: {
+        fontSize: 11,
+        fontWeight: '700',
         color: '#FFFFFF',
-        marginBottom: 4,
-        opacity: 0.9,
+        letterSpacing: 1,
     },
     title: {
-        fontSize: 24,
+        fontSize: 26,
         fontWeight: 'bold',
-        color: colors.white,
+        color: '#FFFFFF',
     },
     subtitle: {
         fontSize: 14,

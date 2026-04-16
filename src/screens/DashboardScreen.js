@@ -30,21 +30,26 @@ const StatItem = ({ icon, value, label, iconColor, bgColor }) => (
 
 const DashboardHeader = ({ username, onLogout }) => (
     <View style={styles.header}>
-        <View style={styles.headerLeft}>
-            <Text style={styles.companyName}>Arman Financial Services Ltd</Text>
-            <Text style={styles.greeting}>Hello, {username || 'Officer'}</Text>
-            <Text style={styles.dateText}>
-                {new Date().toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric'
-                })}
-            </Text>
+        <View style={styles.headerContent}>
+            <View style={styles.headerLeft}>
+                <View style={styles.companyBadge}>
+                    <Icon name="briefcase" size={14} color="#FFFFFF" />
+                    <Text style={styles.companyName}>ARMAN FINANCIAL SERVICES LTD</Text>
+                </View>
+                <Text style={styles.greeting}>Hello, {username || 'Officer'}</Text>
+                <Text style={styles.dateText}>
+                    {new Date().toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                    })}
+                </Text>
+            </View>
+            <TouchableOpacity style={styles.logoutBtn} onPress={onLogout} activeOpacity={0.7}>
+                <Icon name="log-out" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={onLogout} activeOpacity={0.7}>
-            <Icon name="log-out" size={22} color={colors.primary} />
-        </TouchableOpacity>
     </View>
 );
 
@@ -346,43 +351,55 @@ const styles = StyleSheet.create({
         backgroundColor: '#F5F5F5',
     },
     header: {
+        backgroundColor: colors.primaryDark,
+        paddingTop: 50,
+        paddingBottom: spacing.xl,
+        paddingHorizontal: spacing.lg,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+    },
+    headerContent: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.lg,
+        alignItems: 'flex-start',
     },
     headerLeft: {
         flex: 1,
     },
+    companyBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+        alignSelf: 'flex-start',
+        marginBottom: spacing.md,
+    },
     companyName: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: colors.primary,
-        marginBottom: 2,
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#FFFFFF',
+        letterSpacing: 1,
+        marginLeft: 6,
     },
     greeting: {
-        fontSize: 24,
+        fontSize: 26,
         fontWeight: '700',
-        color: colors.textDark,
+        color: '#FFFFFF',
     },
     dateText: {
-        fontSize: 13,
-        color: colors.textMuted,
+        fontSize: 14,
+        color: 'rgba(255,255,255,0.8)',
         marginTop: 4,
     },
     logoutBtn: {
         width: 44,
         height: 44,
         borderRadius: 12,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'rgba(255,255,255,0.2)',
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 8,
-        elevation: 3,
     },
     statsCard: {
         backgroundColor: '#FFFFFF',
