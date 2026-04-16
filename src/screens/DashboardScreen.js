@@ -16,30 +16,17 @@ import { AuthContext } from '../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { colors, typography, spacing, borderRadius, shadows } from '../theme/tokens';
-import { SkeletonStatsGrid, SkeletonListItem } from '../components/SkeletonComponents';
+import { SkeletonStatsGrid } from '../components/SkeletonComponents';
 import StatCard from '../components/StatCard';
 import StatusBadge from '../components/StatusBadge';
 import ErrorView from '../components/ErrorView';
+import ActivityCard from '../components/ActivityCard';
+import ActivityFilterBar from '../components/ActivityFilterBar';
+import SectionHeader from '../components/SectionHeader';
+import ActivityPresenter from '../presenters/ActivityPresenter';
+import { mapApiResponseToActivities } from '../models/ActivityModel';
 
 const COMPANY_NAME = 'ARMAN FINANCIAL SERVICES LTD';
-
-const ListItem = React.memo(({ item }) => (
-    <View style={styles.listItem}>
-        <View style={styles.listIconWrapper}>
-            <Icon
-                name={item?.visit_type?.includes('COLLECT') ? 'dollar-sign' : 'map-pin'}
-                size={16}
-                color={colors.primary}
-            />
-        </View>
-        <View style={styles.listContent}>
-            <Text style={styles.listTitle}>{item?.visit_type || 'Location Ping'}</Text>
-            <Text style={styles.listSubtitle}>
-                {item?.punched_at ? new Date(item.punched_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
-            </Text>
-        </View>
-    </View>
-));
 
 const MapPreview = React.memo(({ points, mapRef, navigation }) => {
     const latestPoint = points[0];
@@ -112,6 +99,7 @@ const DashboardScreen = ({ navigation }) => {
     const [punches, setPunches] = useState([]);
     const [isOnline, setIsOnline] = useState(true);
     const [isGpsActive, setIsGpsActive] = useState(false);
+    const [selectedFilter, setSelectedFilter] = useState('ALL');
 
     const checkNetwork = useCallback(async () => {
         try {
@@ -179,6 +167,23 @@ const DashboardScreen = ({ navigation }) => {
         [punches]
     );
 
+    const activities = useMemo(() => {
+        const mappedActivities = mapApiResponseToActivities(punches, []);
+        const filtered = ActivityPresenter.filterActivities(mappedActivities, selectedFilter);
+        return ActivityPresenter.groupActivitiesByTime(filtered);
+    }, [punches, selectedFilter]);
+
+    const flatListData = useMemo(() => {
+        const data = [];
+        activities.forEach(section => {
+            data.push({ type: 'sectionHeader', title: section.title, count: section.data.length });
+            section.data.forEach(activity => {
+                data.push({ type: 'activity', ...activity });
+            });
+        });
+        return data;
+    }, [activities]);
+
     const ListHeader = useMemo(() => (
         <>
             <View style={styles.heroSection}>
@@ -222,27 +227,44 @@ const DashboardScreen = ({ navigation }) => {
 
                 <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>Today's Activity</Text>
-                    <Text style={styles.sectionCount}>{punches.length} punches</Text>
+                    <Text style={styles.sectionCount}>{activities.reduce((acc, s) => acc + s.data.length, 0)} items</Text>
                 </View>
+
+                <ActivityFilterBar 
+                    selectedFilter={selectedFilter} 
+                    onFilterChange={setSelectedFilter} 
+                />
             </View>
         </>
-    ), [user?.username, logout, isOnline, isGpsActive, hasError, isLoading, statsData, routePoints, navigation, fetchData]);
+    ), [user?.username, logout, isOnline, isGpsActive, hasError, isLoading, statsData, routePoints, navigation, fetchData, activities, selectedFilter]);
 
-    const renderItem = useCallback(({ item }) => <ListItem item={item} />, []);
-    const keyExtractor = useCallback((_, index) => index.toString(), []);
+    const renderItem = useCallback(({ item }) => {
+        if (item.type === 'sectionHeader') {
+            return <SectionHeader title={item.title} count={item.count} />;
+        }
+        return <ActivityCard activity={item} />;
+    }, []);
+
+    const keyExtractor = useCallback((item, index) => 
+        item.type === 'sectionHeader' ? `header-${item.title}` : item.id || index.toString(), 
+    []);
 
     return (
         <SafeAreaView style={styles.container} edges={['bottom']}>
             <StatusBar barStyle="light-content" backgroundColor={colors.primaryDark} />
             <FlatList
-                data={punches}
+                data={flatListData}
                 renderItem={renderItem}
                 keyExtractor={keyExtractor}
                 ListHeaderComponent={ListHeader}
                 ListEmptyComponent={!isLoading && !hasError ? () => (
                     <View style={styles.emptyState}>
                         <Icon name="inbox" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>No activity recorded yet today</Text>
+                        <Text style={styles.emptyText}>
+                            {selectedFilter === 'ALL' 
+                                ? 'No activity recorded yet today' 
+                                : 'No activities match the selected filter'}
+                        </Text>
                     </View>
                 ) : null}
                 refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} tintColor={colors.primary} />}
@@ -255,8 +277,8 @@ const DashboardScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
-    heroSection: { backgroundColor: colors.primaryDark, borderBottomLeftRadius: borderRadius.xl, borderBottomRightRadius: borderRadius.xl },
-    heroContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', padding: spacing.lg, paddingTop: spacing.sm },
+    heroSection: { backgroundColor: colors.primaryDark, borderBottomLeftRadius: borderRadius.xl, borderBottomRightRadius: borderRadius.xl, marginHorizontal: -spacing.md },
+    heroContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
     heroLeft: { flex: 1 },
     heroRight: { alignItems: 'flex-end' },
     companyBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: borderRadius.full, marginBottom: spacing.xs },
@@ -264,7 +286,7 @@ const styles = StyleSheet.create({
     greeting: { fontSize: typography.sizes.xxl, fontWeight: typography.weights.bold, color: '#FFFFFF', marginTop: spacing.xs },
     dateText: { fontSize: typography.sizes.sm, color: 'rgba(255,255,255,0.75)', marginTop: spacing.xxs },
     logoutBtn: { width: 38, height: 38, borderRadius: borderRadius.sm, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginTop: spacing.xs },
-    contentSection: { paddingHorizontal: spacing.md },
+    contentSection: { paddingHorizontal: spacing.md, marginTop: spacing.lg },
     mapContainer: { height: 160, marginTop: spacing.md, marginHorizontal: spacing.md, borderRadius: borderRadius.md, overflow: 'hidden', ...shadows.sm },
     map: { flex: 1 },
     mapControls: { position: 'absolute', top: spacing.xs, right: spacing.xs, backgroundColor: colors.surface, borderRadius: borderRadius.sm, ...shadows.sm },
@@ -276,10 +298,6 @@ const styles = StyleSheet.create({
     sectionTitle: { fontSize: typography.sizes.md, fontWeight: typography.weights.semibold, color: colors.textDark },
     sectionCount: { fontSize: typography.sizes.xs, color: colors.textMuted },
     listContent: { paddingHorizontal: spacing.md, paddingBottom: 120 },
-    listItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: spacing.sm, borderRadius: borderRadius.md, marginHorizontal: spacing.md, marginBottom: spacing.xs, ...shadows.xs },
-    listIconWrapper: { width: 36, height: 36, borderRadius: borderRadius.sm, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center', marginRight: spacing.sm },
-    listTitle: { fontSize: typography.sizes.base, fontWeight: typography.weights.semibold, color: colors.textDark },
-    listSubtitle: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 2 },
     emptyState: { alignItems: 'center', paddingVertical: spacing.xl },
     emptyText: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: spacing.sm },
 });
