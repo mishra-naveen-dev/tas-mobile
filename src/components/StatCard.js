@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, Fragment } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography, spacing, borderRadius, shadows } from '../theme/tokens';
@@ -47,7 +47,7 @@ const StatCard = ({ data = [], columns = 2, style }) => {
                     const isLastRow = index >= data.length - (data.length % columns || columns);
                     
                     return (
-                        <React.Fragment key={item.label}>
+                        <Fragment key={item.label}>
                             <View style={styles.statItem}>
                                 <View style={[styles.iconWrapper, { backgroundColor: item.bgColor }]}>
                                     <Icon name={item.icon} size={20} color={item.iconColor} />
@@ -60,7 +60,7 @@ const StatCard = ({ data = [], columns = 2, style }) => {
                                 <Text style={styles.label}>{item.label}</Text>
                             </View>
                             {!isLastInRow && <View style={styles.verticalDivider} />}
-                        </>
+                        </Fragment>
                     );
                 })}
             </View>
