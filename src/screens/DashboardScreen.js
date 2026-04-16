@@ -6,8 +6,7 @@ import {
     StyleSheet,
     ActivityIndicator,
     TouchableOpacity,
-    RefreshControl,
-    ScrollView
+    RefreshControl
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -15,10 +14,9 @@ import { useFocusEffect } from '@react-navigation/native';
 import api from '../api/api';
 import { AuthContext } from '../context/AuthContext';
 import GlassCard from '../components/GlassCard';
-import PrimaryButton from '../components/PrimaryButton';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from 'react-native-maps';
-import { colors, typography, spacing, shadows } from '../theme/tokens';
+import { colors, typography, spacing } from '../theme/tokens';
 
 const DashboardScreen = ({ navigation }) => {
     const { token, user, logout } = useContext(AuthContext);
@@ -293,14 +291,6 @@ const DashboardScreen = ({ navigation }) => {
                 }}
             />
 
-            {/* FAB */}
-            <TouchableOpacity
-                style={[styles.fab, shadows.floating]}
-                onPress={() => navigation.navigate('Punch')}
-            >
-                <Icon name="plus" size={32} color="#FFF" />
-            </TouchableOpacity>
-
         </SafeAreaView>
     );
 };
@@ -420,17 +410,6 @@ const styles = StyleSheet.create({
         color: colors.textMuted,
         textAlign: 'center',
         marginTop: spacing.lg,
-    },
-    fab: {
-        position: 'absolute',
-        bottom: spacing.xl,
-        alignSelf: 'center',
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        backgroundColor: colors.primary,
-        justifyContent: 'center',
-        alignItems: 'center',
     },
     mapWrap: {
         height: 180,
