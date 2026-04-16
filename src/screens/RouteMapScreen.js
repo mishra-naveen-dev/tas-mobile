@@ -68,6 +68,30 @@ const RouteMapScreen = ({ navigation, route }) => {
         fetchRoute();
     };
 
+    const centerOnCurrentLocation = () => {
+        if (coordinates.length === 0) return;
+        
+        const latestPoint = coordinates[coordinates.length - 1];
+        
+        if (mapRef.current) {
+            mapRef.current.animateToRegion({
+                latitude: latestPoint.latitude,
+                longitude: latestPoint.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01
+            }, 500);
+        }
+    };
+
+    const fitAllCoordinates = () => {
+        if (coordinates.length > 1 && mapRef.current) {
+            mapRef.current.fitToCoordinates(coordinates, {
+                edgePadding: { top: 50, right: 50, bottom: 100, left: 50 },
+                animated: true
+            });
+        }
+    };
+
     const getAllCoordinates = () => {
         if (!routeData?.routes) return [];
 
@@ -187,7 +211,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                     onMapReady={() => {
                         if (coordinates.length > 1) {
                             mapRef.current?.fitToCoordinates(coordinates, {
-                                edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                                edgePadding: { top: 50, right: 50, bottom: 100, left: 50 },
                                 animated: true
                             });
                         }
@@ -206,7 +230,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                         <Marker
                             coordinate={{ latitude: end.latitude, longitude: end.longitude }}
                             pinColor="red"
-                            title="Current"
+                            title="Latest Point"
                             description={`Time: ${formatTime(end.timestamp)}`}
                         />
                     )}
@@ -222,6 +246,24 @@ const RouteMapScreen = ({ navigation, route }) => {
                         />
                     )}
                 </MapView>
+
+                {/* Map Control Buttons */}
+                <View style={styles.mapControls}>
+                    <TouchableOpacity 
+                        style={styles.mapControlBtn} 
+                        onPress={centerOnCurrentLocation}
+                        activeOpacity={0.8}
+                    >
+                        <Icon name="crosshair" size={22} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                        style={styles.mapControlBtn} 
+                        onPress={fitAllCoordinates}
+                        activeOpacity={0.8}
+                    >
+                        <Icon name="maximize-2" size={22} color={colors.primary} />
+                    </TouchableOpacity>
+                </View>
 
                 <View style={styles.mapOverlay}>
                     <Text style={styles.mapOverlayText}>
@@ -400,6 +442,29 @@ const styles = StyleSheet.create({
     mapOverlayText: {
         color: '#fff',
         fontSize: typography.sizes.xs,
+    },
+    mapControls: {
+        position: 'absolute',
+        top: spacing.md,
+        right: spacing.md,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    mapControlBtn: {
+        width: 48,
+        height: 48,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6',
+    },
+    mapControlBtnLast: {
+        borderBottomWidth: 0,
     },
     infoContainer: {
         flex: 1,
