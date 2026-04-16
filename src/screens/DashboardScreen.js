@@ -1,4 +1,4 @@
-import React, { useState, useContext, useCallback } from 'react';
+import React, { useState, useContext, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -89,6 +89,7 @@ const StatsCard = ({ summary }) => (
 
 const DashboardScreen = ({ navigation }) => {
     const { token, user, logout } = useContext(AuthContext);
+    const mapRef = useRef(null);
 
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -96,6 +97,36 @@ const DashboardScreen = ({ navigation }) => {
     const [punches, setPunches] = useState([]);
     const [filterType, setFilterType] = useState('ALL');
     const [showFilter, setShowFilter] = useState(false);
+
+    const validRoutePoints = (punches || [])
+        .filter(p => p.latitude && p.longitude)
+        .sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
+        .map(p => ({
+            latitude: Number(p.latitude),
+            longitude: Number(p.longitude),
+        }));
+
+    const centerOnCurrentLocation = () => {
+        if (validRoutePoints.length === 0) return;
+        const latestPoint = validRoutePoints[validRoutePoints.length - 1];
+        if (mapRef.current) {
+            mapRef.current.animateToRegion({
+                latitude: latestPoint.latitude,
+                longitude: latestPoint.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01
+            }, 500);
+        }
+    };
+
+    const fitAllCoordinates = () => {
+        if (validRoutePoints.length > 1 && mapRef.current) {
+            mapRef.current.fitToCoordinates(validRoutePoints, {
+                edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                animated: true
+            });
+        }
+    };
 
     const fetchData = useCallback(async (isRefresh = false) => {
         if (!token) return;
@@ -163,14 +194,6 @@ const DashboardScreen = ({ navigation }) => {
         </View>
     );
 
-    const validRoutePoints = (punches || [])
-        .filter(p => p.latitude && p.longitude)
-        .sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
-        .map(p => ({
-            latitude: Number(p.latitude),
-            longitude: Number(p.longitude),
-        }));
-
     if (loading && !refreshing && Object.keys(summary).length === 0) {
         return (
             <View style={styles.loadingContainer}>
@@ -206,6 +229,7 @@ const DashboardScreen = ({ navigation }) => {
                                 onPress={() => navigation.navigate('RouteMap')}
                             >
                                 <MapView
+                                    ref={mapRef}
                                     style={styles.mapEmbed}
                                     initialRegion={{
                                         latitude: validRoutePoints[0]?.latitude || 23.0225,
@@ -229,6 +253,25 @@ const DashboardScreen = ({ navigation }) => {
                                         </>
                                     )}
                                 </MapView>
+
+                                {/* Map Control Buttons */}
+                                <View style={styles.mapControls}>
+                                    <TouchableOpacity 
+                                        style={styles.mapControlBtn} 
+                                        onPress={centerOnCurrentLocation}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Icon name="crosshair" size={20} color={colors.primary} />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={[styles.mapControlBtn, styles.mapControlBtnLast]} 
+                                        onPress={fitAllCoordinates}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Icon name="maximize-2" size={20} color={colors.primary} />
+                                    </TouchableOpacity>
+                                </View>
+
                                 <View style={styles.mapOverlayButton}>
                                     <Icon name="maximize-2" size={14} color="#fff" />
                                     <Text style={styles.mapOverlayButtonText}>View Full Route</Text>
@@ -413,6 +456,29 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
         marginLeft: 6,
+    },
+    mapControls: {
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 6,
+        elevation: 4,
+    },
+    mapControlBtn: {
+        width: 40,
+        height: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6',
+    },
+    mapControlBtnLast: {
+        borderBottomWidth: 0,
     },
     sectionHeader: {
         flexDirection: 'row',
