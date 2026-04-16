@@ -1,19 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, SafeAreaView, Dimensions } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography, spacing, shadows } from '../theme/tokens';
 
 const { width } = Dimensions.get('window');
 
-const TAB_CONFIG = [
+const TAB_LEFT = [
     { name: 'Home', label: 'Home', icon: 'home' },
     { name: 'Correction', label: 'Correction', icon: 'edit-3' },
+];
+
+const TAB_RIGHT = [
     { name: 'Allowance', label: 'Allowance', icon: 'file-text' },
     { name: 'More', label: 'More', icon: 'grid' },
 ];
 
 const MENU_ITEMS = [
-    { id: 'profile', label: 'Profile', icon: 'user', color: '#4F46E5' },
+    { id: 'profile', label: 'Profile', icon: 'user', color: '#DC2626' },
     { id: 'devices', label: 'My Devices', icon: 'smartphone', color: '#059669' },
     { id: 'history', label: 'History', icon: 'clock', color: '#D97706' },
     { id: 'settings', label: 'Settings', icon: 'settings', color: '#64748B' },
@@ -21,110 +24,124 @@ const MENU_ITEMS = [
     { id: 'logout', label: 'Logout', icon: 'log-out', color: '#DC2626' },
 ];
 
+const TabItem = React.memo(({ label, icon, isActive, onPress }) => (
+    <TouchableOpacity
+        style={styles.tabItem}
+        onPress={onPress}
+        activeOpacity={0.7}
+    >
+        <Icon
+            name={icon}
+            size={24}
+            color={isActive ? colors.primary : colors.textMuted}
+        />
+        <Text
+            style={[
+                styles.tabLabel,
+                { color: isActive ? colors.primary : colors.textMuted }
+            ]}
+        >
+            {label}
+        </Text>
+    </TouchableOpacity>
+));
+
+const MenuItem = React.memo(({ item, onPress }) => (
+    <TouchableOpacity
+        style={styles.menuItem}
+        onPress={() => onPress(item)}
+        activeOpacity={0.7}
+    >
+        <View style={[styles.menuIconContainer, { backgroundColor: item.color + '20' }]}>
+            <Icon name={item.icon} size={24} color={item.color} />
+        </View>
+        <Text style={styles.menuLabel}>{item.label}</Text>
+    </TouchableOpacity>
+));
+
 const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
     const [showMoreMenu, setShowMoreMenu] = useState(false);
 
-    const getIconName = (routeName) => {
-        const icons = {
-            Home: 'home',
-            Correction: 'edit-3',
-            Allowance: 'file-text',
-            More: 'grid',
-        };
-        return icons[routeName] || 'circle';
-    };
+    const getRouteIndex = useCallback((routeName) => {
+        const allRoutes = [...TAB_LEFT.map(t => t.name), ...TAB_RIGHT.map(t => t.name)];
+        return allRoutes.indexOf(routeName);
+    }, []);
 
-    const handleMenuPress = () => {
-        setShowMoreMenu(true);
-    };
-
-    const handleMenuItemPress = (item) => {
+    const handleMenuItemPress = useCallback((item) => {
         setShowMoreMenu(false);
-        if (item.id === 'logout') {
-            navigation.navigate('ChangePassword');
-        } else if (item.id === 'profile') {
+        if (item.id === 'logout' || item.id === 'profile') {
             navigation.navigate('ChangePassword');
         } else if (item.id === 'history') {
             navigation.navigate('PunchHistory');
         } else if (item.id === 'devices') {
             navigation.navigate('ChangePassword');
+        } else if (item.id === 'settings') {
+            navigation.navigate('ChangePassword');
+        } else if (item.id === 'support') {
+            navigation.navigate('ChangePassword');
         }
-    };
+    }, [navigation]);
+
+    const renderLeftTabs = () => (
+        <View style={styles.leftTabsContainer}>
+            {TAB_LEFT.map((tab, index) => {
+                const routeIndex = getRouteIndex(tab.name);
+                const isFocused = state.index === routeIndex;
+                return (
+                    <TabItem
+                        key={tab.name}
+                        label={tab.label}
+                        icon={tab.icon}
+                        isActive={isFocused}
+                        onPress={() => navigation.navigate(tab.name)}
+                    />
+                );
+            })}
+        </View>
+    );
+
+    const renderRightTabs = () => (
+        <View style={styles.rightTabsContainer}>
+            {TAB_RIGHT.map((tab) => {
+                const routeIndex = getRouteIndex(tab.name);
+                const isFocused = state.index === routeIndex;
+                const onPress = tab.name === 'More'
+                    ? () => setShowMoreMenu(true)
+                    : () => navigation.navigate(tab.name);
+                return (
+                    <TabItem
+                        key={tab.name}
+                        label={tab.label}
+                        icon={tab.icon}
+                        isActive={isFocused}
+                        onPress={onPress}
+                    />
+                );
+            })}
+        </View>
+    );
 
     return (
         <>
-            <View style={styles.tabBarContainer}>
+            {/* Tab Bar Container with FAB floating above */}
+            <View style={styles.tabBarWrapper}>
+                {/* Floating Punch Button - positioned above tab bar */}
+                <View style={styles.fabContainer}>
+                    <TouchableOpacity
+                        style={styles.fabButton}
+                        onPress={onPunchPress}
+                        activeOpacity={0.8}
+                    >
+                        <Icon name="map-pin" size={26} color="#FFFFFF" />
+                    </TouchableOpacity>
+                    <Text style={styles.fabLabel}>Punch</Text>
+                </View>
+
+                {/* Tab Bar */}
                 <View style={styles.tabBar}>
-                    {/* Left Tabs */}
-                    <View style={styles.leftTabs}>
-                        {TAB_CONFIG.slice(0, 2).map((tab, index) => {
-                            const isFocused = state.index === index;
-                            return (
-                                <TouchableOpacity
-                                    key={tab.name}
-                                    style={styles.tabItem}
-                                    onPress={() => navigation.navigate(tab.name)}
-                                    activeOpacity={0.7}
-                                >
-                                    <Icon
-                                        name={getIconName(tab.name)}
-                                        size={22}
-                                        color={isFocused ? colors.primary : colors.textMuted}
-                                    />
-                                    <Text
-                                        style={[
-                                            styles.tabLabel,
-                                            { color: isFocused ? colors.primary : colors.textMuted }
-                                        ]}
-                                    >
-                                        {tab.label}
-                                    </Text>
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
-
-                    {/* Center Floating Punch Button */}
-                    <View style={styles.punchButtonContainer}>
-                        <TouchableOpacity
-                            style={styles.punchButton}
-                            onPress={onPunchPress}
-                            activeOpacity={0.8}
-                        >
-                            <Icon name="map-pin" size={28} color="#FFFFFF" />
-                        </TouchableOpacity>
-                        <Text style={styles.punchLabel}>Punch</Text>
-                    </View>
-
-                    {/* Right Tabs */}
-                    <View style={styles.rightTabs}>
-                        {TAB_CONFIG.slice(2, 4).map((tab, index) => {
-                            const actualIndex = index + 2;
-                            const isFocused = state.index === actualIndex;
-                            return (
-                                <TouchableOpacity
-                                    key={tab.name}
-                                    style={styles.tabItem}
-                                    onPress={() => tab.name === 'More' ? handleMenuPress() : navigation.navigate(tab.name)}
-                                    activeOpacity={0.7}
-                                >
-                                    <Icon
-                                        name={getIconName(tab.name)}
-                                        size={22}
-                                        color={isFocused ? colors.primary : colors.textMuted}
-                                    />
-                                    <Text
-                                        style={[
-                                            styles.tabLabel,
-                                            { color: isFocused ? colors.primary : colors.textMuted }
-                                        ]}
-                                    >
-                                        {tab.label}
-                                    </Text>
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
+                    {renderLeftTabs()}
+                    <View style={styles.centerSpacer} />
+                    {renderRightTabs()}
                 </View>
             </View>
 
@@ -151,17 +168,11 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
 
                             <View style={styles.menuGrid}>
                                 {MENU_ITEMS.map((item) => (
-                                    <TouchableOpacity
+                                    <MenuItem
                                         key={item.id}
-                                        style={styles.menuItem}
-                                        onPress={() => handleMenuItemPress(item)}
-                                        activeOpacity={0.7}
-                                    >
-                                        <View style={[styles.menuIconContainer, { backgroundColor: item.color + '20' }]}>
-                                            <Icon name={item.icon} size={24} color={item.color} />
-                                        </View>
-                                        <Text style={styles.menuLabel}>{item.label}</Text>
-                                    </TouchableOpacity>
+                                        item={item}
+                                        onPress={handleMenuItemPress}
+                                    />
                                 ))}
                             </View>
                         </View>
@@ -173,65 +184,70 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
 };
 
 const styles = StyleSheet.create({
-    tabBarContainer: {
+    tabBarWrapper: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
+        alignItems: 'center',
         paddingHorizontal: spacing.md,
         paddingBottom: spacing.sm,
     },
     tabBar: {
         flexDirection: 'row',
-        alignItems: 'flex-end',
+        alignItems: 'center',
         backgroundColor: colors.surface,
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
         paddingVertical: spacing.sm,
-        paddingHorizontal: spacing.md,
+        paddingHorizontal: spacing.lg,
+        height: 70,
+        width: '100%',
         ...shadows.medium,
     },
-    leftTabs: {
+    leftTabsContainer: {
         flex: 1,
         flexDirection: 'row',
         justifyContent: 'flex-start',
     },
-    rightTabs: {
+    rightTabsContainer: {
         flex: 1,
         flexDirection: 'row',
         justifyContent: 'flex-end',
+    },
+    centerSpacer: {
+        width: 60,
     },
     tabItem: {
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: spacing.md,
-        paddingVertical: spacing.xs,
         minWidth: 70,
+        flex: 1,
     },
     tabLabel: {
         fontSize: typography.sizes.xs,
         fontWeight: '600',
         marginTop: 4,
     },
-    punchButtonContainer: {
+    fabContainer: {
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: spacing.sm,
+        marginBottom: -10,
         zIndex: 10,
     },
-    punchButton: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
+    fabButton: {
+        width: 58,
+        height: 58,
+        borderRadius: 29,
         backgroundColor: colors.primary,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: -20,
-        ...shadows.floating,
         borderWidth: 4,
         borderColor: colors.surface,
+        ...shadows.floating,
     },
-    punchLabel: {
+    fabLabel: {
         fontSize: typography.sizes.xs,
         fontWeight: '700',
         color: colors.primary,

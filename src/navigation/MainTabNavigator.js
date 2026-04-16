@@ -34,8 +34,8 @@ const MainTabNavigator = () => {
                 <Tab.Screen name="Correction" component={PunchCorrectionScreen} />
                 <Tab.Screen name="Allowance" component={ApplyAllowanceScreen} />
                 <Tab.Screen name="History" component={HistoryHubScreen} />
-                <Tab.Screen 
-                    name="More" 
+                <Tab.Screen
+                    name="More"
                     component={DashboardScreen}
                     listeners={{
                         tabPress: (e) => e.preventDefault(),
