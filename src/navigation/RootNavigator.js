@@ -1,0 +1,235 @@
+import React from 'react';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { View, StyleSheet } from 'react-native';
+import Icon from 'react-native-vector-icons/Feather';
+import { colors, typography } from '../theme/tokens';
+
+import LoginScreen from '../screens/LoginScreen';
+import ChangePasswordScreen from '../screens/ChangePasswordScreen';
+
+import PunchScreen from '../screens/PunchScreen';
+import RouteMapScreen from '../screens/RouteMapScreen';
+import PunchHistoryScreen from '../screens/PunchHistoryScreen';
+import PunchCorrectionScreen from '../screens/PunchCorrectionScreen';
+import AllowanceHistoryScreen from '../screens/AllowanceHistoryScreen';
+import ApplyAllowanceScreen from '../screens/ApplyAllowanceScreen';
+import DailySummaryScreen from '../screens/DailySummaryScreen';
+
+import AdminDashboardScreen from '../screens/AdminDashboardScreen';
+import AdminApprovalsScreen from '../screens/AdminApprovalsScreen';
+import AdminDevicesScreen from '../screens/AdminDevicesScreen';
+
+import SuperAdminDashboardScreen from '../screens/SuperAdminDashboardScreen';
+import DashboardScreen from '../screens/DashboardScreen';
+
+import UserManagementScreen from '../screens/UserManagementScreen';
+import EmployeeListScreen from '../screens/EmployeeListScreen';
+import EmployeeTrackingScreen from '../screens/EmployeeTrackingScreen';
+import ApprovalRoutesScreen from '../screens/ApprovalRoutesScreen';
+import OrgSettingsScreen from '../screens/OrgSettingsScreen';
+import ReportsScreen from '../screens/ReportsScreen';
+import CreateUserScreen from '../screens/CreateUserScreen';
+
+import SuperAdminHomeScreen from '../screens/SuperAdminHomeScreen';
+import SuperAdminAnalyticsScreen from '../screens/SuperAdminAnalyticsScreen';
+import SuperAdminEmployeesScreen from '../screens/SuperAdminEmployeesScreen';
+import SuperAdminMoreScreen from '../screens/SuperAdminMoreScreen';
+
+import EmployeeHomeScreen from '../screens/EmployeeHomeScreen';
+import EmployeeCorrectionScreen from '../screens/EmployeeCorrectionScreen';
+import EmployeeAllowanceScreen from '../screens/EmployeeAllowanceScreen';
+import EmployeeMoreScreen from '../screens/EmployeeMoreScreen';
+import EmployeePunchScreen from '../screens/EmployeePunchScreen';
+
+import CustomTabBar from '../components/CustomTabBar';
+import { useAuth } from '../context/AuthContext';
+
+const AuthStack = createNativeStackNavigator();
+const EmployeeTab = createBottomTabNavigator();
+const EmployeeStack = createNativeStackNavigator();
+const AdminStack = createNativeStackNavigator();
+const SuperAdminTab = createBottomTabNavigator();
+const SuperAdminStack = createNativeStackNavigator();
+
+const commonScreenOptions = {
+    headerShown: false,
+};
+
+const AuthStackNavigator = () => (
+    <AuthStack.Navigator screenOptions={commonScreenOptions}>
+        <AuthStack.Screen name="Login" component={LoginScreen} />
+        <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+    </AuthStack.Navigator>
+);
+
+const EmployeeTabNavigator = () => (
+    <EmployeeTab.Navigator
+        tabBar={(props) => <CustomTabBar {...props} />}
+        screenOptions={{
+            headerShown: false,
+        }}
+    >
+        <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
+        <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
+        <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
+        <EmployeeTab.Screen name="EmployeeAllowance" component={EmployeeAllowanceScreen} />
+        <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
+    </EmployeeTab.Navigator>
+);
+
+const EmployeeStackNavigator = () => (
+    <EmployeeStack.Navigator screenOptions={commonScreenOptions}>
+        <EmployeeStack.Screen name="EmployeeTabs" component={EmployeeTabNavigator} />
+        <EmployeeStack.Screen name="Punch" component={PunchScreen} />
+        <EmployeeStack.Screen name="RouteMap" component={RouteMapScreen} />
+        <EmployeeStack.Screen name="PunchHistory" component={PunchHistoryScreen} />
+        <EmployeeStack.Screen name="PunchCorrection" component={PunchCorrectionScreen} />
+        <EmployeeStack.Screen name="AllowanceHistory" component={AllowanceHistoryScreen} />
+        <EmployeeStack.Screen name="ApplyAllowance" component={ApplyAllowanceScreen} />
+        <EmployeeStack.Screen name="DailySummary" component={DailySummaryScreen} />
+        <EmployeeStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+    </EmployeeStack.Navigator>
+);
+
+const AdminStackNavigator = () => (
+    <AdminStack.Navigator screenOptions={commonScreenOptions}>
+        <AdminStack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+        <AdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
+        <AdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
+        <AdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+    </AdminStack.Navigator>
+);
+
+const SuperAdminTabNavigator = () => (
+    <SuperAdminTab.Navigator
+        screenOptions={({ route }) => ({
+            headerShown: false,
+            tabBarIcon: ({ color, focused }) => {
+                let iconName;
+                switch (route.name) {
+                    case 'SuperAdminHome':
+                        iconName = 'home';
+                        break;
+                    case 'SuperAdminAnalytics':
+                        iconName = 'bar-chart-2';
+                        break;
+                    case 'SuperAdminEmployees':
+                        iconName = 'users';
+                        break;
+                    case 'SuperAdminMore':
+                        iconName = 'menu';
+                        break;
+                    default:
+                        iconName = 'circle';
+                }
+                return (
+                    <View style={[styles.tabIconContainer, focused && styles.tabIconFocused]}>
+                        <Icon name={iconName} size={22} color={color} />
+                    </View>
+                );
+            },
+            tabBarActiveTintColor: colors.primary,
+            tabBarInactiveTintColor: colors.textMuted,
+            tabBarStyle: {
+                backgroundColor: colors.surface,
+                borderTopColor: colors.border,
+                borderTopLeftRadius: 20,
+                borderTopRightRadius: 20,
+                height: 70,
+                paddingBottom: 10,
+                paddingTop: 10,
+                position: 'absolute',
+                elevation: 8,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: -2 },
+                shadowOpacity: 0.1,
+                shadowRadius: 8,
+            },
+            tabBarLabelStyle: {
+                fontSize: typography.sizes.sm,
+                fontWeight: typography.weights.semibold,
+            },
+        })}
+    >
+        <SuperAdminTab.Screen
+            name="SuperAdminHome"
+            component={SuperAdminHomeScreen}
+            options={{ tabBarLabel: 'Home' }}
+        />
+        <SuperAdminTab.Screen
+            name="SuperAdminAnalytics"
+            component={SuperAdminAnalyticsScreen}
+            options={{ tabBarLabel: 'Analytics' }}
+        />
+        <SuperAdminTab.Screen
+            name="SuperAdminEmployees"
+            component={SuperAdminEmployeesScreen}
+            options={{ tabBarLabel: 'Employees' }}
+        />
+        <SuperAdminTab.Screen
+            name="SuperAdminMore"
+            component={SuperAdminMoreScreen}
+            options={{ tabBarLabel: 'More' }}
+        />
+    </SuperAdminTab.Navigator>
+);
+
+const SuperAdminStackNavigator = () => (
+    <SuperAdminStack.Navigator screenOptions={commonScreenOptions}>
+        <SuperAdminStack.Screen name="SuperAdminTabs" component={SuperAdminTabNavigator} />
+        <SuperAdminStack.Screen name="SuperAdminDashboard" component={SuperAdminDashboardScreen} />
+        <SuperAdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
+        <SuperAdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
+        <SuperAdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <SuperAdminStack.Screen name="UserManagement" component={UserManagementScreen} />
+        <SuperAdminStack.Screen name="EmployeeList" component={EmployeeListScreen} />
+        <SuperAdminStack.Screen name="ApprovalRoutes" component={ApprovalRoutesScreen} />
+        <SuperAdminStack.Screen name="OrgSettings" component={OrgSettingsScreen} />
+        <SuperAdminStack.Screen name="Reports" component={ReportsScreen} />
+        <SuperAdminStack.Screen name="CreateUser" component={CreateUserScreen} />
+        <SuperAdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+    </SuperAdminStack.Navigator>
+);
+
+const RootNavigator = () => {
+    const auth = useAuth();
+
+    if (!auth.isAuthenticated) {
+        return <AuthStackNavigator />;
+    }
+
+    if (auth.user?.force_password_change) {
+        return (
+            <AuthStack.Navigator screenOptions={commonScreenOptions}>
+                <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+            </AuthStack.Navigator>
+        );
+    }
+
+    if (auth.isSuperAdmin) {
+        return <SuperAdminStackNavigator />;
+    }
+
+    if (auth.isAdmin) {
+        return <AdminStackNavigator />;
+    }
+
+    return <EmployeeStackNavigator />;
+};
+
+export default RootNavigator;
+
+const styles = StyleSheet.create({
+    tabIconContainer: {
+        width: 44,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 16,
+    },
+    tabIconFocused: {
+        backgroundColor: colors.primaryLight,
+    },
+});
