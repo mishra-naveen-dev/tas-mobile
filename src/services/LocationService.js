@@ -3,8 +3,7 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import BackgroundGeolocation from 'react-native-background-geolocation';
-import NetInfo from '@react-native-community/netinfo';
-import api from './api';
+import api from '../api/api';
 
 const GOOGLE_API_KEY = "AIzaSyDM0WAR3vYxXNqSklb868wEmtDftQvYDkQ";
 
@@ -64,7 +63,7 @@ class LocationService {
 
     static async getCurrentLocationInfo() {
         const hasPermission = await this.requestPermission();
-        
+
         if (!hasPermission) {
             return { error: 'Permission Denied by Device/User', latitude: null, longitude: null, address: '' };
         }
@@ -82,9 +81,9 @@ class LocationService {
                     try {
                         const googleUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`;
                         const res = await fetch(googleUrl);
-                        
+
                         if (!res.ok) throw new Error("Network Fault reaching Google Servers.");
-                        
+
                         const json = await res.json();
                         if (json.status !== "OK" || !json.results || json.results.length === 0) {
                             throw new Error(json.error_message || "Target address unresolvable natively.");
@@ -130,14 +129,14 @@ class LocationService {
                 battery_level: batteryLevel,
                 is_background: isBackground
             });
-            
+
             if (response.data.success) {
                 this.currentSessionId = response.data.session_id;
                 this.isTracking = true;
                 this.backgroundTrackingEnabled = isBackground;
                 console.log('[LocationService] Tracking started, session:', this.currentSessionId);
             }
-            
+
             return response.data;
         } catch (error) {
             console.error('[LocationService] Start tracking error:', error);
@@ -150,11 +149,11 @@ class LocationService {
             const response = await api.post('/tracking/session/stop/', {
                 battery_level: batteryLevel
             });
-            
+
             this.isTracking = false;
             this.currentSessionId = null;
             this.backgroundTrackingEnabled = false;
-            
+
             return response.data;
         } catch (error) {
             console.error('[LocationService] Stop tracking error:', error);
@@ -253,9 +252,9 @@ class LocationService {
 
     static startBackgroundTracking(onLocationUpdate) {
         if (this.backgroundTrackingEnabled) return;
-        
+
         this.locationCallback = onLocationUpdate;
-        
+
         BackgroundGeolocation.ready({
             locationProvider: BackgroundGeolocation.provider.ANDROID_DISTANCE_FILTER,
             desiredAccuracy: BackgroundGeolocation.HIGH_ACCURACY,
@@ -285,14 +284,14 @@ class LocationService {
                         source: 'GPS',
                         timestamp: location.timestamp
                     };
-                    
+
                     if (this.locationCallback) {
                         this.locationCallback(locationData);
                     }
-                    
+
                     this.sendLocationUpdate(locationData);
                 });
-                
+
                 BackgroundGeolocation.start();
             }
         });
@@ -300,14 +299,28 @@ class LocationService {
 
     static stopBackgroundTracking() {
         if (!this.backgroundTrackingEnabled) return;
-        
+
         BackgroundGeolocation.stop();
         this.backgroundTrackingEnabled = false;
     }
 
     static async isNetworkConnected() {
-        const netInfo = await NetInfo.fetch();
-        return netInfo.isConnected;
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            
+            const response = await fetch('https://www.google.com/favicon.ico', {
+                method: 'HEAD',
+                signal: controller.signal,
+                cache: 'no-cache'
+            });
+            
+            clearTimeout(timeoutId);
+            return response.ok;
+        } catch (error) {
+            console.warn('[LocationService] Network check failed:', error.message);
+            return true;
+        }
     }
 }
 
