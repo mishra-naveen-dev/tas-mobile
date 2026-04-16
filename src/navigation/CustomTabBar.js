@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, SafeAreaView, Dimensions } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
-import { colors, typography, spacing, shadows } from '../theme/tokens';
+import { colors, typography, spacing } from '../theme/tokens';
 
 const { width } = Dimensions.get('window');
 
@@ -33,13 +33,14 @@ const TabItem = React.memo(({ label, icon, isActive, onPress }) => (
         <Icon
             name={icon}
             size={24}
-            color={isActive ? colors.primary : colors.textMuted}
+            color={isActive ? '#E53935' : '#9CA3AF'}
         />
         <Text
             style={[
                 styles.tabLabel,
-                { color: isActive ? colors.primary : colors.textMuted }
+                { color: isActive ? '#E53935' : '#9CA3AF' }
             ]}
+            numberOfLines={1}
         >
             {label}
         </Text>
@@ -52,7 +53,7 @@ const MenuItem = React.memo(({ item, onPress }) => (
         onPress={() => onPress(item)}
         activeOpacity={0.7}
     >
-        <View style={[styles.menuIconContainer, { backgroundColor: item.color + '20' }]}>
+        <View style={[styles.menuIconContainer, { backgroundColor: item.color + '15' }]}>
             <Icon name={item.icon} size={24} color={item.color} />
         </View>
         <Text style={styles.menuLabel}>{item.label}</Text>
@@ -69,22 +70,21 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
 
     const handleMenuItemPress = useCallback((item) => {
         setShowMoreMenu(false);
-        if (item.id === 'logout' || item.id === 'profile') {
-            navigation.navigate('ChangePassword');
-        } else if (item.id === 'history') {
-            navigation.navigate('PunchHistory');
-        } else if (item.id === 'devices') {
-            navigation.navigate('ChangePassword');
-        } else if (item.id === 'settings') {
-            navigation.navigate('ChangePassword');
-        } else if (item.id === 'support') {
-            navigation.navigate('ChangePassword');
-        }
+        const routeMap = {
+            logout: 'ChangePassword',
+            profile: 'ChangePassword',
+            history: 'PunchHistory',
+            devices: 'ChangePassword',
+            settings: 'ChangePassword',
+            support: 'ChangePassword',
+        };
+        const route = routeMap[item.id];
+        if (route) navigation.navigate(route);
     }, [navigation]);
 
     const renderLeftTabs = () => (
-        <View style={styles.leftTabsContainer}>
-            {TAB_LEFT.map((tab, index) => {
+        <View style={styles.leftTabs}>
+            {TAB_LEFT.map((tab) => {
                 const routeIndex = getRouteIndex(tab.name);
                 const isFocused = state.index === routeIndex;
                 return (
@@ -101,7 +101,7 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
     );
 
     const renderRightTabs = () => (
-        <View style={styles.rightTabsContainer}>
+        <View style={styles.rightTabs}>
             {TAB_RIGHT.map((tab) => {
                 const routeIndex = getRouteIndex(tab.name);
                 const isFocused = state.index === routeIndex;
@@ -123,19 +123,18 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
 
     return (
         <>
-            {/* Tab Bar Container with FAB floating above */}
-            <View style={styles.tabBarWrapper}>
-                {/* Floating Punch Button - positioned above tab bar */}
-                <View style={styles.fabContainer}>
-                    <TouchableOpacity
-                        style={styles.fabButton}
-                        onPress={onPunchPress}
-                        activeOpacity={0.8}
-                    >
+            <View style={styles.container}>
+                {/* Floating Punch Button - ABOVE tab bar */}
+                <TouchableOpacity
+                    style={styles.fabButton}
+                    onPress={onPunchPress}
+                    activeOpacity={0.85}
+                >
+                    <View style={styles.fabInner}>
                         <Icon name="map-pin" size={26} color="#FFFFFF" />
-                    </TouchableOpacity>
-                    <Text style={styles.fabLabel}>Punch</Text>
-                </View>
+                        <Text style={styles.fabText}>Punch</Text>
+                    </View>
+                </TouchableOpacity>
 
                 {/* Tab Bar */}
                 <View style={styles.tabBar}>
@@ -165,7 +164,6 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
                                     <Icon name="x" size={24} color={colors.textDark} />
                                 </TouchableOpacity>
                             </View>
-
                             <View style={styles.menuGrid}>
                                 {MENU_ITEMS.map((item) => (
                                     <MenuItem
@@ -184,74 +182,82 @@ const CustomTabBar = ({ state, descriptors, navigation, onPunchPress }) => {
 };
 
 const styles = StyleSheet.create({
-    tabBarWrapper: {
+    container: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
         alignItems: 'center',
-        paddingHorizontal: spacing.md,
-        paddingBottom: spacing.sm,
+        paddingBottom: 34,
+    },
+    fabButton: {
+        width: 66,
+        height: 66,
+        borderRadius: 33,
+        backgroundColor: '#2563EB',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: -33,
+        zIndex: 100,
+        elevation: 12,
+        shadowColor: '#2563EB',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.4,
+        shadowRadius: 12,
+        borderWidth: 3,
+        borderColor: '#FFFFFF',
+    },
+    fabInner: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    fabText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: '700',
+        marginTop: 2,
     },
     tabBar: {
         flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: colors.surface,
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        paddingVertical: spacing.sm,
-        paddingHorizontal: spacing.lg,
-        height: 70,
+        alignItems: 'flex-end',
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        paddingVertical: 12,
+        paddingHorizontal: 8,
+        height: 72,
         width: '100%',
-        ...shadows.medium,
+        elevation: 8,
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
     },
-    leftTabsContainer: {
+    leftTabs: {
         flex: 1,
         flexDirection: 'row',
         justifyContent: 'flex-start',
     },
-    rightTabsContainer: {
+    rightTabs: {
         flex: 1,
         flexDirection: 'row',
         justifyContent: 'flex-end',
     },
     centerSpacer: {
-        width: 60,
+        width: 66,
     },
     tabItem: {
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: spacing.md,
+        paddingHorizontal: 4,
         minWidth: 70,
-        flex: 1,
     },
     tabLabel: {
-        fontSize: typography.sizes.xs,
+        fontSize: 11,
         fontWeight: '600',
         marginTop: 4,
-    },
-    fabContainer: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: -10,
-        zIndex: 10,
-    },
-    fabButton: {
-        width: 58,
-        height: 58,
-        borderRadius: 29,
-        backgroundColor: colors.primary,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 4,
-        borderColor: colors.surface,
-        ...shadows.floating,
-    },
-    fabLabel: {
-        fontSize: typography.sizes.xs,
-        fontWeight: '700',
-        color: colors.primary,
-        marginTop: spacing.xs,
+        textAlign: 'center',
     },
     modalOverlay: {
         flex: 1,
@@ -259,24 +265,23 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     modalContainer: {
-        backgroundColor: colors.surface,
+        backgroundColor: '#FFFFFF',
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
-        paddingBottom: spacing.xl,
+        paddingBottom: 34,
     },
     modalContent: {
-        padding: spacing.lg,
+        padding: 24,
     },
     modalHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: spacing.lg,
-        paddingHorizontal: spacing.sm,
+        marginBottom: 24,
     },
     modalTitle: {
-        fontSize: typography.sizes.lg,
-        fontWeight: typography.weights.bold,
+        fontSize: 20,
+        fontWeight: '700',
         color: colors.textDark,
     },
     menuGrid: {
@@ -285,9 +290,9 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
     },
     menuItem: {
-        width: (width - spacing.lg * 2 - spacing.md) / 3,
+        width: (width - 48 - 24) / 3,
         alignItems: 'center',
-        marginBottom: spacing.lg,
+        marginBottom: 24,
     },
     menuIconContainer: {
         width: 56,
@@ -295,10 +300,10 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: spacing.sm,
+        marginBottom: 8,
     },
     menuLabel: {
-        fontSize: typography.sizes.sm,
+        fontSize: 13,
         color: colors.textDark,
         fontWeight: '500',
         textAlign: 'center',
