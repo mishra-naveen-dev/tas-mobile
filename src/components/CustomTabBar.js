@@ -1,72 +1,39 @@
 import React, { useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, Animated } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
-import { colors, typography, spacing } from '../theme/tokens';
-import { usePunch } from '../context/PunchContext';
+import { colors, typography } from '../theme/tokens';
 
 const CustomTabBar = ({ state, descriptors, navigation }) => {
     const pulseAnim = useRef(new Animated.Value(1)).current;
-    const { isActive: isPunchActive, punchState } = usePunch();
-    const isCurrentPunchTab = state.routes[state.index]?.name === 'EmployeePunch';
 
     useEffect(() => {
-        let animation;
-        if (isPunchActive) {
-            animation = Animated.loop(
-                Animated.sequence([
-                    Animated.timing(pulseAnim, {
-                        toValue: 1.1,
-                        duration: 1000,
-                        useNativeDriver: true,
-                    }),
-                    Animated.timing(pulseAnim, {
-                        toValue: 1,
-                        duration: 1000,
-                        useNativeDriver: true,
-                    }),
-                ])
-            );
-            animation.start();
-        } else {
-            pulseAnim.setValue(1);
-        }
-
-        return () => {
-            if (animation) animation.stop();
-        };
-    }, [isPunchActive]);
+        const animation = Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulseAnim, {
+                    toValue: 1.15,
+                    duration: 1200,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(pulseAnim, {
+                    toValue: 1,
+                    duration: 1200,
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+        animation.start();
+        return () => animation.stop();
+    }, [pulseAnim]);
 
     const tabs = [
         { name: 'EmployeeHome', label: 'Home', icon: 'home' },
         { name: 'EmployeeCorrection', label: 'Correction', icon: 'edit' },
-        { name: 'EmployeePunch', label: '', icon: '' },
+        { name: 'EmployeePunch', label: 'Punch', icon: 'map-pin' },
         { name: 'EmployeeAllowance', label: 'Allowance', icon: 'dollar-sign' },
         { name: 'EmployeeMore', label: 'More', icon: 'menu' },
     ];
 
-    const getIconName = (routeName) => {
-        const tab = tabs.find(t => t.name === routeName);
-        return tab?.icon || 'circle';
-    };
-
     const isPunchTab = (routeName) => routeName === 'EmployeePunch';
-
-    const getPunchButtonContent = () => {
-        if (isPunchActive) {
-            return (
-                <View style={styles.punchButtonInner}>
-                    <Icon name="square" size={20} color="#FFFFFF" style={styles.stopIcon} />
-                    <Text style={styles.punchButtonText}>STOP</Text>
-                </View>
-            );
-        }
-        return (
-            <View style={styles.punchButtonInner}>
-                <Icon name="log-in" size={24} color="#FFFFFF" style={styles.punchIcon} />
-                <Text style={styles.punchButtonText}>PUNCH</Text>
-            </View>
-        );
-    };
 
     return (
         <View style={styles.container}>
@@ -75,23 +42,21 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
                     const isFocused = state.index === index;
                     const tab = tabs.find(t => t.name === route.name);
                     const label = tab?.label || route.name;
-                    const iconName = getIconName(route.name);
+                    const iconName = tab?.icon || 'circle';
 
                     if (isPunchTab(route.name)) {
                         return (
                             <View key={route.key} style={styles.punchTabContainer}>
                                 <Animated.View style={[styles.punchButtonOuter, { transform: [{ scale: pulseAnim }] }]}>
                                     <TouchableOpacity
-                                        style={[
-                                            styles.punchButton,
-                                            { backgroundColor: isPunchActive ? '#DC2626' : colors.punchBlue }
-                                        ]}
+                                        style={styles.punchButton}
                                         onPress={() => navigation.navigate(route.name)}
                                         activeOpacity={0.85}
                                     >
-                                        {getPunchButtonContent()}
+                                        <Icon name="map-pin" size={28} color="#FFFFFF" />
                                     </TouchableOpacity>
                                 </Animated.View>
+                                <Text style={styles.punchLabel}>Punch</Text>
                             </View>
                         );
                     }
@@ -141,8 +106,8 @@ const styles = StyleSheet.create({
     tabBar: {
         flexDirection: 'row',
         backgroundColor: colors.surface,
-        paddingBottom: Platform.OS === 'ios' ? 24 : 12,
-        paddingTop: 12,
+        paddingBottom: Platform.OS === 'ios' ? 28 : 14,
+        paddingTop: 10,
         borderTopWidth: 1,
         borderTopColor: colors.border,
         elevation: 12,
@@ -168,7 +133,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#FEE2E2',
     },
     tabLabel: {
-        fontSize: typography.sizes.xs,
+        fontSize: 11,
         color: colors.textMuted,
         marginTop: 4,
         fontWeight: '500',
@@ -181,41 +146,31 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'flex-start',
-        marginTop: -45,
+        marginTop: -40,
     },
     punchButtonOuter: {
         transformOrigin: 'center',
     },
     punchButton: {
-        width: 70,
-        height: 70,
-        borderRadius: 35,
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: colors.punchBlue,
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 8,
         shadowColor: colors.punchBlue,
         shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.4,
-        shadowRadius: 12,
+        shadowOpacity: 0.45,
+        shadowRadius: 14,
         borderWidth: 4,
         borderColor: colors.surface,
     },
-    punchButtonInner: {
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    punchIcon: {
-        marginBottom: 2,
-    },
-    stopIcon: {
-        marginBottom: 2,
-    },
-    punchButtonText: {
-        color: '#FFFFFF',
+    punchLabel: {
         fontSize: 10,
+        color: colors.punchBlue,
         fontWeight: '700',
-        letterSpacing: 1,
-        marginTop: 2,
+        marginTop: 6,
     },
 });
 
