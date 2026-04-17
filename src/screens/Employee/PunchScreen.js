@@ -176,6 +176,19 @@ const PunchScreen = ({ navigation }) => {
             Alert.alert("Success", "Punch added successfully!");
             setShowForm(false);
             fetchTodayPunches();
+            setFormData({
+                current_address: '',
+                latitude: null,
+                longitude: null,
+                customer_name: '',
+                customer_address: '',
+                notes: '',
+                loan_id: '',
+                amount: '',
+                payment_mode: '',
+                upi_ref: '',
+                cheque_no: '',
+            });
 
         } catch (err) {
             if (IS_DEV) console.log('[PunchScreen] Submit error:', err);
@@ -260,11 +273,7 @@ const PunchScreen = ({ navigation }) => {
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-                    <Icon name="arrow-left" size={24} color={colors.textDark} />
-                </TouchableOpacity>
                 <Text style={styles.headerTitle}>Add Punch</Text>
-                <View style={{ width: 40 }} />
             </View>
 
             <View style={styles.todayHeader}>
@@ -275,8 +284,10 @@ const PunchScreen = ({ navigation }) => {
             <FlatList
                 data={todayPunches}
                 renderItem={renderPunchItem}
-                keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+                keyExtractor={(item, index) => item.id?.toString() || `punch-${index}`}
                 contentContainerStyle={styles.listContent}
+                refreshing={false}
+                onRefresh={fetchTodayPunches}
                 ListEmptyComponent={
                     <View style={styles.emptyState}>
                         <Icon name="map-pin" size={48} color={colors.textLight} />
@@ -424,20 +435,13 @@ const styles = StyleSheet.create({
         backgroundColor: colors.background,
     },
     header: {
-        flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'center',
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.md,
         backgroundColor: colors.surface,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
-    },
-    backBtn: {
-        width: 40,
-        height: 40,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     headerTitle: {
         fontSize: typography.sizes.lg,
