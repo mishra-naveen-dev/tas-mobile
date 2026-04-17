@@ -1,9 +1,9 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, Animated } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
-import { colors, typography } from '../theme/tokens';
+import { colors } from '../theme/tokens';
 
-const CustomTabBar = ({ state, descriptors, navigation }) => {
+const CustomTabBar = memo(({ state, navigation }) => {
     const pulseAnim = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {
@@ -94,7 +94,7 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
             </View>
         </View>
     );
-};
+});
 
 const styles = StyleSheet.create({
     container: {

@@ -198,12 +198,16 @@ const SuperAdminStackNavigator = () => (
 
 const RootNavigator = () => {
     const auth = useAuth();
+    const isAuthenticated = auth?.isAuthenticated ?? false;
+    const forcePasswordChange = auth?.user?.force_password_change ?? false;
+    const isSuperAdmin = auth?.isSuperAdmin ?? false;
+    const isAdmin = auth?.isAdmin ?? false;
 
-    if (!auth.isAuthenticated) {
+    if (!isAuthenticated) {
         return <AuthStackNavigator />;
     }
 
-    if (auth.user?.force_password_change) {
+    if (forcePasswordChange) {
         return (
             <AuthStack.Navigator screenOptions={commonScreenOptions}>
                 <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
@@ -211,11 +215,11 @@ const RootNavigator = () => {
         );
     }
 
-    if (auth.isSuperAdmin) {
+    if (isSuperAdmin) {
         return <SuperAdminStackNavigator />;
     }
 
-    if (auth.isAdmin) {
+    if (isAdmin) {
         return <AdminStackNavigator />;
     }
 
