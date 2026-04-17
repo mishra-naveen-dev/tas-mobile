@@ -8,7 +8,7 @@ import { colors, typography } from '../theme/tokens';
 import LoginScreen from '../screens/LoginScreen';
 import ChangePasswordScreen from '../screens/ChangePasswordScreen';
 
-import PunchScreen from '../screens/PunchScreen';
+import PunchScreen from '../screens/Employee/PunchScreen';
 import RouteMapScreen from '../screens/RouteMapScreen';
 import PunchHistoryScreen from '../screens/PunchHistoryScreen';
 import PunchCorrectionScreen from '../screens/PunchCorrectionScreen';
@@ -40,7 +40,7 @@ import EmployeeHomeScreen from '../screens/EmployeeHomeScreen';
 import EmployeeCorrectionScreen from '../screens/EmployeeCorrectionScreen';
 import EmployeeAllowanceScreen from '../screens/EmployeeAllowanceScreen';
 import EmployeeMoreScreen from '../screens/EmployeeMoreScreen';
-import EmployeePunchScreen from '../screens/EmployeePunchScreen';
+import EmployeePunchScreen from '../screens/Employee/PunchScreen';
 
 import CustomTabBar from '../components/CustomTabBar';
 import { useAuth } from '../context/AuthContext';

@@ -1,6 +1,6 @@
 // src/services/LocationService.js
 
-import { PermissionsAndroid, Platform } from 'react-native';
+import { PermissionsAndroid, Platform, Linking, NativeModules } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import BackgroundGeolocation from 'react-native-background-geolocation';
 import api from '../api/api';
@@ -68,6 +68,10 @@ class LocationService {
             return { error: 'Permission Denied by Device/User', latitude: null, longitude: null, address: '' };
         }
 
+        return this.getCurrentLocation();
+    }
+
+    static async getCurrentLocation() {
         return new Promise((resolve) => {
             Geolocation.getCurrentPosition(
                 async (pos) => {
@@ -121,6 +125,28 @@ class LocationService {
                 { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 }
             );
         });
+    }
+
+    static async isLocationEnabled() {
+        try {
+            if (Platform.OS === 'android') {
+                const { PlatformConstants } = NativeModules;
+                const locationEnabled = await Linking.canOpenURL('geo:0,0?q=locate');
+                return locationEnabled;
+            }
+            return true;
+        } catch (e) {
+            console.warn('[LocationService] Check location enabled error:', e);
+            return true;
+        }
+    }
+
+    static openLocationSettings() {
+        if (Platform.OS === 'android') {
+            Linking.openSettings();
+        } else {
+            Linking.openURL('App-Prefs:LOCATION_SERVICES');
+        }
     }
 
     static async startTracking(batteryLevel = null, isBackground = false) {

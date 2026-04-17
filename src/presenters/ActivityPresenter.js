@@ -90,11 +90,6 @@ const getActivityConfig = (type) => {
 const formatActivityTitle = (activity) => {
     const config = getActivityConfig(activity.type);
     
-    if (activity.amount) {
-        const prefix = activity.type === ACTIVITY_TYPES.COLLECTION ? '₹' : '';
-        return `${prefix}${activity.amount.toLocaleString()} ${config.title}`;
-    }
-    
     if (activity.clientName) {
         return `Visited ${activity.clientName}`;
     }
@@ -107,16 +102,24 @@ const formatActivityTitle = (activity) => {
 };
 
 const formatActivitySubtitle = (activity) => {
+    const parts = [];
+    
+    if (activity.notes) {
+        parts.push(activity.notes.length > 40 ? activity.notes.substring(0, 40) + '...' : activity.notes);
+    }
+    
+    if (activity.distance_from_last && activity.distance_from_last > 0) {
+        parts.push(`${parseFloat(activity.distance_from_last).toFixed(2)} km since last punch`);
+    } else if (activity.distance && activity.distance > 0) {
+        parts.push(`${parseFloat(activity.distance).toFixed(2)} km traveled`);
+    }
+    
+    if (parts.length > 0) {
+        return parts.join(' • ');
+    }
+
     if (activity.location) {
         return activity.location;
-    }
-    if (activity.notes) {
-        return activity.notes.length > 40 
-            ? activity.notes.substring(0, 40) + '...' 
-            : activity.notes;
-    }
-    if (activity.distance) {
-        return `${activity.distance} km traveled`;
     }
     return null;
 };
