@@ -1,7 +1,7 @@
 export const colors = {
-    primary: '#2563EB',
-    primaryDark: '#1D4ED8',
-    primaryLight: '#DBEAFE',
+    primary: '#DC2626',
+    primaryDark: '#B91C1C',
+    primaryLight: '#FEE2E2',
 
     secondary: '#DC2626',
 
@@ -91,37 +91,37 @@ export const borderRadius = {
 export const shadows = {
     none: {},
     xs: {
-        shadowColor: '#DC2626',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
+        shadowOpacity: 0.05,
         shadowRadius: 2,
         elevation: 1,
     },
     sm: {
-        shadowColor: '#DC2626',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
+        shadowOpacity: 0.08,
         shadowRadius: 4,
         elevation: 2,
     },
     md: {
-        shadowColor: '#DC2626',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.12,
+        shadowOpacity: 0.1,
         shadowRadius: 8,
         elevation: 4,
     },
     lg: {
-        shadowColor: '#DC2626',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.15,
+        shadowOpacity: 0.12,
         shadowRadius: 16,
         elevation: 6,
     },
     xl: {
-        shadowColor: '#DC2626',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 12 },
-        shadowOpacity: 0.2,
+        shadowOpacity: 0.15,
         shadowRadius: 24,
         elevation: 8,
     },

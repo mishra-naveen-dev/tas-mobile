@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
         borderRadius: 14,
     },
     iconContainerActive: {
-        backgroundColor: colors.primaryLight,
+        backgroundColor: '#FEE2E2',
     },
     tabLabel: {
         fontSize: typography.sizes.xs,
