@@ -279,7 +279,7 @@ const EmployeePunchScreen = ({ navigation }) => {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {errorMessage && <Banner message={errorMessage} type="error" onDismiss={dismissError} />}
-      {success && <Banner message={isActive ? 'Punch recorded!' : 'Punch Out completed!'} type="success" onDismiss={() => {}} />}
+      {success && <Banner message={isActive ? 'Punch recorded!' : 'Punch Out completed!'} type="success" onDismiss={() => { }} />}
 
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
@@ -339,7 +339,7 @@ const EmployeePunchScreen = ({ navigation }) => {
           </Animated.View>
 
           <Text style={styles.punchLabel}>
-            {isActive ? 'Tap to End Punch' : isFetching ? 'Getting location...' : 'Tap to Punch'}
+            {isActive ? 'Tap  Punch' : isFetching ? 'Getting location...' : 'Tap to Punch'}
           </Text>
         </View>
 
