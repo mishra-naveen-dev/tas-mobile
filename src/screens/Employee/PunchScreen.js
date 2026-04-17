@@ -1,8 +1,6 @@
-// src/screens/PunchScreen.js
-
 const IS_DEV = __DEV__;
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -12,11 +10,9 @@ import {
     TouchableOpacity,
     Modal,
     ActivityIndicator,
-    PermissionsAndroid,
-    Platform
+    FlatList
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/Feather';
 
 import api from '../../api/api';
@@ -29,46 +25,54 @@ import GlassCard from '../../components/GlassCard';
 import PillSelector from '../../components/PillSelector';
 import { colors, typography, spacing } from '../../theme/tokens';
 
+const PUNCH_TYPES = [
+    { key: 'VISIT', label: 'Visit', icon: 'map-pin', color: '#2563EB' },
+    { key: 'COLLECTION', label: 'Collection', icon: 'dollar-sign', color: '#10B981' },
+    { key: 'DISBURSEMENT', label: 'Disbursement', icon: 'trending-up', color: '#F59E0B' },
+    { key: 'TRAVEL', label: 'Travel', icon: 'navigation', color: '#8B5CF6' },
+    { key: 'OTHER', label: 'Other', icon: 'plus-circle', color: '#6B7280' },
+];
+
 const PunchScreen = ({ navigation }) => {
     const auth = useAuth();
-    const token = auth?.accessToken;
     const [loading, setLoading] = useState(false);
     const [locationLoading, setLocationLoading] = useState(false);
-    const [isTracking, setIsTracking] = useState(false);
     const [todayPunches, setTodayPunches] = useState([]);
-    const [routeCoordinates, setRouteCoordinates] = useState([]);
-    const mapRef = useRef(null);
+    const [showForm, setShowForm] = useState(false);
+    const [selectedType, setSelectedType] = useState('VISIT');
+    const [currentLocation, setCurrentLocation] = useState(null);
     const isMountedRef = useRef(true);
 
-    const [data, setData] = useState({
-        current_address: 'Tap refresh icon to fetch GPS...',
+    const [formData, setFormData] = useState({
+        current_address: '',
         latitude: null,
         longitude: null,
         customer_name: '',
         customer_address: '',
-        reason: '',
-        visit_type: '',
+        notes: '',
         loan_id: '',
         amount: '',
         payment_mode: '',
         upi_ref: '',
         cheque_no: '',
-        travel_with: 'ALONE',
-        co_employee_id: '',
-        co_employee_name: '',
-        punch_type: 'PUNCH_IN',
     });
 
-    const updateData = (key, value) => {
-        setData(prev => ({ ...prev, [key]: value }));
-    };
+    useEffect(() => {
+        isMountedRef.current = true;
+        fetchTodayPunches();
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
 
     const fetchTodayPunches = useCallback(async () => {
         try {
             const response = await api.get('/attendance/punches/today_punches/');
             if (!isMountedRef.current) return;
+
+            const rawPunches = Array.isArray(response.data) ? response.data : 
+                              Array.isArray(response.data?.results) ? response.data.results : [];
             
-            const rawPunches = Array.isArray(response.data) ? response.data : [];
             const seen = new Set();
             const uniquePunches = rawPunches.filter(p => {
                 if (!p?.id) return true;
@@ -76,424 +80,340 @@ const PunchScreen = ({ navigation }) => {
                 seen.add(p.id);
                 return true;
             });
-            
-            if (IS_DEV) {
-                console.log('[PunchScreen] Punches - Raw:', rawPunches.length, 'Unique:', uniquePunches.length);
-            }
-            
-            setTodayPunches(uniquePunches);
+
+            setTodayPunches(uniquePunches.sort((a, b) => 
+                new Date(b.punched_at) - new Date(a.punched_at)
+            ));
         } catch (error) {
-            if (IS_DEV) console.log('Failed to fetch today punches:', error);
+            if (IS_DEV) console.log('[PunchScreen] Fetch error:', error);
         }
     }, []);
 
     const fetchLocation = useCallback(async () => {
         setLocationLoading(true);
-        updateData('current_address', 'Getting GPS...');
-
         try {
             const result = await LocationService.getCurrentLocation();
 
             if (result.error) {
-                if (IS_DEV) console.log('[PunchScreen] Location error:', result.error);
                 Alert.alert("Location Error", result.error);
-                updateData('current_address', 'GPS failed');
                 setLocationLoading(false);
                 return false;
             }
 
-            updateData('latitude', result.latitude);
-            updateData('longitude', result.longitude);
-            updateData('current_address', result.address || `${result.latitude}, ${result.longitude}`);
+            const address = result.address || `${result.latitude.toFixed(6)}, ${result.longitude.toFixed(6)}`;
+            
+            setCurrentLocation({
+                latitude: result.latitude,
+                longitude: result.longitude,
+                address: address,
+            });
+
+            setFormData(prev => ({
+                ...prev,
+                latitude: result.latitude,
+                longitude: result.longitude,
+                current_address: address,
+            }));
 
             setLocationLoading(false);
-            return result;
+            return true;
         } catch (err) {
-            if (IS_DEV) console.log('[PunchScreen] Location exception:', err);
+            if (IS_DEV) console.log('[PunchScreen] Location error:', err);
             Alert.alert("Error", "Failed to get location");
-            updateData('current_address', 'Error');
             setLocationLoading(false);
             return false;
         }
     }, []);
 
-    useEffect(() => {
-        isMountedRef.current = true;
-        fetchTodayPunches();
-        fetchLocation();
-        return () => {
-            isMountedRef.current = false;
-        };
-    }, [fetchTodayPunches, fetchLocation]);
-
-    const fetchDelayedRoute = useCallback(async () => {
-        try {
-            const routeData = await api.get('/attendance/tracking/delayed-route/');
-            if (routeData?.data?.routes) {
-                const allCoords = [];
-                routeData.data.routes.forEach(route => {
-                    route.points.forEach(point => {
-                        allCoords.push({
-                            latitude: point.lat,
-                            longitude: point.lng,
-                        });
-                    });
-                });
-                setRouteCoordinates(allCoords);
-            }
-        } catch (error) {
-            if (IS_DEV) console.log('Failed to fetch route:', error);
+    const openAddPunchForm = useCallback(async () => {
+        setFormData({
+            current_address: '',
+            latitude: null,
+            longitude: null,
+            customer_name: '',
+            customer_address: '',
+            notes: '',
+            loan_id: '',
+            amount: '',
+            payment_mode: '',
+            upi_ref: '',
+            cheque_no: '',
+        });
+        setSelectedType('VISIT');
+        
+        const locationFetched = await fetchLocation();
+        if (locationFetched) {
+            setShowForm(true);
         }
-    }, []);
+    }, [fetchLocation]);
 
     const handleSubmit = async () => {
+        if (!formData.latitude || !formData.longitude) {
+            Alert.alert("Error", "Please wait for location to be captured");
+            return;
+        }
+
         try {
             setLoading(true);
 
-            let finalLat = data.latitude;
-            let finalLng = data.longitude;
-            let finalAddress = data.current_address;
-
-            if (!finalLat || !finalLng) {
-                if (IS_DEV) console.log('[PunchScreen] Location missing, auto-fetching...');
-                const result = await fetchLocation();
-                if (!result || !result.latitude) {
-                    Alert.alert("Error", "Could not capture location. Ensure GPS is fully enabled.");
-                    setLoading(false);
-                    return;
-                }
-                finalLat = result.latitude;
-                finalLng = result.longitude;
-                finalAddress = result.address || 'Address Retrieved';
-            }
-
             const payload = {
-                punch_type: data.punch_type,
-                latitude: finalLat,
-                longitude: finalLng,
-                current_address: finalAddress,
-                customer_address: data.customer_address,
-                visit_type: data.visit_type,
-                notes: data.reason,
-                loan_id: data.loan_id,
-                amount: Number(data.amount || 0),
-                payment_mode: data.payment_mode,
-                upi_ref: data.upi_ref,
-                cheque_no: data.cheque_no,
-                travel_with: data.travel_with,
-                co_employee_id: data.co_employee_id,
-                co_employee_name: data.co_employee_name
+                punch_type: selectedType,
+                latitude: formData.latitude,
+                longitude: formData.longitude,
+                current_address: formData.current_address,
+                customer_name: formData.customer_name,
+                customer_address: formData.customer_address,
+                notes: formData.notes,
+                loan_id: formData.loan_id || '',
+                amount: formData.amount ? parseFloat(formData.amount) : null,
+                payment_mode: formData.payment_mode || '',
+                upi_ref: formData.upi_ref || '',
+                cheque_no: formData.cheque_no || '',
             };
 
-            const response = await api.post('/attendance/punches/', payload);
-            const punchData = response.data;
+            await api.post('/attendance/punches/', payload);
 
-            if (data.punch_type === 'PUNCH_IN' && punchData.tracking_session_id) {
-                await LocationService.startTracking();
-                setIsTracking(true);
-                Alert.alert(
-                    "Success",
-                    "Punch In recorded and tracking started!",
-                    [{ text: 'OK', onPress: () => navigation.goBack() }]
-                );
-            } else if (data.punch_type === 'PUNCH_OUT') {
-                LocationService.stopTracking();
-                setIsTracking(false);
-                Alert.alert(
-                    "Success",
-                    "Punch Out recorded!",
-                    [{ text: 'OK', onPress: () => navigation.goBack() }]
-                );
-            } else {
-                Alert.alert("Success", "Punch has been successfully submitted", [
-                    { text: 'OK', onPress: () => navigation.goBack() }
-                ]);
-            }
-
+            Alert.alert("Success", "Punch added successfully!");
+            setShowForm(false);
             fetchTodayPunches();
 
         } catch (err) {
-            const errorMsg = err?.response?.data || err?.message || "Unknown Error";
-            Alert.alert("Error", typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg) || "Punch failed. Ensure network/GPS is active.");
+            if (IS_DEV) console.log('[PunchScreen] Submit error:', err);
+            const errorMsg = err?.response?.data?.detail || err?.message || "Failed to add punch";
+            Alert.alert("Error", typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
         } finally {
             setLoading(false);
         }
     };
 
-    const lastPunch = todayPunches.length > 0 ? todayPunches[0] : null;
-    const isPunchedIn = lastPunch?.punch_type === 'PUNCH_IN';
-    const isPunchedOutToday = todayPunches.some(p => p.punch_type === 'PUNCH_OUT');
+    const updateFormData = (key, value) => {
+        setFormData(prev => ({ ...prev, [key]: value }));
+    };
 
-    useEffect(() => {
-        if (lastPunch) {
-            updateData('punch_type', isPunchedIn ? 'PUNCH_OUT' : 'PUNCH_IN');
-        }
-    }, [isPunchedIn]);
+    const getPunchTypeInfo = (type) => {
+        return PUNCH_TYPES.find(t => t.key === type) || PUNCH_TYPES[4];
+    };
+
+    const formatTime = (dateStr) => {
+        if (!dateStr) return '';
+        return new Date(dateStr).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+    };
+
+    const renderPunchItem = ({ item }) => {
+        const typeInfo = getPunchTypeInfo(item.punch_type);
+        return (
+            <GlassCard style={styles.punchCard}>
+                <View style={styles.punchHeader}>
+                    <View style={[styles.typeIcon, { backgroundColor: `${typeInfo.color}20` }]}>
+                        <Icon name={typeInfo.icon} size={18} color={typeInfo.color} />
+                    </View>
+                    <View style={styles.punchInfo}>
+                        <Text style={styles.typeLabel}>{typeInfo.label}</Text>
+                        <Text style={styles.punchTime}>{formatTime(item.punched_at)}</Text>
+                    </View>
+                    {item.amount && (
+                        <View style={styles.amountBadge}>
+                            <Text style={styles.amountText}>₹{Number(item.amount).toLocaleString()}</Text>
+                        </View>
+                    )}
+                </View>
+                {item.current_address && (
+                    <View style={styles.addressRow}>
+                        <Icon name="map-pin" size={12} color={colors.textMuted} />
+                        <Text style={styles.addressText} numberOfLines={1}>{item.current_address}</Text>
+                    </View>
+                )}
+            </GlassCard>
+        );
+    };
+
+    const renderFormField = (label, key, options = {}) => {
+        if (options.hidden) return null;
+        return (
+            <View style={styles.formField}>
+                <Text style={styles.fieldLabel}>{label}</Text>
+                {options.multiline ? (
+                    <InputField
+                        value={formData[key]}
+                        onChangeText={(text) => updateFormData(key, text)}
+                        placeholder={options.placeholder}
+                        multiline
+                        numberOfLines={3}
+                        style={styles.textArea}
+                    />
+                ) : (
+                    <InputField
+                        value={formData[key]}
+                        onChangeText={(text) => updateFormData(key, text)}
+                        placeholder={options.placeholder}
+                        keyboardType={options.keyboardType}
+                    />
+                )}
+            </View>
+        );
+    };
 
     return (
         <SafeAreaView style={styles.container}>
-            {locationLoading && (
-                <View style={styles.loadingOverlay}>
-                    <ActivityIndicator size="large" color={colors.primary} style={{ marginBottom: 15 }} />
-                    <Text style={styles.loadingText}>Calibrating Precise GPS...</Text>
-                </View>
-            )}
-
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Icon name="arrow-left" size={24} color={colors.textDark} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>
-                    {data.punch_type === 'PUNCH_IN' ? 'Punch In' : 'Punch Out'}
-                </Text>
+                <Text style={styles.headerTitle}>Add Punch</Text>
                 <View style={{ width: 40 }} />
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+            <View style={styles.todayHeader}>
+                <Text style={styles.todayTitle}>Today's Punches</Text>
+                <Text style={styles.todayCount}>{todayPunches.length} entries</Text>
+            </View>
 
-                <GlassCard style={styles.card}>
-                    <View style={styles.trackingStatus}>
-                        <View style={styles.trackingStatusLeft}>
-                            <Icon 
-                                name={isTracking ? "activity" : "pause-circle"} 
-                                size={20} 
-                                color={isTracking ? colors.success : colors.warning} 
-                            />
-                            <Text style={styles.trackingStatusText}>
-                                {isTracking 
-                                    ? 'Tracking Active' 
-                                    : 'Tracking Inactive'}
-                            </Text>
-                        </View>
-                        <View style={styles.punchCount}>
-                            <Text style={styles.punchCountText}>{todayPunches.length} punches</Text>
-                        </View>
+            <FlatList
+                data={todayPunches}
+                renderItem={renderPunchItem}
+                keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+                contentContainerStyle={styles.listContent}
+                ListEmptyComponent={
+                    <View style={styles.emptyState}>
+                        <Icon name="map-pin" size={48} color={colors.textLight} />
+                        <Text style={styles.emptyText}>No punches recorded today</Text>
+                        <Text style={styles.emptySubtext}>Tap the button below to add your first punch</Text>
                     </View>
-                </GlassCard>
+                }
+            />
 
-                <GlassCard style={styles.card}>
-                    <View style={styles.sectionHeader}>
-                        <Icon name="map-pin" size={20} color={colors.danger} />
-                        <Text style={styles.sectionTitle}>Location</Text>
-                    </View>
+            <View style={styles.bottomBar}>
+                <TouchableOpacity
+                    style={styles.addButton}
+                    onPress={openAddPunchForm}
+                    activeOpacity={0.85}
+                >
+                    <Icon name="plus" size={24} color="#FFFFFF" />
+                    <Text style={styles.addButtonText}>Add Punch</Text>
+                </TouchableOpacity>
+            </View>
 
-                    <View style={styles.locationContainer}>
-                        <Text style={styles.addressText}>{data.current_address}</Text>
-                        <TouchableOpacity onPress={fetchLocation} style={styles.refreshBtn}>
-                            <Icon name="refresh-cw" size={20} color={colors.primary} />
+            <Modal
+                visible={showForm}
+                animationType="slide"
+                presentationStyle="pageSheet"
+                onRequestClose={() => setShowForm(false)}
+            >
+                <SafeAreaView style={styles.modalContainer}>
+                    <View style={styles.modalHeader}>
+                        <TouchableOpacity onPress={() => setShowForm(false)} style={styles.modalClose}>
+                            <Icon name="x" size={24} color={colors.textDark} />
                         </TouchableOpacity>
+                        <Text style={styles.modalTitle}>New Punch</Text>
+                        <View style={{ width: 40 }} />
                     </View>
 
-                    {data.latitude && data.longitude && (
-                        <View style={styles.mapContainer}>
-                            <MapView
-                                ref={mapRef}
-                                style={styles.map}
-                                provider={PROVIDER_GOOGLE}
-                                region={{
-                                    latitude: data.latitude,
-                                    longitude: data.longitude,
-                                    latitudeDelta: 0.01,
-                                    longitudeDelta: 0.01,
-                                }}
-                                scrollEnabled={true}
-                                zoomEnabled={true}
-                            >
-                                <Marker
-                                    coordinate={{
-                                        latitude: data.latitude,
-                                        longitude: data.longitude,
-                                    }}
-                                    pinColor={colors.danger}
-                                    title="Current Location"
-                                />
-                                {routeCoordinates.length > 0 && (
-                                    <Polyline
-                                        coordinates={routeCoordinates}
-                                        strokeColor={colors.primary}
-                                        strokeWidth={4}
-                                    />
-                                )}
-                            </MapView>
-                        </View>
-                    )}
-                </GlassCard>
-
-                <GlassCard style={styles.card}>
-                    <View style={styles.sectionHeader}>
-                        <Icon name="info" size={20} color={colors.primary} />
-                        <Text style={styles.sectionTitle}>Punch Type</Text>
-                    </View>
-
-                    <PillSelector 
-                        label="Select Punch Type"
-                        selectedValue={data.punch_type}
-                        onValueChange={(v) => updateData('punch_type', v)}
-                        options={[
-                            { label: 'Punch In', value: 'PUNCH_IN' },
-                            { label: 'Punch Out', value: 'PUNCH_OUT' }
-                        ]}
-                        disabled={isPunchedOutToday && !isPunchedIn}
-                    />
-
-                    {data.punch_type === 'PUNCH_IN' && (
-                        <View style={styles.trackingInfo}>
-                            <Icon name="info" size={16} color={colors.info} />
-                            <Text style={styles.trackingInfoText}>
-                                Starting tracking will capture your route every minute
-                            </Text>
-                        </View>
-                    )}
-
-                    {data.punch_type === 'PUNCH_OUT' && (
-                        <View style={styles.trackingInfo}>
-                            <Icon name="info" size={16} color={colors.warning} />
-                            <Text style={styles.trackingInfoText}>
-                                Stopping tracking will end route capture for today
-                            </Text>
-                        </View>
-                    )}
-                </GlassCard>
-
-                {data.punch_type === 'PUNCH_IN' && (
-                    <>
-                        <GlassCard style={styles.card}>
-                            <View style={styles.sectionHeader}>
-                                <Icon name="info" size={20} color={colors.primary} />
-                                <Text style={styles.sectionTitle}>Visit Details</Text>
+                    <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+                        {locationLoading && (
+                            <View style={styles.locationLoading}>
+                                <ActivityIndicator size="small" color={colors.primary} />
+                                <Text style={styles.locationLoadingText}>Getting your location...</Text>
                             </View>
-
-                            <PillSelector 
-                                label="Purpose of Visit"
-                                selectedValue={data.visit_type}
-                                onValueChange={(v) => {
-                                    setData(prev => ({ ...prev, visit_type: v, loan_id: '', amount: '', payment_mode: '' }));
-                                }}
-                                options={[
-                                    { label: 'Collection', value: 'COLLECTION' },
-                                    { label: 'Disbursement', value: 'DISBURSEMENT' },
-                                    { label: 'Other', value: 'OTHER' }
-                                ]}
-                            />
-
-                            <InputField
-                                icon="home"
-                                placeholder="Customer Address"
-                                value={data.customer_address}
-                                onChangeText={(v) => updateData('customer_address', v)}
-                            />
-
-                            <InputField
-                                icon="message-square"
-                                placeholder="Purpose / Reason"
-                                value={data.reason}
-                                onChangeText={(v) => updateData('reason', v)}
-                            />
-                        </GlassCard>
-
-                        {(data.visit_type === 'COLLECTION' || data.visit_type === 'DISBURSEMENT') && (
-                            <GlassCard style={styles.card}>
-                                <View style={styles.sectionHeader}>
-                                    <Icon name="dollar-sign" size={20} color={colors.success} />
-                                    <Text style={styles.sectionTitle}>Financial Trx</Text>
-                                </View>
-
-                                <InputField
-                                    icon="hash"
-                                    placeholder="Loan ID"
-                                    value={data.loan_id}
-                                    onChangeText={(v) => updateData('loan_id', v)}
-                                />
-
-                                <InputField
-                                    icon="activity"
-                                    placeholder="Amount (₹)"
-                                    value={data.amount}
-                                    onChangeText={(v) => updateData('amount', v)}
-                                    keyboardType="numeric"
-                                />
-
-                                {data.visit_type === 'COLLECTION' && (
-                                    <>
-                                        <PillSelector
-                                            label="Mode of Payment"
-                                            selectedValue={data.payment_mode}
-                                            onValueChange={(v) => updateData('payment_mode', v)}
-                                            options={[
-                                                { label: 'Cash', value: 'CASH' },
-                                                { label: 'UPI', value: 'UPI' },
-                                                { label: 'Cheque', value: 'CHEQUE' },
-                                            ]}
-                                        />
-
-                                        {data.payment_mode === 'UPI' && (
-                                            <InputField
-                                                icon="smartphone"
-                                                placeholder="UPI Ref ID"
-                                                value={data.upi_ref}
-                                                onChangeText={(v) => updateData('upi_ref', v)}
-                                            />
-                                        )}
-                                        {data.payment_mode === 'CHEQUE' && (
-                                            <InputField
-                                                icon="file-text"
-                                                placeholder="Cheque Number"
-                                                value={data.cheque_no}
-                                                onChangeText={(v) => updateData('cheque_no', v)}
-                                            />
-                                        )}
-                                    </>
-                                )}
-                            </GlassCard>
                         )}
-                    </>
-                )}
 
-                <GlassCard style={styles.card}>
-                    <View style={styles.sectionHeader}>
-                        <Icon name="users" size={20} color={colors.warning} />
-                        <Text style={styles.sectionTitle}>Logistics</Text>
-                    </View>
+                        <View style={styles.locationCard}>
+                            <Icon name="map-pin" size={20} color={colors.success} />
+                            <Text style={styles.locationText} numberOfLines={2}>
+                                {formData.current_address || 'Fetching location...'}
+                            </Text>
+                            <TouchableOpacity onPress={fetchLocation} style={styles.refreshBtn}>
+                                <Icon name="refresh-cw" size={16} color={colors.primary} />
+                            </TouchableOpacity>
+                        </View>
 
-                    <PillSelector
-                        label="Travel Composition"
-                        selectedValue={data.travel_with}
-                        onValueChange={(v) => {
-                            updateData('travel_with', v);
-                            updateData('co_employee_id', '');
-                            updateData('co_employee_name', '');
-                        }}
-                        options={[
-                            { label: 'Traveling Alone', value: 'ALONE' },
-                            { label: 'With Co-Employee', value: 'WITH_EMPLOYEE' }
-                        ]}
-                    />
+                        <Text style={styles.sectionLabel}>Punch Type</Text>
+                        <View style={styles.typeGrid}>
+                            {PUNCH_TYPES.map((type) => (
+                                <TouchableOpacity
+                                    key={type.key}
+                                    style={[
+                                        styles.typeButton,
+                                        selectedType === type.key && { backgroundColor: type.color },
+                                    ]}
+                                    onPress={() => setSelectedType(type.key)}
+                                >
+                                    <Icon
+                                        name={type.icon}
+                                        size={20}
+                                        color={selectedType === type.key ? '#FFFFFF' : type.color}
+                                    />
+                                    <Text style={[
+                                        styles.typeButtonText,
+                                        selectedType === type.key && { color: '#FFFFFF' },
+                                    ]}>
+                                        {type.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
 
-                    {data.travel_with === 'WITH_EMPLOYEE' && (
-                        <>
-                            <InputField
-                                icon="user-plus"
-                                placeholder="Co-Employee ID"
-                                value={data.co_employee_id}
-                                onChangeText={(v) => updateData('co_employee_id', v)}
+                        <Text style={styles.sectionLabel}>Details (Optional)</Text>
+
+                        {renderFormField('Customer Name', 'customer_name', {
+                            placeholder: 'Enter customer name'
+                        })}
+
+                        {renderFormField('Customer Address', 'customer_address', {
+                            placeholder: 'Enter address',
+                            multiline: true
+                        })}
+
+                        {renderFormField('Notes', 'notes', {
+                            placeholder: 'Add notes about this visit...',
+                            multiline: true
+                        })}
+
+                        {(selectedType === 'COLLECTION' || selectedType === 'DISBURSEMENT') && (
+                            <>
+                                {renderFormField('Amount', 'amount', {
+                                    placeholder: 'Enter amount',
+                                    keyboardType: 'numeric'
+                                })}
+
+                                <Text style={styles.sectionLabel}>Payment Mode</Text>
+                                <PillSelector
+                                    options={['CASH', 'UPI', 'CHEQUE', 'NEFT', 'RTGS']}
+                                    selected={formData.payment_mode}
+                                    onSelect={(mode) => updateFormData('payment_mode', mode)}
+                                    style={styles.pillSelector}
+                                />
+
+                                {formData.payment_mode === 'UPI' && renderFormField('UPI Reference', 'upi_ref', {
+                                    placeholder: 'Enter UPI reference'
+                                })}
+
+                                {formData.payment_mode === 'CHEQUE' && renderFormField('Cheque Number', 'cheque_no', {
+                                    placeholder: 'Enter cheque number'
+                                })}
+                            </>
+                        )}
+
+                        {selectedType === 'VISIT' && renderFormField('Loan ID', 'loan_id', {
+                            placeholder: 'Enter loan ID if applicable'
+                        })}
+
+                        <View style={styles.buttonContainer}>
+                            <PrimaryButton
+                                title="Save Punch"
+                                onPress={handleSubmit}
+                                loading={loading}
+                                disabled={loading || locationLoading}
                             />
-                            <InputField
-                                icon="smile"
-                                placeholder="Co-Employee Name"
-                                value={data.co_employee_name}
-                                onChangeText={(v) => updateData('co_employee_name', v)}
-                            />
-                        </>
-                    )}
-                </GlassCard>
+                        </View>
 
-                <PrimaryButton
-                    title={data.punch_type === 'PUNCH_IN' ? 'Punch In & Start Tracking' : 'Punch Out & Stop Tracking'}
-                    onPress={handleSubmit}
-                    loading={loading}
-                    style={styles.submitBtn}
-                />
-            </ScrollView>
+                        <View style={{ height: 40 }} />
+                    </ScrollView>
+                </SafeAreaView>
+            </Modal>
         </SafeAreaView>
     );
 };
@@ -507,129 +427,250 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: spacing.md,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
         backgroundColor: colors.surface,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
     },
     backBtn: {
-        padding: spacing.sm,
+        width: 40,
+        height: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     headerTitle: {
         fontSize: typography.sizes.lg,
         fontWeight: typography.weights.bold,
         color: colors.textDark,
     },
-    scrollContent: {
-        padding: spacing.lg,
-        paddingBottom: spacing.xxl * 2,
-    },
-    card: {
-        marginBottom: spacing.md,
-    },
-    sectionHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: spacing.md,
-    },
-    sectionTitle: {
-        fontSize: typography.sizes.md,
-        fontWeight: typography.weights.bold,
-        color: colors.textDark,
-        marginLeft: spacing.sm,
-    },
-    trackingStatus: {
+    todayHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        padding: spacing.sm,
-        backgroundColor: '#f5f5f5',
-        borderRadius: 8,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
     },
-    trackingStatusLeft: {
+    todayTitle: {
+        fontSize: typography.sizes.md,
+        fontWeight: typography.weights.semibold,
+        color: colors.textDark,
+    },
+    todayCount: {
+        fontSize: typography.sizes.sm,
+        color: colors.textMuted,
+    },
+    listContent: {
+        paddingHorizontal: spacing.md,
+        paddingBottom: 120,
+    },
+    punchCard: {
+        marginBottom: spacing.sm,
+        padding: spacing.md,
+    },
+    punchHeader: {
         flexDirection: 'row',
         alignItems: 'center',
     },
-    trackingStatusText: {
-        fontSize: typography.sizes.sm,
+    typeIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    punchInfo: {
+        flex: 1,
         marginLeft: spacing.sm,
+    },
+    typeLabel: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.semibold,
         color: colors.textDark,
     },
-    punchCount: {
-        backgroundColor: colors.primary,
+    punchTime: {
+        fontSize: typography.sizes.xs,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    amountBadge: {
+        backgroundColor: colors.successLight,
         paddingHorizontal: spacing.sm,
-        paddingVertical: spacing.xs,
+        paddingVertical: 4,
         borderRadius: 12,
     },
-    punchCountText: {
-        fontSize: typography.sizes.xs,
-        color: '#fff',
-        fontWeight: 'bold',
+    amountText: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.bold,
+        color: colors.success,
     },
-    locationContainer: {
+    addressRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: '#f5f5f5',
-        padding: spacing.md,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: colors.border,
+        marginTop: spacing.xs,
     },
-    loadingOverlay: {
+    addressText: {
+        fontSize: typography.sizes.xs,
+        color: colors.textMuted,
+        marginLeft: 4,
+        flex: 1,
+    },
+    emptyState: {
+        alignItems: 'center',
+        paddingVertical: spacing.xxl,
+    },
+    emptyText: {
+        fontSize: typography.sizes.md,
+        color: colors.textMuted,
+        marginTop: spacing.md,
+    },
+    emptySubtext: {
+        fontSize: typography.sizes.sm,
+        color: colors.textLight,
+        marginTop: spacing.xs,
+    },
+    bottomBar: {
         position: 'absolute',
-        top: 0,
         bottom: 0,
         left: 0,
         right: 0,
-        flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 9999
+        padding: spacing.md,
+        paddingBottom: spacing.lg,
+        backgroundColor: colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
     },
-    loadingText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: 'bold',
-        marginTop: 10
-    },
-    addressText: {
-        flex: 1,
-        fontSize: typography.sizes.sm,
-        color: colors.textDark,
-        marginRight: spacing.sm,
-    },
-    refreshBtn: {
-        padding: spacing.xs,
-    },
-    trackingInfo: {
+    addButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#e3f2fd',
-        padding: spacing.sm,
-        borderRadius: 8,
-        marginTop: spacing.sm,
+        justifyContent: 'center',
+        backgroundColor: colors.punchBlue,
+        paddingVertical: spacing.md,
+        borderRadius: 14,
+        elevation: 4,
+        shadowColor: colors.punchBlue,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
     },
-    trackingInfoText: {
-        fontSize: typography.sizes.xs,
-        color: colors.info,
-        marginLeft: spacing.xs,
+    addButtonText: {
+        color: '#FFFFFF',
+        fontSize: typography.sizes.md,
+        fontWeight: typography.weights.bold,
+        marginLeft: spacing.sm,
+    },
+    modalContainer: {
         flex: 1,
+        backgroundColor: colors.background,
     },
-    submitBtn: {
+    modalHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
+        backgroundColor: colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    modalClose: {
+        width: 40,
+        height: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    modalTitle: {
+        fontSize: typography.sizes.lg,
+        fontWeight: typography.weights.bold,
+        color: colors.textDark,
+    },
+    modalContent: {
+        flex: 1,
+        padding: spacing.md,
+    },
+    locationLoading: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: spacing.md,
+        backgroundColor: colors.surface,
+        borderRadius: 12,
+        marginBottom: spacing.md,
+    },
+    locationLoadingText: {
+        marginLeft: spacing.sm,
+        color: colors.textMuted,
+    },
+    locationCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: spacing.md,
+        backgroundColor: colors.surface,
+        borderRadius: 12,
+        marginBottom: spacing.lg,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    locationText: {
+        flex: 1,
+        marginLeft: spacing.sm,
+        fontSize: typography.sizes.sm,
+        color: colors.textDark,
+    },
+    refreshBtn: {
+        width: 36,
+        height: 36,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.primaryLight,
+        borderRadius: 18,
+    },
+    sectionLabel: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.semibold,
+        color: colors.textDark,
+        marginBottom: spacing.sm,
         marginTop: spacing.sm,
     },
-    mapContainer: {
-        height: 200,
-        marginTop: spacing.md,
-        borderRadius: 8,
-        overflow: 'hidden',
+    typeGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginBottom: spacing.md,
+        gap: spacing.sm,
     },
-    map: {
-        width: '100%',
-        height: '100%',
-    }
+    typeButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: 20,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    typeButtonText: {
+        marginLeft: 6,
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.medium,
+    },
+    formField: {
+        marginBottom: spacing.md,
+    },
+    fieldLabel: {
+        fontSize: typography.sizes.sm,
+        color: colors.textMedium,
+        marginBottom: spacing.xs,
+    },
+    textArea: {
+        minHeight: 80,
+        textAlignVertical: 'top',
+    },
+    pillSelector: {
+        marginBottom: spacing.md,
+    },
+    buttonContainer: {
+        marginTop: spacing.lg,
+    },
 });
 
 export default PunchScreen;

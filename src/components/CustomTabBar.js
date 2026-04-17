@@ -10,13 +10,13 @@ const CustomTabBar = memo(({ state, navigation }) => {
         const animation = Animated.loop(
             Animated.sequence([
                 Animated.timing(pulseAnim, {
-                    toValue: 1.15,
-                    duration: 1200,
+                    toValue: 1.12,
+                    duration: 1500,
                     useNativeDriver: true,
                 }),
                 Animated.timing(pulseAnim, {
                     toValue: 1,
-                    duration: 1200,
+                    duration: 1500,
                     useNativeDriver: true,
                 }),
             ])
@@ -35,11 +35,23 @@ const CustomTabBar = memo(({ state, navigation }) => {
 
     const isPunchTab = (routeName) => routeName === 'EmployeePunch';
 
+    const handleTabPress = (route, isFocused) => {
+        const event = navigation.emit({
+            type: 'tabPress',
+            target: route.key,
+            canPreventDefault: true,
+        });
+
+        if (!isFocused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
+        }
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.tabBar}>
-                {state.routes.map((route, index) => {
-                    const isFocused = state.index === index;
+                {state.routes.map((route) => {
+                    const isFocused = state.index === state.routes.findIndex(r => r.key === route.key);
                     const tab = tabs.find(t => t.name === route.name);
                     const label = tab?.label || route.name;
                     const iconName = tab?.icon || 'circle';
@@ -50,10 +62,10 @@ const CustomTabBar = memo(({ state, navigation }) => {
                                 <Animated.View style={[styles.punchButtonOuter, { transform: [{ scale: pulseAnim }] }]}>
                                     <TouchableOpacity
                                         style={styles.punchButton}
-                                        onPress={() => navigation.navigate(route.name)}
+                                        onPress={() => handleTabPress(route, isFocused)}
                                         activeOpacity={0.85}
                                     >
-                                        <Icon name="map-pin" size={28} color="#FFFFFF" />
+                                        <Icon name="map-pin" size={26} color="#FFFFFF" />
                                     </TouchableOpacity>
                                 </Animated.View>
                                 <Text style={styles.punchLabel}>Punch</Text>
@@ -65,17 +77,7 @@ const CustomTabBar = memo(({ state, navigation }) => {
                         <TouchableOpacity
                             key={route.key}
                             style={styles.tab}
-                            onPress={() => {
-                                const event = navigation.emit({
-                                    type: 'tabPress',
-                                    target: route.key,
-                                    canPreventDefault: true,
-                                });
-
-                                if (!isFocused && !event.defaultPrevented) {
-                                    navigation.navigate(route.name);
-                                }
-                            }}
+                            onPress={() => handleTabPress(route, isFocused)}
                             activeOpacity={0.7}
                         >
                             <View style={[styles.iconContainer, isFocused && styles.iconContainerActive]}>
@@ -146,15 +148,15 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'flex-start',
-        marginTop: -40,
+        marginTop: -42,
     },
     punchButtonOuter: {
         transformOrigin: 'center',
     },
     punchButton: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
+        width: 60,
+        height: 60,
+        borderRadius: 30,
         backgroundColor: colors.punchBlue,
         alignItems: 'center',
         justifyContent: 'center',
