@@ -1,6 +1,8 @@
 // src/screens/PunchScreen.js
 
-import React, { useState, useEffect, useContext, useRef } from 'react';
+const IS_DEV = __DEV__;
+
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
     View,
     Text,
@@ -36,6 +38,7 @@ const PunchScreen = ({ navigation }) => {
     const [todayPunches, setTodayPunches] = useState([]);
     const [routeCoordinates, setRouteCoordinates] = useState([]);
     const mapRef = useRef(null);
+    const isMountedRef = useRef(true);
 
     const [data, setData] = useState({
         current_address: 'Tap refresh icon to fetch GPS...',
@@ -89,13 +92,19 @@ const PunchScreen = ({ navigation }) => {
     };
 
     useEffect(() => {
+        isMountedRef.current = true;
         fetchTodayPunches();
         fetchLocation();
-    }, []);
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, [fetchTodayPunches, fetchLocation]);
 
-    const fetchTodayPunches = async () => {
+    const fetchTodayPunches = useCallback(async () => {
         try {
             const response = await api.get('/attendance/punches/today_punches/');
+            if (!isMountedRef.current) return;
+            
             const rawPunches = Array.isArray(response.data) ? response.data : [];
             const seen = new Set();
             const uniquePunches = rawPunches.filter(p => {
@@ -104,14 +113,48 @@ const PunchScreen = ({ navigation }) => {
                 seen.add(p.id);
                 return true;
             });
-            console.log('[PunchScreen] Today punches - Raw:', rawPunches.length, 'Unique:', uniquePunches.length);
+            
+            if (IS_DEV) {
+                console.log('[PunchScreen] Punches - Raw:', rawPunches.length, 'Unique:', uniquePunches.length);
+            }
+            
             setTodayPunches(uniquePunches);
         } catch (error) {
-            console.log('Failed to fetch today punches:', error);
+            if (IS_DEV) console.log('Failed to fetch today punches:', error);
         }
-    };
+    }, []);
 
-    const fetchDelayedRoute = async () => {
+    const fetchLocation = useCallback(async () => {
+        setLocationLoading(true);
+        updateData('current_address', 'Getting GPS...');
+
+        try {
+            const result = await LocationService.getCurrentLocation();
+
+            if (result.error) {
+                if (IS_DEV) console.log('[PunchScreen] Location error:', result.error);
+                Alert.alert("Location Error", result.error);
+                updateData('current_address', 'GPS failed');
+                setLocationLoading(false);
+                return false;
+            }
+
+            updateData('latitude', result.latitude);
+            updateData('longitude', result.longitude);
+            updateData('current_address', result.address || `${result.latitude}, ${result.longitude}`);
+
+            setLocationLoading(false);
+            return result;
+        } catch (err) {
+            if (IS_DEV) console.log('[PunchScreen] Location exception:', err);
+            Alert.alert("Error", "Failed to get location");
+            updateData('current_address', 'Error');
+            setLocationLoading(false);
+            return false;
+        }
+    }, []);
+
+    const fetchDelayedRoute = useCallback(async () => {
         try {
             const routeData = await api.get('/attendance/tracking/delayed-route/');
             if (routeData?.data?.routes) {
@@ -127,9 +170,9 @@ const PunchScreen = ({ navigation }) => {
                 setRouteCoordinates(allCoords);
             }
         } catch (error) {
-            console.log('Failed to fetch route:', error);
+            if (IS_DEV) console.log('Failed to fetch route:', error);
         }
-    };
+    }, []);
 
     const handleSubmit = async () => {
         try {
@@ -140,7 +183,7 @@ const PunchScreen = ({ navigation }) => {
             let finalAddress = data.current_address;
 
             if (!finalLat || !finalLng) {
-                console.log("-> Location missing on Submit, auto-fetching from Service...");
+                if (IS_DEV) console.log('[PunchScreen] Location missing, auto-fetching...');
                 const result = await fetchLocation();
                 if (!result || !result.latitude) {
                     Alert.alert("Error", "Could not capture location. Ensure GPS is fully enabled.");

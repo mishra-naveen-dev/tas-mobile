@@ -25,6 +25,8 @@ import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
 
+const IS_DEV = __DEV__;
+
 const MapPreview = React.memo(({ points, mapRef }) => {
     const navigation = useNavigation();
     
@@ -35,14 +37,20 @@ const MapPreview = React.memo(({ points, mapRef }) => {
     const latestPoint = points[0];
     const startPoint = points[points.length - 1];
     
-    const fitAll = () => {
+    const fitAll = useCallback(() => {
         if (points.length > 1 && mapRef.current) {
             mapRef.current.fitToCoordinates(points, {
                 edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
                 animated: true
             });
         }
-    };
+    }, [points, mapRef]);
+
+    const handleViewRoute = useCallback(() => {
+        if (navigation?.navigate) {
+            navigation.navigate('RouteMap');
+        }
+    }, [navigation]);
 
     return (
         <View style={styles.mapContainer}>
@@ -79,11 +87,7 @@ const MapPreview = React.memo(({ points, mapRef }) => {
 
             <TouchableOpacity 
                 style={styles.mapCta} 
-                onPress={() => {
-                    if (navigation && navigation.navigate) {
-                        navigation.navigate('RouteMap');
-                    }
-                }} 
+                onPress={handleViewRoute}
                 activeOpacity={0.8}
             >
                 <Icon name="maximize-2" size={14} color="#FFFFFF" />
@@ -93,7 +97,7 @@ const MapPreview = React.memo(({ points, mapRef }) => {
     );
 });
 
-const StatCard = ({ icon, value, label, iconColor, bgColor, prefix = '', suffix = '' }) => (
+const StatCard = React.memo(({ icon, value, label, iconColor, bgColor, prefix = '', suffix = '' }) => (
     <View style={styles.statCard}>
         <View style={[styles.statIconContainer, { backgroundColor: bgColor }]}>
             <Icon name={icon} size={20} color={iconColor} />
@@ -103,7 +107,19 @@ const StatCard = ({ icon, value, label, iconColor, bgColor, prefix = '', suffix 
         </Text>
         <Text style={styles.statLabel}>{label}</Text>
     </View>
-);
+));
+
+const ActivitySection = React.memo(({ section, sectionIndex }) => (
+    <View key={`section-${section.title}-${sectionIndex}`}>
+        <SectionHeader title={section.title} count={section.data?.length || 0} />
+        {(section.data || []).map((activity, idx) => (
+            <ActivityCard 
+                key={`activity-${section.title}-${activity.id || activity.punched_at || idx}`}
+                activity={activity} 
+            />
+        ))}
+    </View>
+));
 
 const EmployeeHomeScreen = ({ navigation }) => {
     const auth = useAuth() || {};
@@ -111,40 +127,39 @@ const EmployeeHomeScreen = ({ navigation }) => {
     
     const { 
         isActive = false, 
-        isIdle = true, 
         isTracking = false,
         currentPunch = null,
         todayPunches = [],
-        error = false,
-        errorMessage = null,
         success = false,
     } = punchCtx;
     
-    const punchStartTime = currentPunch?.punched_at || null;
-    const getTotalDistance = typeof punchCtx.getTotalDistance === 'function' 
-        ? punchCtx.getTotalDistance 
-        : () => 0;
-    const getTrackingDuration = typeof punchCtx.getTrackingDuration === 'function' 
-        ? punchCtx.getTrackingDuration 
-        : () => 0;
-    const refreshPunches = typeof punchCtx.fetchTodayPunches === 'function'
-        ? punchCtx.fetchTodayPunches
-        : () => {};
+    const getTotalDistance = punchCtx.getTotalDistance || (() => 0);
+    const getTrackingDuration = punchCtx.getTrackingDuration || (() => 0);
+    const refreshPunches = punchCtx.fetchTodayPunches || (() => {});
     
-    const { token = null, logout = () => {}, user = null } = auth;
+    const { logout = () => {}, user = null } = auth;
     const mapRef = useRef(null);
     const pulseAnim = useRef(new Animated.Value(1)).current;
+    const isMountedRef = useRef(true);
+    const lastFetchRef = useRef(0);
 
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const [hasError, setHasError] = useState(false);
     const [summary, setSummary] = useState({});
     const [punches, setPunches] = useState([]);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
 
     useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        let animation;
         if (isActive || isTracking) {
-            Animated.loop(
+            animation = Animated.loop(
                 Animated.sequence([
                     Animated.timing(pulseAnim, {
                         toValue: 1.3,
@@ -157,15 +172,22 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         useNativeDriver: true,
                     }),
                 ])
-            ).start();
+            );
+            animation.start();
         } else {
             pulseAnim.setValue(1);
         }
+        return () => animation?.stop();
     }, [isActive, isTracking, pulseAnim]);
 
     const fetchData = useCallback(async (isRefresh = false) => {
+        const now = Date.now();
+        if (!isRefresh && now - lastFetchRef.current < 1000) {
+            return;
+        }
+        lastFetchRef.current = now;
+
         try {
-            setHasError(false);
             if (!isRefresh) setIsLoading(true);
 
             const [summaryRes, punchRes] = await Promise.all([
@@ -173,16 +195,20 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 api.get('/attendance/punches/today_punches/'),
             ]).catch(() => [null, null]);
 
+            if (!isMountedRef.current) return;
+
             const liveSummary = summaryRes?.data || {};
             const livePunches = punchRes?.data?.results || punchRes?.data || [];
+            
             setSummary(liveSummary);
             setPunches(livePunches);
         } catch (err) {
-            console.error('[Home] Fetch error:', err);
-            setHasError(true);
+            if (IS_DEV) console.error('[Home] Fetch error:', err);
         } finally {
-            setIsLoading(false);
-            setIsRefreshing(false);
+            if (isMountedRef.current) {
+                setIsLoading(false);
+                setIsRefreshing(false);
+            }
         }
     }, []);
 
@@ -221,7 +247,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                                 });
                             }
                         } catch (err) {
-                            console.error('[Home] Logout error:', err);
+                            if (IS_DEV) console.error('[Home] Logout error:', err);
                         }
                     },
                 },
@@ -230,52 +256,49 @@ const EmployeeHomeScreen = ({ navigation }) => {
     }, [auth, logout, navigation]);
 
     const statsData = useMemo(() => [
-        { icon: 'navigation', value: summary?.total_distance_today || 0, label: 'Distance', iconColor: colors.info || '#06B6D4', bgColor: colors.infoLight || '#CFFAFE', suffix: ' km' },
-        { icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success || '#10B981', bgColor: colors.successLight || '#D1FAE5' },
-        { icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning || '#F59E0B', bgColor: colors.warningLight || '#FEF3C7', prefix: '₹' },
-        { icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.danger || '#EF4444', bgColor: colors.dangerLight || '#FEE2E2', prefix: '₹' },
+        { id: 'distance', icon: 'navigation', value: summary?.total_distance_today || 0, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km' },
+        { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
+        { id: 'collected', icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
+        { id: 'disbursement', icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.danger, bgColor: colors.dangerLight, prefix: '₹' },
     ], [summary]);
 
-    const routePoints = useMemo(() => {
-        const allPunches = [...(punches || []), ...(todayPunches || [])];
-        const seen = new Set();
-        const unique = allPunches.filter(p => {
-            if (!p?.id) return true;
-            if (seen.has(p.id)) return false;
-            seen.add(p.id);
-            return true;
+    const allPunches = useMemo(() => {
+        const combined = [...(punches || []), ...(todayPunches || [])];
+        const map = new Map();
+        combined.forEach(p => {
+            if (p?.id && !map.has(p.id)) {
+                map.set(p.id, p);
+            }
         });
-        return unique
+        return Array.from(map.values());
+    }, [punches, todayPunches]);
+
+    const routePoints = useMemo(() => {
+        return allPunches
             .filter(p => p.latitude && p.longitude)
             .sort((a, b) => new Date(b.punched_at) - new Date(a.punched_at))
             .map(p => ({ 
                 latitude: Number(p.latitude), 
                 longitude: Number(p.longitude) 
             }));
-    }, [punches, todayPunches]);
+    }, [allPunches]);
 
     const activities = useMemo(() => {
         try {
-            const allPunches = [...(punches || []), ...(todayPunches || [])];
-            const seen = new Set();
-            const unique = allPunches.filter(p => {
-                if (!p?.id) return true;
-                if (seen.has(p.id)) return false;
-                seen.add(p.id);
-                return true;
-            });
-            
-            console.log('[Home] Unique activities:', unique.length, 'from', allPunches.length);
-            const mappedActivities = mapApiResponseToActivities(unique, []);
+            const mappedActivities = mapApiResponseToActivities(allPunches, []);
             const filtered = ActivityPresenter.filterActivities(mappedActivities, selectedFilter);
             return ActivityPresenter.groupActivitiesByTime(filtered);
         } catch (err) {
-            console.error('[Home] Activities error:', err);
+            if (IS_DEV) console.error('[Home] Activities error:', err);
             return [];
         }
-    }, [punches, todayPunches, selectedFilter]);
+    }, [allPunches, selectedFilter]);
 
-    const formatTime = (dateString) => {
+    const totalItems = useMemo(() => {
+        return activities.reduce((acc, s) => acc + (s.data?.length || 0), 0);
+    }, [activities]);
+
+    const formatTime = useCallback((dateString) => {
         if (!dateString) return '';
         try {
             const date = new Date(dateString);
@@ -287,9 +310,9 @@ const EmployeeHomeScreen = ({ navigation }) => {
         } catch {
             return '';
         }
-    };
+    }, []);
 
-    const formatDuration = (minutes) => {
+    const formatDuration = useCallback((minutes) => {
         if (!minutes || minutes < 0) return '0 min';
         const hours = Math.floor(minutes / 60);
         const mins = minutes % 60;
@@ -297,28 +320,31 @@ const EmployeeHomeScreen = ({ navigation }) => {
             return `${hours}h ${mins}m`;
         }
         return `${mins} min`;
-    };
+    }, []);
 
-    const formatDistance = (km) => {
+    const formatDistance = useCallback((km) => {
         if (!km || km < 0) return '0 km';
         return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(2)} km`;
-    };
+    }, []);
 
     const duration = getTrackingDuration();
     const distance = getTotalDistance();
 
-    const getTrackingStatus = () => {
+    const trackingStatus = useMemo(() => {
         if (isActive || isTracking) {
-            return { color: colors.success || '#10B981', text: 'Tracking Active', dot: true };
+            return { color: colors.success, text: 'Tracking Active', dot: true };
         }
         if (success) {
-            return { color: colors.info || '#06B6D4', text: 'Punch Success', dot: false };
+            return { color: colors.info, text: 'Punch Success', dot: false };
         }
-        return { color: colors.textMuted || '#94A3B8', text: 'Ready', dot: false };
-    };
+        return { color: colors.textMuted, text: 'Ready', dot: false };
+    }, [isActive, isTracking, success]);
 
-    const trackingStatus = getTrackingStatus();
-    const totalItems = activities.reduce((acc, s) => acc + (s.data?.length || 0), 0);
+    const punchStartTime = currentPunch?.punched_at || null;
+
+    const handleFilterChange = useCallback((filter) => {
+        setSelectedFilter(filter);
+    }, []);
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
@@ -345,45 +371,45 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 }
             >
                 {(isActive || isTracking) && (
-                    <View style={styles.trackingBanner}>
-                        <Animated.View style={[styles.trackingDot, { 
-                            backgroundColor: trackingStatus.color,
-                            transform: [{ scale: pulseAnim }]
-                        }]} />
-                        <Text style={[styles.trackingText, { color: trackingStatus.color }]}>
-                            {trackingStatus.text}
-                        </Text>
-                        {punchStartTime && (
-                            <Text style={styles.punchInTime}>
-                                Since {formatTime(punchStartTime)}
+                    <>
+                        <View style={styles.trackingBanner}>
+                            <Animated.View style={[styles.trackingDot, { 
+                                backgroundColor: trackingStatus.color,
+                                transform: [{ scale: pulseAnim }]
+                            }]} />
+                            <Text style={[styles.trackingText, { color: trackingStatus.color }]}>
+                                {trackingStatus.text}
                             </Text>
-                        )}
-                    </View>
-                )}
+                            {punchStartTime && (
+                                <Text style={styles.punchInTime}>
+                                    Since {formatTime(punchStartTime)}
+                                </Text>
+                            )}
+                        </View>
 
-                {(isActive || isTracking) && (
-                    <View style={styles.trackingStatsRow}>
-                        <View style={styles.miniStat}>
-                            <Icon name="navigation" size={16} color={colors.primary} />
-                            <Text style={styles.miniStatValue}>{formatDistance(distance)}</Text>
+                        <View style={styles.trackingStatsRow}>
+                            <View style={styles.miniStat}>
+                                <Icon name="navigation" size={16} color={colors.primary} />
+                                <Text style={styles.miniStatValue}>{formatDistance(distance)}</Text>
+                            </View>
+                            <View style={styles.miniStatDivider} />
+                            <View style={styles.miniStat}>
+                                <Icon name="clock" size={16} color={colors.warning} />
+                                <Text style={styles.miniStatValue}>{formatDuration(duration)}</Text>
+                            </View>
                         </View>
-                        <View style={styles.miniStatDivider} />
-                        <View style={styles.miniStat}>
-                            <Icon name="clock" size={16} color={colors.warning} />
-                            <Text style={styles.miniStatValue}>{formatDuration(duration)}</Text>
-                        </View>
-                    </View>
+                    </>
                 )}
 
                 <View style={styles.statsSection}>
                     <View style={styles.statsRow}>
-                        {statsData.slice(0, 2).map((stat, index) => (
-                            <StatCard key={index} {...stat} />
+                        {statsData.slice(0, 2).map((stat) => (
+                            <StatCard key={stat.id} {...stat} />
                         ))}
                     </View>
                     <View style={styles.statsRow}>
-                        {statsData.slice(2, 4).map((stat, index) => (
-                            <StatCard key={index} {...stat} />
+                        {statsData.slice(2, 4).map((stat) => (
+                            <StatCard key={stat.id} {...stat} />
                         ))}
                     </View>
                 </View>
@@ -402,7 +428,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
 
                     <ActivityFilterBar 
                         selectedFilter={selectedFilter} 
-                        onFilterChange={setSelectedFilter} 
+                        onFilterChange={handleFilterChange} 
                     />
 
                     {activities.length === 0 ? (
@@ -416,15 +442,11 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         </View>
                     ) : (
                         activities.map((section, sectionIndex) => (
-                            <View key={`section-${section.title || sectionIndex}-${sectionIndex}`}>
-                                <SectionHeader title={section.title} count={section.data?.length || 0} />
-                                {(section.data || []).map((activity, idx) => (
-                                    <ActivityCard 
-                                        key={`activity-${section.title}-${activity.id || activity.punched_at || idx}`} 
-                                        activity={activity} 
-                                    />
-                                ))}
-                            </View>
+                            <ActivitySection 
+                                key={`section-${section.title}-${sectionIndex}`}
+                                section={section}
+                                sectionIndex={sectionIndex}
+                            />
                         ))
                     )}
                 </View>
@@ -448,7 +470,7 @@ const styles = StyleSheet.create({
     trackingBanner: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: `${colors.success || '#10B981'}15`,
+        backgroundColor: '#D1FAE5',
         padding: spacing.sm,
         borderRadius: 12,
         marginTop: spacing.md,
