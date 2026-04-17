@@ -46,7 +46,7 @@ const App = () => {
     return (
         <GestureHandlerRootView style={styles.container}>
             <SafeAreaProvider>
-                <StatusBar barStyle="dark-content" backgroundColor={colors.primaryDark} />
+                <StatusBar barStyle="dark-content" backgroundColor={colors.primary} />
                 <AuthProvider>
                     <AppContent />
                 </AuthProvider>
@@ -61,7 +61,7 @@ const styles = StyleSheet.create({
     },
     splashContainer: {
         flex: 1,
-        backgroundColor: colors.primaryDark,
+        backgroundColor: colors.primary,
         justifyContent: 'center',
         alignItems: 'center',
     },

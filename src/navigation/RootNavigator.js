@@ -5,6 +5,7 @@ import { View, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography } from '../theme/tokens';
 
+
 import LoginScreen from '../screens/LoginScreen';
 import ChangePasswordScreen from '../screens/ChangePasswordScreen';
 
@@ -41,6 +42,47 @@ import EmployeeCorrectionScreen from '../screens/EmployeeCorrectionScreen';
 import EmployeeAllowanceScreen from '../screens/EmployeeAllowanceScreen';
 import EmployeeMoreScreen from '../screens/EmployeeMoreScreen';
 import EmployeePunchScreen from '../screens/Employee/PunchScreen';
+=======
+// Auth Screens
+import LoginScreen from '../screens/Auth/LoginScreen';
+import ChangePasswordScreen from '../screens/Auth/ChangePasswordScreen';
+
+// Employee Screens
+import EmployeeHomeScreen from '../screens/Employee/EmployeeHomeScreen';
+import EmployeePunchScreen from '../screens/Employee/EmployeePunchScreen';
+import PunchScreen from '../screens/Employee/PunchScreen';
+import EmployeeCorrectionScreen from '../screens/Employee/EmployeeCorrectionScreen';
+import EmployeeAllowanceScreen from '../screens/Employee/EmployeeAllowanceScreen';
+import EmployeeMoreScreen from '../screens/Employee/EmployeeMoreScreen';
+
+// Admin Screens
+import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
+import AdminApprovalsScreen from '../screens/Admin/AdminApprovalsScreen';
+import AdminDevicesScreen from '../screens/Admin/AdminDevicesScreen';
+import EmployeeTrackingScreen from '../screens/Admin/EmployeeTrackingScreen';
+
+// SuperAdmin Screens
+import SuperAdminHomeScreen from '../screens/SuperAdmin/SuperAdminHomeScreen';
+import SuperAdminDashboardScreen from '../screens/SuperAdmin/SuperAdminDashboardScreen';
+import SuperAdminAnalyticsScreen from '../screens/SuperAdmin/SuperAdminAnalyticsScreen';
+import SuperAdminEmployeesScreen from '../screens/SuperAdmin/SuperAdminEmployeesScreen';
+import SuperAdminMoreScreen from '../screens/SuperAdmin/SuperAdminMoreScreen';
+import UserManagementScreen from '../screens/SuperAdmin/UserManagementScreen';
+import CreateUserScreen from '../screens/SuperAdmin/CreateUserScreen';
+import ApprovalRoutesScreen from '../screens/SuperAdmin/ApprovalRoutesScreen';
+import OrgSettingsScreen from '../screens/SuperAdmin/OrgSettingsScreen';
+import ReportsScreen from '../screens/SuperAdmin/ReportsScreen';
+
+// Common Screens
+import RouteMapScreen from '../screens/Common/RouteMapScreen';
+import PunchHistoryScreen from '../screens/Common/PunchHistoryScreen';
+import PunchCorrectionScreen from '../screens/Common/PunchCorrectionScreen';
+import AllowanceHistoryScreen from '../screens/Common/AllowanceHistoryScreen';
+import ApplyAllowanceScreen from '../screens/Common/ApplyAllowanceScreen';
+import DailySummaryScreen from '../screens/Common/DailySummaryScreen';
+import DashboardScreen from '../screens/Common/DashboardScreen';
+import EmployeeListScreen from '../screens/Common/EmployeeListScreen';
+
 
 import CustomTabBar from '../components/CustomTabBar';
 import { useAuth } from '../context/AuthContext';
@@ -72,7 +114,7 @@ const EmployeeTabNavigator = () => (
     >
         <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
         <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
-        <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
+        <EmployeeTab.Screen name="EmployeePunch" component={PunchScreen} />
         <EmployeeTab.Screen name="EmployeeAllowance" component={EmployeeAllowanceScreen} />
         <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
     </EmployeeTab.Navigator>
@@ -195,12 +237,16 @@ const SuperAdminStackNavigator = () => (
 
 const RootNavigator = () => {
     const auth = useAuth();
+    const isAuthenticated = auth?.isAuthenticated ?? false;
+    const forcePasswordChange = auth?.user?.force_password_change ?? false;
+    const isSuperAdmin = auth?.isSuperAdmin ?? false;
+    const isAdmin = auth?.isAdmin ?? false;
 
-    if (!auth.isAuthenticated) {
+    if (!isAuthenticated) {
         return <AuthStackNavigator />;
     }
 
-    if (auth.user?.force_password_change) {
+    if (forcePasswordChange) {
         return (
             <AuthStack.Navigator screenOptions={commonScreenOptions}>
                 <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
@@ -208,11 +254,11 @@ const RootNavigator = () => {
         );
     }
 
-    if (auth.isSuperAdmin) {
+    if (isSuperAdmin) {
         return <SuperAdminStackNavigator />;
     }
 
-    if (auth.isAdmin) {
+    if (isAdmin) {
         return <AdminStackNavigator />;
     }
 

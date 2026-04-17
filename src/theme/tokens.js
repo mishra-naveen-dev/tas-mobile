@@ -1,34 +1,43 @@
 export const colors = {
     primary: '#DC2626',
-    primaryDark: '#991B1B',
+    primaryDark: '#B91C1C',
     primaryLight: '#FEE2E2',
-    
-    secondary: '#EF4444',
-    
-    success: '#10B981',
+
+    secondary: '#DC2626',
+
+    success: '#059669',
     successLight: '#D1FAE5',
-    
-    warning: '#F59E0B',
+
+    error: '#DC2626',
+    errorLight: '#FEE2E2',
+
+    warning: '#D97706',
     warningLight: '#FEF3C7',
-    
-    danger: '#EF4444',
+
+    danger: '#DC2626',
     dangerLight: '#FEE2E2',
-    
-    info: '#2563EB',
-    infoLight: '#DBEAFE',
-    
-    background: '#F5F7FA',
+
+    info: '#0891B2',
+    infoLight: '#CFFAFE',
+
+    background: '#FFF5F5',
     surface: '#FFFFFF',
-    
-    textDark: '#1E293B',
-    textMedium: '#64748B',
-    textMuted: '#94A3B8',
-    textLight: '#CBD5E1',
-    
-    border: '#E2E8F0',
-    divider: '#F1F5F9',
-    
+
+    text: '#1F2937',
+    textDark: '#1F2937',
+    textMedium: '#4B5563',
+    textMuted: '#9CA3AF',
+    textLight: '#D1D5DB',
+
+    border: '#FECACA',
+    divider: '#FFF5F5',
+
     overlay: 'rgba(0, 0, 0, 0.5)',
+
+    skeleton: '#FECACA',
+
+    punchBlue: '#2563EB',
+    punchBlueLight: '#DBEAFE',
 };
 
 export const typography = {
@@ -91,21 +100,21 @@ export const shadows = {
     sm: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
+        shadowOpacity: 0.08,
         shadowRadius: 4,
         elevation: 2,
     },
     md: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
+        shadowOpacity: 0.1,
         shadowRadius: 8,
         elevation: 4,
     },
     lg: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.1,
+        shadowOpacity: 0.12,
         shadowRadius: 16,
         elevation: 6,
     },

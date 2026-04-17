@@ -1,353 +1,345 @@
-// src/services/LocationService.js
-
-import { PermissionsAndroid, Platform, Linking, NativeModules } from 'react-native';
+import { Platform, PermissionsAndroid, Linking, Alert } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
-import BackgroundGeolocation from 'react-native-background-geolocation';
-import api from '../api/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const GOOGLE_API_KEY = "AIzaSyDM0WAR3vYxXNqSklb868wEmtDftQvYDkQ";
+const IS_DEV = __DEV__;
+const CACHE_KEY = '@tas_location_cache';
+
+const CONFIG = {
+  mockEnabled: IS_DEV,
+  mockLocation: {
+    latitude: 28.6139,
+    longitude: 77.2090,
+    address: 'New Delhi (Dev Mode)',
+    accuracy: 20,
+    speed: 0,
+  },
+  gpsTimeout: 20000,
+  trackingInterval: 10000,
+  distanceFilter: 20,
+  maxAccuracy: 100,
+};
 
 class LocationService {
-    static isTracking = false;
-    static currentSessionId = null;
-    static locationCallback = null;
-    static backgroundTrackingEnabled = false;
+  static watchId = null;
+  static routePoints = [];
+  static listeners = new Set();
+  static isTracking = false;
 
-    static async requestPermission() {
-        try {
-            if (Platform.OS === 'ios') {
-                const auth = await Geolocation.requestAuthorization('whenInUse');
-                return auth === 'granted';
+  static async requestPermission() {
+    if (Platform.OS === 'ios') {
+      return new Promise((resolve) => {
+        Geolocation.requestAuthorization('whenInUse')
+          .then((result) => resolve(result === 'granted'))
+          .catch(() => resolve(false));
+      });
+    }
+
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          {
+            title: 'Location Permission',
+            message: 'TAS needs location access to record your punch and track routes.',
+            buttonNeutral: 'Ask Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  static async checkPermission() {
+    if (Platform.OS === 'android') {
+      try {
+        return await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static getMockLocation() {
+    console.log('[Location] Using mock location (Dev mode)');
+    return {
+      latitude: CONFIG.mockLocation.latitude,
+      longitude: CONFIG.mockLocation.longitude,
+      address: CONFIG.mockLocation.address,
+      accuracy: CONFIG.mockLocation.accuracy,
+      speed: CONFIG.mockLocation.speed,
+      timestamp: Date.now(),
+      isMock: true,
+    };
+  }
+
+  static async getCurrentLocation() {
+    console.log('[Location] Fetching current location...');
+
+    const hasPermission = await this.requestPermission();
+    if (!hasPermission) {
+      console.warn('[Location] No permission');
+      return this.createError('Location permission denied. Please enable in Settings.', 'PERMISSION_DENIED');
+    }
+
+    return new Promise((resolve) => {
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          console.warn('[Location] GPS timeout');
+          if (CONFIG.mockEnabled) {
+            resolve(this.getMockLocation());
+          } else {
+            resolve(this.createError('GPS request timed out. Please try again.', 'TIMEOUT'));
+          }
+        }
+      }, CONFIG.gpsTimeout);
+
+      Geolocation.getCurrentPosition(
+        (position) => {
+          if (resolved) return;
+          clearTimeout(timeout);
+          resolved = true;
+
+          const { latitude, longitude, accuracy, speed } = position.coords;
+
+          if (!this.isValidCoord(latitude, longitude)) {
+            console.warn('[Location] Invalid coordinates');
+            if (CONFIG.mockEnabled) {
+              resolve(this.getMockLocation());
+            } else {
+              resolve(this.createError('Invalid GPS coordinates detected.', 'INVALID'));
+            }
+            return;
+          }
+
+          console.log('[Location] GPS success:', latitude.toFixed(4), longitude.toFixed(4));
+          
+          resolve({
+            latitude,
+            longitude,
+            accuracy: accuracy || 50,
+            speed: speed ? speed * 3.6 : 0,
+            timestamp: Date.now(),
+            isMock: false,
+            address: '',
+          });
+        },
+        (error) => {
+          if (resolved) return;
+          clearTimeout(timeout);
+          resolved = true;
+
+          console.error('[Location] GPS error:', error.code, error.message);
+
+          if (CONFIG.mockEnabled) {
+            console.log('[Location] Falling back to mock');
+            resolve(this.getMockLocation());
+          } else {
+            resolve(this.createError(this.getErrorMessage(error.code), 'GPS_ERROR'));
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: CONFIG.gpsTimeout + 5000,
+          maximumAge: 0,
+        }
+      );
+    });
+  }
+
+  static createError(message, type) {
+    return {
+      error: message,
+      errorType: type,
+      latitude: null,
+      longitude: null,
+      address: '',
+      isMock: false,
+    };
+  }
+
+  static getErrorMessage(code) {
+    const messages = {
+      1: 'Location permission denied.',
+      2: 'GPS is unavailable. Please enable location services.',
+      3: 'Location request timed out.',
+    };
+    return messages[code] || 'Failed to get location. Please try again.';
+  }
+
+  static isValidCoord(lat, lng) {
+    if (lat == null || lng == null) return false;
+    if (lat === 0 && lng === 0) return false;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+    return true;
+  }
+
+  static async startTracking() {
+    if (this.isTracking) {
+      console.log('[Location] Already tracking');
+      return { success: true };
+    }
+
+    const hasPermission = await this.requestPermission();
+    if (!hasPermission) {
+      return { success: false, error: 'Permission denied' };
+    }
+
+    this.routePoints = [];
+
+    try {
+      this.watchId = Geolocation.watchPosition(
+        (position) => {
+          try {
+            const { latitude, longitude, accuracy, speed } = position.coords;
+
+            if (!this.isValidCoord(latitude, longitude)) {
+              return;
             }
 
-            if (Platform.OS === 'android') {
-                const alreadyGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
-                if (alreadyGranted) return true;
-
-                const granted = await PermissionsAndroid.request(
-                    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-                    {
-                        title: "Location Permission",
-                        message: "TAS enterprise module requires access to your GPS to track visit locations accurately.",
-                        buttonNeutral: "Ask Me Later",
-                        buttonNegative: "Cancel",
-                        buttonPositive: "OK"
-                    }
-                );
-                return granted === PermissionsAndroid.RESULTS.GRANTED;
-            }
-
-            return false;
-        } catch (err) {
-            console.error("[LocationService] Native Permission Fault:", err);
-            return false;
-        }
-    }
-
-    static async requestBackgroundPermission() {
-        if (Platform.OS === 'android') {
-            const granted = await PermissionsAndroid.request(
-                PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
-                {
-                    title: "Background Location",
-                    message: "TAS needs background location to track your route when app is minimized.",
-                    buttonNeutral: "Ask Me Later",
-                    buttonNegative: "Cancel",
-                    buttonPositive: "OK"
-                }
-            );
-            return granted === PermissionsAndroid.RESULTS.GRANTED;
-        }
-        return true;
-    }
-
-    static async getCurrentLocationInfo() {
-        const hasPermission = await this.requestPermission();
-
-        if (!hasPermission) {
-            return { error: 'Permission Denied by Device/User', latitude: null, longitude: null, address: '' };
-        }
-
-        return this.getCurrentLocation();
-    }
-
-    static async getCurrentLocation() {
-        return new Promise((resolve) => {
-            Geolocation.getCurrentPosition(
-                async (pos) => {
-                    const lat = pos.coords.latitude;
-                    const lng = pos.coords.longitude;
-                    const accuracy = pos.coords.accuracy;
-                    const altitude = pos.coords.altitude;
-                    const speed = pos.coords.speed;
-                    const heading = pos.coords.heading;
-
-                    try {
-                        const googleUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`;
-                        const res = await fetch(googleUrl);
-
-                        if (!res.ok) throw new Error("Network Fault reaching Google Servers.");
-
-                        const json = await res.json();
-                        if (json.status !== "OK" || !json.results || json.results.length === 0) {
-                            throw new Error(json.error_message || "Target address unresolvable natively.");
-                        }
-
-                        const addressStr = json.results[0].formatted_address;
-                        resolve({
-                            latitude: lat,
-                            longitude: lng,
-                            address: addressStr,
-                            accuracy,
-                            altitude,
-                            speed: speed ? speed * 3.6 : null,
-                            heading,
-                            source: 'GPS'
-                        });
-                    } catch (apiError) {
-                        console.log("[LocationService] Google API Sub-Fault:", apiError);
-                        resolve({
-                            latitude: lat,
-                            longitude: lng,
-                            address: 'Geolocation Coordinates Locked (Offline Address)',
-                            accuracy,
-                            altitude,
-                            speed: speed ? speed * 3.6 : null,
-                            heading,
-                            source: 'GPS'
-                        });
-                    }
-                },
-                (err) => {
-                    console.log("[LocationService] Hardware Capture Fault:", err);
-                    resolve({ error: "Failed to read GPS. Ensure location hardware module is toggled ON.", latitude: null, longitude: null, address: '' });
-                },
-                { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 }
-            );
-        });
-    }
-
-    static async isLocationEnabled() {
-        try {
-            if (Platform.OS === 'android') {
-                const { PlatformConstants } = NativeModules;
-                const locationEnabled = await Linking.canOpenURL('geo:0,0?q=locate');
-                return locationEnabled;
-            }
-            return true;
-        } catch (e) {
-            console.warn('[LocationService] Check location enabled error:', e);
-            return true;
-        }
-    }
-
-    static openLocationSettings() {
-        if (Platform.OS === 'android') {
-            Linking.openSettings();
-        } else {
-            Linking.openURL('App-Prefs:LOCATION_SERVICES');
-        }
-    }
-
-    static async startTracking(batteryLevel = null, isBackground = false) {
-        try {
-            const response = await api.post('/tracking/session/start/', {
-                battery_level: batteryLevel,
-                is_background: isBackground
-            });
-
-            if (response.data.success) {
-                this.currentSessionId = response.data.session_id;
-                this.isTracking = true;
-                this.backgroundTrackingEnabled = isBackground;
-                console.log('[LocationService] Tracking started, session:', this.currentSessionId);
-            }
-
-            return response.data;
-        } catch (error) {
-            console.error('[LocationService] Start tracking error:', error);
-            throw error;
-        }
-    }
-
-    static async stopTracking(batteryLevel = null) {
-        try {
-            const response = await api.post('/tracking/session/stop/', {
-                battery_level: batteryLevel
-            });
-
-            this.isTracking = false;
-            this.currentSessionId = null;
-            this.backgroundTrackingEnabled = false;
-
-            return response.data;
-        } catch (error) {
-            console.error('[LocationService] Stop tracking error:', error);
-            throw error;
-        }
-    }
-
-    static async sendLocationUpdate(locationData) {
-        try {
-            const payload = {
-                latitude: locationData.latitude,
-                longitude: locationData.longitude,
-                altitude: locationData.altitude || null,
-                accuracy: locationData.accuracy || null,
-                speed: locationData.speed || null,
-                heading: locationData.heading || null,
-                source: locationData.source || 'GPS',
-                battery_level: locationData.batteryLevel || null
+            const point = {
+              latitude,
+              longitude,
+              accuracy: accuracy || 50,
+              speed: speed ? speed * 3.6 : 0,
+              timestamp: position.timestamp || Date.now(),
+              isMock: false,
             };
 
-            const response = await api.post('/tracking/location/update/', payload);
-            return response.data;
-        } catch (error) {
-            console.error('[LocationService] Location update error:', error);
-            throw error;
-        }
-    }
-
-    static async sendCellTowerData(cellData) {
-        try {
-            const payload = {
-                mcc: cellData.mcc,
-                mnc: cellData.mnc,
-                lac: cellData.lac,
-                cid: cellData.cid,
-                signal_strength: cellData.signalStrength || null,
-                network_type: cellData.networkType || null,
-                timing_advance: cellData.timingAdvance || null
-            };
-
-            const response = await api.post('/tracking/location/cell-tower/', payload);
-            return response.data;
-        } catch (error) {
-            console.error('[LocationService] Cell tower update error:', error);
-            return null;
-        }
-    }
-
-    static async sendCrowdsourcedReport(reportType, latitude, longitude, confidence = 50, dataPoints = {}) {
-        try {
-            const payload = {
-                report_type: reportType,
-                latitude,
-                longitude,
-                confidence,
-                data_points: dataPoints
-            };
-
-            const response = await api.post('/tracking/location/crowdsourced/', payload);
-            return response.data;
-        } catch (error) {
-            console.error('[LocationService] Crowdsourced report error:', error);
-            return null;
-        }
-    }
-
-    static async getMyLocation() {
-        try {
-            const response = await api.get('/tracking/my-location/');
-            return response.data;
-        } catch (error) {
-            console.error('[LocationService] Get location error:', error);
-            throw error;
-        }
-    }
-
-    static async getAllEmployeesLocations() {
-        try {
-            const response = await api.get('/tracking/employees-locations/');
-            return response.data;
-        } catch (error) {
-            console.error('[LocationService] Get all employees error:', error);
-            throw error;
-        }
-    }
-
-    static async getSessionHistory() {
-        try {
-            const response = await api.get('/tracking/session/history/');
-            return response.data;
-        } catch (error) {
-            console.error('[LocationService] Get session history error:', error);
-            throw error;
-        }
-    }
-
-    static startBackgroundTracking(onLocationUpdate) {
-        if (this.backgroundTrackingEnabled) return;
-
-        this.locationCallback = onLocationUpdate;
-
-        BackgroundGeolocation.ready({
-            locationProvider: BackgroundGeolocation.provider.ANDROID_DISTANCE_FILTER,
-            desiredAccuracy: BackgroundGeolocation.HIGH_ACCURACY,
-            distanceFilter: 50,
-            interval: 60000,
-            fastestInterval: 30000,
-            activitiesInterval: 60000,
-            stopOnTerminate: false,
-            startOnBoot: true,
-            notificationsEnabled: true,
-            notification: {
-                title: "TAS Tracking Active",
-                text: "Your location is being tracked",
-                iconColor: "#0000FF"
+            const lastPoint = this.routePoints[this.routePoints.length - 1];
+            if (lastPoint) {
+              const dist = this.calcDistance(
+                lastPoint.latitude, lastPoint.longitude,
+                latitude, longitude
+              );
+              if (dist < CONFIG.distanceFilter / 1000) return;
             }
-        }, (state) => {
-            if (state.enabled) {
-                this.backgroundTrackingEnabled = true;
-                BackgroundGeolocation.onLocation((location) => {
-                    const locationData = {
-                        latitude: location.coords.latitude,
-                        longitude: location.coords.longitude,
-                        altitude: location.coords.altitude,
-                        accuracy: location.coords.accuracy,
-                        speed: location.coords.speed ? location.coords.speed * 3.6 : null,
-                        heading: location.coords.heading,
-                        source: 'GPS',
-                        timestamp: location.timestamp
-                    };
 
-                    if (this.locationCallback) {
-                        this.locationCallback(locationData);
-                    }
+            this.routePoints.push(point);
+            if (this.routePoints.length > 500) this.routePoints.shift();
 
-                    this.sendLocationUpdate(locationData);
-                });
-
-                BackgroundGeolocation.start();
-            }
-        });
-    }
-
-    static stopBackgroundTracking() {
-        if (!this.backgroundTrackingEnabled) return;
-
-        BackgroundGeolocation.stop();
-        this.backgroundTrackingEnabled = false;
-    }
-
-    static async isNetworkConnected() {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-            
-            const response = await fetch('https://www.google.com/favicon.ico', {
-                method: 'HEAD',
-                signal: controller.signal,
-                cache: 'no-cache'
-            });
-            
-            clearTimeout(timeoutId);
-            return response.ok;
-        } catch (error) {
-            console.warn('[LocationService] Network check failed:', error.message);
-            return true;
+            this.notifyListeners(point);
+            console.log('[Location] Route point:', this.routePoints.length);
+          } catch (err) {
+            console.error('[Location] Point error:', err);
+          }
+        },
+        (error) => {
+          console.error('[Location] Watch error:', error.code);
+        },
+        {
+          enableHighAccuracy: true,
+          distanceFilter: CONFIG.distanceFilter,
+          interval: CONFIG.trackingInterval,
+          fastestInterval: CONFIG.trackingInterval / 2,
         }
+      );
+
+      this.isTracking = true;
+      console.log('[Location] Tracking started');
+      return { success: true };
+    } catch (err) {
+      console.error('[Location] Start tracking failed:', err);
+      return { success: false, error: err.message };
     }
+  }
+
+  static stopTracking() {
+    try {
+      if (this.watchId !== null) {
+        Geolocation.clearWatch(this.watchId);
+        this.watchId = null;
+      }
+      this.isTracking = false;
+      console.log('[Location] Tracking stopped');
+    } catch (err) {
+      console.error('[Location] Stop tracking error:', err);
+      this.watchId = null;
+      this.isTracking = false;
+    }
+  }
+
+  static calcDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = this.toRad(lat2 - lat1);
+    const dLon = this.toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(this.toRad(lat1)) * Math.cos(this.toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  static toRad(deg) {
+    return deg * (Math.PI / 180);
+  }
+
+  static getTotalDistance() {
+    if (this.routePoints.length < 2) return 0;
+    let total = 0;
+    for (let i = 1; i < this.routePoints.length; i++) {
+      total += this.calcDistance(
+        this.routePoints[i - 1].latitude, this.routePoints[i - 1].longitude,
+        this.routePoints[i].latitude, this.routePoints[i].longitude
+      );
+    }
+    return total;
+  }
+
+  static getRoutePoints() {
+    return [...this.routePoints];
+  }
+
+  static clearRoute() {
+    this.routePoints = [];
+  }
+
+  static addListener(callback) {
+    this.listeners.add(callback);
+    return () => this.listeners.delete(callback);
+  }
+
+  static notifyListeners(point) {
+    this.listeners.forEach((cb) => {
+      try { cb(point); } catch {}
+    });
+  }
+
+  static async reverseGeocode(lat, lng) {
+    try {
+      const apiKey = 'AIzaSyDM0WAR3vYxXNqSklb868wEmtDftQvYDkQ';
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.results?.[0]?.formatted_address) {
+        return data.results[0].formatted_address;
+      }
+    } catch {}
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  }
+
+  static openMaps(lat, lng) {
+    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`).catch(() => {});
+  }
+
+  static getStatus() {
+    return {
+      isTracking: this.isTracking,
+      pointsCount: this.routePoints.length,
+      totalDistance: this.getTotalDistance(),
+      isMock: CONFIG.mockEnabled,
+    };
+  }
 }
 
 export default LocationService;
