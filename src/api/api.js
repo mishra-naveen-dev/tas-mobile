@@ -181,14 +181,13 @@ api.requestDeviceBinding = (data) => api.post('/organization/devices/request/', 
 
 api.createPunchRecord = (data) => {
     const payload = {
-        punch_type: 'PUNCH_IN',
+        punch_type: data.punch_type || 'PUNCH_IN',
         latitude: data.latitude,
         longitude: data.longitude,
         current_address: data.current_address || '',
         customer_address: data.customer_address || '',
-        reason: data.reason || '',
-        notes: data.reason || '',
-        visit_type: data.visit_type || '',
+        notes: data.notes || data.reason || '',
+        visit_type: data.visit_type || data.punch_type || '',
         loan_id: data.loan_id || '',
         amount: data.amount ? parseFloat(data.amount) : null,
         payment_mode: data.payment_mode || '',
