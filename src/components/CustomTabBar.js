@@ -1,38 +1,29 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, Animated } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
-import { colors, typography, spacing } from '../theme/tokens';
+import { colors } from '../theme/tokens';
 
-const CustomTabBar = ({ state, descriptors, navigation }) => {
+const CustomTabBar = memo(function CustomTabBar({ state, navigation }) {
     const pulseAnim = useRef(new Animated.Value(1)).current;
-    const isActive = state.routes[state.index]?.name === 'EmployeePunch';
 
     useEffect(() => {
-        let animation;
-        if (isActive) {
-            animation = Animated.loop(
-                Animated.sequence([
-                    Animated.timing(pulseAnim, {
-                        toValue: 1.15,
-                        duration: 800,
-                        useNativeDriver: true,
-                    }),
-                    Animated.timing(pulseAnim, {
-                        toValue: 1,
-                        duration: 800,
-                        useNativeDriver: true,
-                    }),
-                ])
-            );
-            animation.start();
-        } else {
-            pulseAnim.setValue(1);
-        }
-
-        return () => {
-            if (animation) animation.stop();
-        };
-    }, [isActive]);
+        const animation = Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulseAnim, {
+                    toValue: 1.12,
+                    duration: 1500,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(pulseAnim, {
+                    toValue: 1,
+                    duration: 1500,
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+        animation.start();
+        return () => animation.stop();
+    }, [pulseAnim]);
 
     const tabs = [
         { name: 'EmployeeHome', label: 'Home', icon: 'home' },
@@ -42,74 +33,73 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
         { name: 'EmployeeMore', label: 'More', icon: 'menu' },
     ];
 
-    const getIconName = (routeName) => {
-        const tab = tabs.find(t => t.name === routeName);
-        return tab?.icon || 'circle';
+    const isPunchTab = (routeName) => routeName === 'EmployeePunch';
+
+    const handleTabPress = (route, isFocused) => {
+        const event = navigation.emit({
+            type: 'tabPress',
+            target: route.key,
+            canPreventDefault: true,
+        });
+
+        if (!isFocused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
+        }
     };
 
-    const isPunchTab = (routeName) => routeName === 'EmployeePunch';
+    const renderTab = (route, index) => {
+        const currentIndex = state.routes.findIndex(r => r.key === route.key);
+        const isFocused = currentIndex === state.index;
+        const tab = tabs.find(t => t.name === route.name);
+        const label = tab?.label || route.name;
+        const iconName = tab?.icon || 'circle';
+
+        if (isPunchTab(route.name)) {
+            return (
+                <View key={route.key} style={styles.punchTabContainer}>
+                    <Animated.View style={[styles.punchButtonOuter, { transform: [{ scale: pulseAnim }] }]}>
+                        <TouchableOpacity
+                            style={styles.punchButton}
+                            onPress={() => handleTabPress(route, isFocused)}
+                            activeOpacity={0.85}
+                        >
+                            <Icon name="map-pin" size={26} color="#FFFFFF" />
+                        </TouchableOpacity>
+                    </Animated.View>
+                    <Text style={styles.punchLabel}>Punch</Text>
+                </View>
+            );
+        }
+
+        return (
+            <TouchableOpacity
+                key={route.key}
+                style={styles.tab}
+                onPress={() => handleTabPress(route, isFocused)}
+                activeOpacity={0.7}
+            >
+                <View style={[styles.iconContainer, isFocused && styles.iconContainerActive]}>
+                    <Icon
+                        name={iconName}
+                        size={22}
+                        color={isFocused ? colors.primary : colors.textMuted}
+                    />
+                </View>
+                <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
+                    {label}
+                </Text>
+            </TouchableOpacity>
+        );
+    };
 
     return (
         <View style={styles.container}>
             <View style={styles.tabBar}>
-                {state.routes.map((route, index) => {
-                    const isFocused = state.index === index;
-                    const label = tabs.find(t => t.name === route.name)?.label || route.name;
-                    const iconName = getIconName(route.name);
-
-                    if (isPunchTab(route.name)) {
-                        return (
-                            <View key={route.key} style={styles.punchTabContainer}>
-                                <Animated.View style={[styles.punchButtonWrapper, { transform: [{ scale: pulseAnim }] }]}>
-                                    <TouchableOpacity
-                                        style={[
-                                            styles.punchButton,
-                                            { backgroundColor: colors.primary }
-                                        ]}
-                                        onPress={() => navigation.navigate(route.name)}
-                                        activeOpacity={0.8}
-                                    >
-                                        <Icon name={iconName} size={26} color="#FFFFFF" />
-                                    </TouchableOpacity>
-                                </Animated.View>
-                            </View>
-                        );
-                    }
-
-                    return (
-                        <TouchableOpacity
-                            key={route.key}
-                            style={styles.tab}
-                            onPress={() => {
-                                const event = navigation.emit({
-                                    type: 'tabPress',
-                                    target: route.key,
-                                    canPreventDefault: true,
-                                });
-
-                                if (!isFocused && !event.defaultPrevented) {
-                                    navigation.navigate(route.name);
-                                }
-                            }}
-                            activeOpacity={0.7}
-                        >
-                            <View style={[styles.iconContainer, isFocused && styles.iconContainerActive]}>
-                                <Icon
-                                    name={iconName}
-                                    size={22}
-                                    color={isFocused ? colors.primary : colors.textMuted}
-                                />
-                            </View>
-                            <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
-                                {label}
-                            </Text>
-                        </TouchableOpacity>
-                    );
-                })}
+                {state.routes.map((route, index) => renderTab(route, index))}
             </View>
         </View>
     );
-};
+});
 
 const styles = StyleSheet.create({
     container: {
@@ -121,15 +111,15 @@ const styles = StyleSheet.create({
     tabBar: {
         flexDirection: 'row',
         backgroundColor: colors.surface,
-        paddingBottom: Platform.OS === 'ios' ? 20 : 10,
+        paddingBottom: Platform.OS === 'ios' ? 28 : 14,
         paddingTop: 10,
         borderTopWidth: 1,
         borderTopColor: colors.border,
-        elevation: 8,
+        elevation: 12,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
+        shadowOffset: { width: 0, height: -4 },
         shadowOpacity: 0.1,
-        shadowRadius: 8,
+        shadowRadius: 12,
     },
     tab: {
         flex: 1,
@@ -145,10 +135,10 @@ const styles = StyleSheet.create({
         borderRadius: 14,
     },
     iconContainerActive: {
-        backgroundColor: colors.primaryLight,
+        backgroundColor: '#FEE2E2',
     },
     tabLabel: {
-        fontSize: typography.sizes.xs,
+        fontSize: 11,
         color: colors.textMuted,
         marginTop: 4,
         fontWeight: '500',
@@ -160,25 +150,32 @@ const styles = StyleSheet.create({
     punchTabContainer: {
         flex: 1,
         alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: -35,
+        justifyContent: 'flex-start',
+        marginTop: -42,
     },
-    punchButtonWrapper: {
+    punchButtonOuter: {
         transformOrigin: 'center',
     },
     punchButton: {
         width: 60,
         height: 60,
         borderRadius: 30,
+        backgroundColor: colors.punchBlue,
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 8,
-        shadowColor: colors.primary,
+        shadowColor: colors.punchBlue,
         shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.4,
-        shadowRadius: 12,
+        shadowOpacity: 0.45,
+        shadowRadius: 14,
         borderWidth: 4,
         borderColor: colors.surface,
+    },
+    punchLabel: {
+        fontSize: 10,
+        color: colors.punchBlue,
+        fontWeight: '700',
+        marginTop: 6,
     },
 });
 

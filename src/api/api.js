@@ -180,7 +180,73 @@ api.getMyDevices = () => api.get('/organization/devices/my_devices/');
 api.requestDeviceBinding = (data) => api.post('/organization/devices/request/', data);
 
 api.createPunchRecord = (data) => {
-    return api.post('/attendance/punches/', data);
+    const payload = {
+        punch_type: data.punch_type || 'PUNCH_IN',
+        latitude: data.latitude,
+        longitude: data.longitude,
+        current_address: data.current_address || '',
+        customer_address: data.customer_address || '',
+        notes: data.notes || data.reason || '',
+        visit_type: data.visit_type || data.punch_type || '',
+        loan_id: data.loan_id || '',
+        amount: data.amount ? parseFloat(data.amount) : null,
+        payment_mode: data.payment_mode || '',
+        upi_ref: data.upi_ref || '',
+        cheque_no: data.cheque_no || '',
+        customer_name: data.customer_name || '',
+        travel_with: data.travel_with || 'ALONE',
+        co_employee_id: data.co_employee_id || '',
+        co_employee_name: data.co_employee_name || '',
+        vehicle_number: data.vehicle_number || '',
+    };
+    return api.post('/attendance/punches/', payload);
+};
+
+api.punchOut = (punchId, data = {}) => {
+    const payload = {
+        punch_type: 'PUNCH_OUT',
+        latitude: data.latitude || 0,
+        longitude: data.longitude || 0,
+        current_address: data.address || '',
+        notes: 'Punch Out',
+    };
+    return api.post('/attendance/punches/', payload);
+};
+
+// Punch validation helper
+api.validatePunchPayload = (data) => {
+    const errors = [];
+
+    if (!data) {
+        errors.push('Data is required');
+        return { valid: false, errors };
+    }
+
+    if (!data.latitude || typeof data.latitude !== 'number') {
+        errors.push('Valid latitude is required');
+    }
+
+    if (!data.longitude || typeof data.longitude !== 'number') {
+        errors.push('Valid longitude is required');
+    }
+
+    if (!data.visit_type) {
+        errors.push('Visit type is required');
+    }
+
+    if (data.latitude && (data.latitude < -90 || data.latitude > 90)) {
+        errors.push('Latitude must be between -90 and 90');
+    }
+
+    if (data.longitude && (data.longitude < -180 || data.longitude > 180)) {
+        errors.push('Longitude must be between -180 and 180');
+    }
+
+    if (data.amount && typeof data.amount !== 'number') {
+        errors.push('Amount must be a number');
+    }
+
+    return { valid: errors.length === 0, errors };
 };
 
 api.getDailySummary = () => {
@@ -245,5 +311,64 @@ api.markNotificationRead = (id) => api.post(`/organization/notifications/${id}/m
 api.getMySessions = () => api.get('/organization/sessions/my_sessions/');
 api.getActiveSession = () => api.get('/organization/sessions/active_session/');
 api.terminateSession = (id) => api.post(`/organization/sessions/${id}/terminate/`);
+
+// ================= Data Processing Utilities =================
+
+api.processData = {
+    generateKey: (item, prefix = 'item', index = 0) => {
+        const id = item?.id;
+        const timestamp = item?.punched_at || item?.created_at || item?.updated_at;
+        const keyId = id ? `${prefix}_${id}` : null;
+        const keyTime = timestamp ? `${prefix}_${timestamp}` : null;
+        return keyId || keyTime || `${prefix}_${index}_${Date.now()}`;
+    },
+
+    deduplicateById: (items) => {
+        if (!Array.isArray(items)) return [];
+        const seen = new Set();
+        return items.filter(item => {
+            if (item?.id == null) return true;
+            if (seen.has(item.id)) {
+                console.warn('[api] Duplicate ID found:', item.id);
+                return false;
+            }
+            seen.add(item.id);
+            return true;
+        });
+    },
+
+    deduplicateByKey: (items, keyFn) => {
+        if (!Array.isArray(items)) return [];
+        const seen = new Set();
+        return items.filter((item, index) => {
+            const key = keyFn(item, index);
+            if (seen.has(key)) {
+                console.warn('[api] Duplicate key found:', key);
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+    },
+
+    normalizeList: (response, options = {}) => {
+        const { keyField = 'id', deduplicate = true } = options;
+        let data = response?.data;
+
+        if (!data) return [];
+        if (Array.isArray(data?.results)) data = data.results;
+        if (!Array.isArray(data)) data = [data];
+
+        const items = data.filter(Boolean);
+
+        if (deduplicate) {
+            return api.processData.deduplicateByKey(items, (item, idx) =>
+                item[keyField] != null ? `${item[keyField]}` : `idx_${idx}_${item.punched_at || item.created_at || Date.now()}`
+            );
+        }
+
+        return items;
+    }
+};
 
 export default api;
