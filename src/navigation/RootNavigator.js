@@ -75,7 +75,7 @@ const EmployeeTabNavigator = () => (
     >
         <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
         <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
-        <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
+        <EmployeeTab.Screen name="EmployeePunch" component={PunchScreen} />
         <EmployeeTab.Screen name="EmployeeAllowance" component={EmployeeAllowanceScreen} />
         <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
     </EmployeeTab.Navigator>
