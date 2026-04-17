@@ -10,14 +10,14 @@ import {
     TouchableOpacity,
     Modal,
     ActivityIndicator,
-    FlatList
+    FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MapView, { Marker } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/Feather';
 
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
-import { useAuth } from '../../context/AuthContext';
 
 import InputField from '../../components/InputField';
 import PrimaryButton from '../../components/PrimaryButton';
@@ -34,7 +34,6 @@ const PUNCH_TYPES = [
 ];
 
 const PunchScreen = ({ navigation }) => {
-    const auth = useAuth();
     const [loading, setLoading] = useState(false);
     const [locationLoading, setLocationLoading] = useState(false);
     const [todayPunches, setTodayPunches] = useState([]);
@@ -44,9 +43,6 @@ const PunchScreen = ({ navigation }) => {
     const isMountedRef = useRef(true);
 
     const [formData, setFormData] = useState({
-        current_address: '',
-        latitude: null,
-        longitude: null,
         customer_name: '',
         customer_address: '',
         notes: '',
@@ -108,13 +104,6 @@ const PunchScreen = ({ navigation }) => {
                 address: address,
             });
 
-            setFormData(prev => ({
-                ...prev,
-                latitude: result.latitude,
-                longitude: result.longitude,
-                current_address: address,
-            }));
-
             setLocationLoading(false);
             return true;
         } catch (err) {
@@ -125,22 +114,7 @@ const PunchScreen = ({ navigation }) => {
         }
     }, []);
 
-    const openAddPunchForm = useCallback(async () => {
-        setFormData({
-            current_address: '',
-            latitude: null,
-            longitude: null,
-            customer_name: '',
-            customer_address: '',
-            notes: '',
-            loan_id: '',
-            amount: '',
-            payment_mode: '',
-            upi_ref: '',
-            cheque_no: '',
-        });
-        setSelectedType('VISIT');
-        
+    const handleAddPunch = useCallback(async () => {
         const locationFetched = await fetchLocation();
         if (locationFetched) {
             setShowForm(true);
@@ -148,8 +122,8 @@ const PunchScreen = ({ navigation }) => {
     }, [fetchLocation]);
 
     const handleSubmit = async () => {
-        if (!formData.latitude || !formData.longitude) {
-            Alert.alert("Error", "Please wait for location to be captured");
+        if (!currentLocation) {
+            Alert.alert("Error", "Please capture location first");
             return;
         }
 
@@ -158,9 +132,9 @@ const PunchScreen = ({ navigation }) => {
 
             const payload = {
                 punch_type: selectedType,
-                latitude: formData.latitude,
-                longitude: formData.longitude,
-                current_address: formData.current_address,
+                latitude: currentLocation.latitude,
+                longitude: currentLocation.longitude,
+                current_address: currentLocation.address,
                 customer_name: formData.customer_name,
                 customer_address: formData.customer_address,
                 notes: formData.notes,
@@ -175,11 +149,8 @@ const PunchScreen = ({ navigation }) => {
 
             Alert.alert("Success", "Punch added successfully!");
             setShowForm(false);
-            fetchTodayPunches();
+            setCurrentLocation(null);
             setFormData({
-                current_address: '',
-                latitude: null,
-                longitude: null,
                 customer_name: '',
                 customer_address: '',
                 notes: '',
@@ -189,6 +160,7 @@ const PunchScreen = ({ navigation }) => {
                 upi_ref: '',
                 cheque_no: '',
             });
+            fetchTodayPunches();
 
         } catch (err) {
             if (IS_DEV) console.log('[PunchScreen] Submit error:', err);
@@ -216,7 +188,7 @@ const PunchScreen = ({ navigation }) => {
         });
     };
 
-    const renderPunchItem = ({ item }) => {
+    const renderPunchItem = ({ item, index }) => {
         const typeInfo = getPunchTypeInfo(item.punch_type);
         return (
             <GlassCard style={styles.punchCard}>
@@ -284,35 +256,69 @@ const PunchScreen = ({ navigation }) => {
                 <View style={{ width: 40 }} />
             </View>
 
-            <View style={styles.todayHeader}>
-                <Text style={styles.todayTitle}>Today's Punches</Text>
-                <Text style={styles.todayCount}>{todayPunches.length} entries</Text>
-            </View>
+            <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+                {currentLocation && (
+                    <View style={styles.mapContainer}>
+                        <MapView
+                            style={styles.map}
+                            region={{
+                                latitude: currentLocation.latitude,
+                                longitude: currentLocation.longitude,
+                                latitudeDelta: 0.01,
+                                longitudeDelta: 0.01,
+                            }}
+                        >
+                            <Marker
+                                coordinate={{
+                                    latitude: currentLocation.latitude,
+                                    longitude: currentLocation.longitude,
+                                }}
+                                pinColor={colors.primary}
+                            />
+                        </MapView>
+                        <View style={styles.mapOverlay}>
+                            <Icon name="map-pin" size={16} color={colors.success} />
+                            <Text style={styles.mapAddress} numberOfLines={1}>
+                                {currentLocation.address}
+                            </Text>
+                            <TouchableOpacity onPress={fetchLocation} style={styles.refreshLocationBtn}>
+                                <Icon name="refresh-cw" size={14} color={colors.primary} />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
 
-            <FlatList
-                data={todayPunches}
-                renderItem={renderPunchItem}
-                keyExtractor={(item, index) => item.id?.toString() || `punch-${index}`}
-                contentContainerStyle={styles.listContent}
-                refreshing={false}
-                onRefresh={fetchTodayPunches}
-                ListEmptyComponent={
+                <View style={styles.todayHeader}>
+                    <Text style={styles.todayTitle}>Today's Punches</Text>
+                    <Text style={styles.todayCount}>{todayPunches.length} entries</Text>
+                </View>
+
+                {todayPunches.length === 0 ? (
                     <View style={styles.emptyState}>
                         <Icon name="map-pin" size={48} color={colors.textLight} />
                         <Text style={styles.emptyText}>No punches recorded today</Text>
                         <Text style={styles.emptySubtext}>Tap the button below to add your first punch</Text>
                     </View>
-                }
-            />
+                ) : (
+                    todayPunches.map((item, index) => renderPunchItem({ item, index }))
+                )}
+            </ScrollView>
 
             <View style={styles.bottomBar}>
                 <TouchableOpacity
                     style={styles.addButton}
-                    onPress={openAddPunchForm}
+                    onPress={handleAddPunch}
                     activeOpacity={0.85}
+                    disabled={locationLoading}
                 >
-                    <Icon name="plus" size={24} color="#FFFFFF" />
-                    <Text style={styles.addButtonText}>Add Punch</Text>
+                    {locationLoading ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                        <>
+                            <Icon name="map-pin" size={22} color="#FFFFFF" />
+                            <Text style={styles.addButtonText}>Add Punch</Text>
+                        </>
+                    )}
                 </TouchableOpacity>
             </View>
 
@@ -332,21 +338,11 @@ const PunchScreen = ({ navigation }) => {
                     </View>
 
                     <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-                        {locationLoading && (
-                            <View style={styles.locationLoading}>
-                                <ActivityIndicator size="small" color={colors.primary} />
-                                <Text style={styles.locationLoadingText}>Getting your location...</Text>
-                            </View>
-                        )}
-
                         <View style={styles.locationCard}>
                             <Icon name="map-pin" size={20} color={colors.success} />
                             <Text style={styles.locationText} numberOfLines={2}>
-                                {formData.current_address || 'Fetching location...'}
+                                {currentLocation?.address || 'Location captured'}
                             </Text>
-                            <TouchableOpacity onPress={fetchLocation} style={styles.refreshBtn}>
-                                <Icon name="refresh-cw" size={16} color={colors.primary} />
-                            </TouchableOpacity>
                         </View>
 
                         <Text style={styles.sectionLabel}>Punch Type</Text>
@@ -362,7 +358,7 @@ const PunchScreen = ({ navigation }) => {
                                 >
                                     <Icon
                                         name={type.icon}
-                                        size={20}
+                                        size={18}
                                         color={selectedType === type.key ? '#FFFFFF' : type.color}
                                     />
                                     <Text style={[
@@ -425,7 +421,7 @@ const PunchScreen = ({ navigation }) => {
                                 title="Save Punch"
                                 onPress={handleSubmit}
                                 loading={loading}
-                                disabled={loading || locationLoading}
+                                disabled={loading}
                             />
                         </View>
 
@@ -463,12 +459,52 @@ const styles = StyleSheet.create({
         fontWeight: typography.weights.bold,
         color: colors.textDark,
     },
+    scrollView: {
+        flex: 1,
+    },
+    scrollContent: {
+        padding: spacing.md,
+        paddingBottom: 100,
+    },
+    mapContainer: {
+        height: 180,
+        borderRadius: 16,
+        overflow: 'hidden',
+        marginBottom: spacing.md,
+        backgroundColor: colors.surface,
+    },
+    map: {
+        flex: 1,
+    },
+    mapOverlay: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        padding: spacing.sm,
+    },
+    mapAddress: {
+        flex: 1,
+        marginLeft: spacing.xs,
+        fontSize: typography.sizes.sm,
+        color: colors.textDark,
+    },
+    refreshLocationBtn: {
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.primaryLight,
+        borderRadius: 16,
+    },
     todayHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.md,
+        marginBottom: spacing.sm,
     },
     todayTitle: {
         fontSize: typography.sizes.md,
@@ -478,10 +514,6 @@ const styles = StyleSheet.create({
     todayCount: {
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
-    },
-    listContent: {
-        paddingHorizontal: spacing.md,
-        paddingBottom: 120,
     },
     punchCard: {
         marginBottom: spacing.sm,
@@ -536,7 +568,7 @@ const styles = StyleSheet.create({
     },
     emptyState: {
         alignItems: 'center',
-        paddingVertical: spacing.xxl,
+        paddingVertical: spacing.xl,
     },
     emptyText: {
         fontSize: typography.sizes.md,
@@ -607,19 +639,6 @@ const styles = StyleSheet.create({
         flex: 1,
         padding: spacing.md,
     },
-    locationLoading: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: spacing.md,
-        backgroundColor: colors.surface,
-        borderRadius: 12,
-        marginBottom: spacing.md,
-    },
-    locationLoadingText: {
-        marginLeft: spacing.sm,
-        color: colors.textMuted,
-    },
     locationCard: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -635,14 +654,6 @@ const styles = StyleSheet.create({
         marginLeft: spacing.sm,
         fontSize: typography.sizes.sm,
         color: colors.textDark,
-    },
-    refreshBtn: {
-        width: 36,
-        height: 36,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: colors.primaryLight,
-        borderRadius: 18,
     },
     sectionLabel: {
         fontSize: typography.sizes.sm,
@@ -671,6 +682,7 @@ const styles = StyleSheet.create({
         marginLeft: 6,
         fontSize: typography.sizes.sm,
         fontWeight: typography.weights.medium,
+        color: colors.textDark,
     },
     formField: {
         marginBottom: spacing.md,
