@@ -63,43 +63,6 @@ const PunchScreen = ({ navigation }) => {
         setData(prev => ({ ...prev, [key]: value }));
     };
 
-    const fetchLocation = async () => {
-        setLocationLoading(true);
-        updateData('current_address', 'Getting GPS...');
-
-        try {
-            const result = await LocationService.getCurrentLocation();
-
-            if (result.error) {
-                Alert.alert("Location Error", result.error);
-                updateData('current_address', 'GPS failed');
-                setLocationLoading(false);
-                return false;
-            }
-
-            updateData('latitude', result.latitude);
-            updateData('longitude', result.longitude);
-            updateData('current_address', result.address || `${result.latitude}, ${result.longitude}`);
-
-            setLocationLoading(false);
-            return result;
-        } catch (err) {
-            Alert.alert("Error", "Failed to get location");
-            updateData('current_address', 'Error');
-            setLocationLoading(false);
-            return false;
-        }
-    };
-
-    useEffect(() => {
-        isMountedRef.current = true;
-        fetchTodayPunches();
-        fetchLocation();
-        return () => {
-            isMountedRef.current = false;
-        };
-    }, [fetchTodayPunches, fetchLocation]);
-
     const fetchTodayPunches = useCallback(async () => {
         try {
             const response = await api.get('/attendance/punches/today_punches/');
@@ -153,6 +116,15 @@ const PunchScreen = ({ navigation }) => {
             return false;
         }
     }, []);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+        fetchTodayPunches();
+        fetchLocation();
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, [fetchTodayPunches, fetchLocation]);
 
     const fetchDelayedRoute = useCallback(async () => {
         try {
