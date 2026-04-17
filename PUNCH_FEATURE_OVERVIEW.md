@@ -1,125 +1,202 @@
-# TASmobile - Traveling Allowance System Mobile App
+# TASmobile - Punch Feature Overview
 
 ## Overview
 
-This document tracks the Punch Feature implementation in the TASmobile React Native app.
+Production-ready location tracking system using free React Native libraries only. No paid SDK dependencies.
 
 ---
 
-## What We Built
+## Technology Stack
 
-### 1. Punch Feature (Complete)
+| Package | Purpose |
+|---------|---------|
+| `react-native-geolocation-service` | GPS location |
+| `react-native-maps` | Map display |
+| `react-native-background-fetch` | Background tracking |
 
-**Location:** `src/features/punch/` (suggested) or directly in `src/`
+**Removed:** Transistorsoft Background Geolocation (paid license)
 
-#### Core Components:
+---
 
-| File | Purpose |
-|------|---------|
-| `src/services/LocationService.js` | GPS location handling with emulator support |
-| `src/context/PunchContext.js` | State management for punch workflow |
-| `src/screens/EmployeePunchScreen.js` | Main punch UI with map and form |
-| `src/services/GeocodingService.js` | Address lookup (reverse geocoding) |
+## Architecture
 
-#### Key Features:
+```
+┌─────────────────────────────────────────────────────────┐
+│                    PunchContext                          │
+│  States: IDLE → FETCHING → FORM_OPEN → TRACKING        │
+└─────────────────────────────────────────────────────────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                 ▼
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  Location   │   │  Employee  │   │    API     │
+│  Service    │   │  Punch     │   │  Service   │
+│             │   │  Screen    │   │            │
+└─────────────┘   └─────────────┘   └─────────────┘
+```
 
-- ✅ **Punch In Only** - No punch out (per requirements)
-- ✅ **GPS Location Capture** - Works on emulator and real device
-- ✅ **Mock Location Support** - Auto-fallback for development
-- ✅ **Emulator Detection** - Uses mock location when GPS unavailable
-- ✅ **Reverse Geocoding** - Converts lat/lng to address via Google API
-- ✅ **Route Tracking** - Tracks employee movement after punch
-- ✅ **Today's Punches** - View history of today's punches
-- ✅ **Error Handling** - Graceful handling of all failure cases
+---
+
+## LocationService
+
+**File:** `src/services/LocationService.js`
+
+### Features
+- ✅ Real GPS first, mock as dev fallback
+- ✅ Haversine distance calculation
+- ✅ Route point tracking
+- ✅ 10-second intervals, 20m distance filter
+- ✅ Crash-safe with try/catch everywhere
+
+### Key Methods
+
+```javascript
+// Get current location
+await LocationService.getCurrentLocation()
+// Returns: { latitude, longitude, accuracy, speed, isMock, address }
+
+// Start continuous tracking
+await LocationService.startTracking()
+
+// Stop tracking & get distance
+LocationService.stopTracking()
+LocationService.getTotalDistance() // km
+LocationService.getRoutePoints() // [{ lat, lng, timestamp }]
+
+// Calculate distance between points
+LocationService.calcDistance(lat1, lon1, lat2, lon2)
+```
+
+### GPS Behavior
+
+| Mode | GPS Status | Fallback |
+|------|------------|----------|
+| **Dev** | Try first | Mock location |
+| **Production** | Required | Error message |
+
+### Mock Location (Dev)
+- Latitude: 28.6139 (New Delhi)
+- Longitude: 77.2090
+- Shows "Dev Mode" badge in UI
+
+---
+
+## Punch States
+
+```javascript
+STATES = {
+  IDLE: 'IDLE',           // Ready to punch
+  FETCHING: 'FETCHING',   // Getting GPS
+  FORM_OPEN: 'FORM_OPEN', // Modal visible
+  SUBMITTING: 'SUBMITTING', // API call
+  TRACKING: 'TRACKING',   // Active tracking
+  PUNCHING_OUT: 'PUNCHING_OUT', // Ending
+  COMPLETED: 'COMPLETED', // Done
+  ERROR: 'ERROR'          // Failed
+}
+```
 
 ---
 
 ## Punch Flow
 
 ```
-User Taps Punch Button
-        ↓
-┌─────────────────────────────┐
-│ 1. Check State (debounce)  │
-└─────────────────────────────┘
-        ↓
-┌─────────────────────────────┐
-│ 2. Fetch GPS Location      │
-│    - Real GPS (device)     │
-│    - Mock GPS (emulator)   │
-└─────────────────────────────┘
-        ↓
-┌─────────────────────────────┐
-│ 3. Reverse Geocode         │
-│    - Get address from lat  │
-└─────────────────────────────┘
-        ↓
-┌─────────────────────────────┐
-│ 4. Open Form Modal         │
-│    - Pre-filled address    │
-│    - Select visit type    │
-└─────────────────────────────┘
-        ↓
-┌─────────────────────────────┐
-│ 5. Submit to Backend       │
-│    - POST /api/v1/...      │
-└─────────────────────────────┘
-        ↓
-┌─────────────────────────────┐
-│ 6. Success/Error Feedback  │
-│    - Banner notification   │
-│    - Update UI             │
-└─────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ 1. User taps PUNCH button                               │
+└──────────────────────────────────────────────────────────┘
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│ 2. Request GPS permission                                │
+└──────────────────────────────────────────────────────────┘
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│ 3. Get current location (10s timeout)                    │
+│    - Success: Show form modal                           │
+│    - Fail + Dev: Use mock location                      │
+│    - Fail + Prod: Show error                            │
+└──────────────────────────────────────────────────────────┘
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│ 4. User fills form & submits                             │
+└──────────────────────────────────────────────────────────┘
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│ 5. POST /attendance/punches/                            │
+│    Payload: { lat, lng, visit_type, ... }               │
+└──────────────────────────────────────────────────────────┘
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│ 6. Start route tracking                                 │
+│    - watchPosition every 10s                             │
+│    - Store points (max 500)                             │
+│    - Calculate distance live                             │
+└──────────────────────────────────────────────────────────┘
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│ 7. User taps END PUNCH                                   │
+└──────────────────────────────────────────────────────────┘
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│ 8. POST /attendance/punches/punch_out/                  │
+│    Payload: {                                            │
+│      punch_id,                                           │
+│      end_latitude,                                       │
+│      end_longitude,                                       │
+│      route_points: [{ lat, lng, timestamp }],           │
+│      total_distance,                                     │
+│      total_duration_minutes                              │
+│    }                                                      │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Location Handling
+## Data Structures
 
-### Emulator/Development Mode:
-- **Mock Location:** New Delhi (28.6139, 77.2090)
-- **Mock Address:** "New Delhi (Mock Location)"
-- **UI Badge:** "Using mock location (Dev Mode)"
-
-### Real Device Mode:
-- **Real GPS Coordinates**
-- **Real Address** (via Google Geocoding API)
-- **No Mock Badge**
-
-### Error Fallbacks:
-- GPS timeout → Mock location
-- Invalid coordinates (0,0) → Mock location
-- Permission denied → Error message (no crash)
-
----
-
-## States (PunchContext)
-
+### Punch Record
 ```javascript
-const PUNCH_STATES = {
-  IDLE: 'IDLE',                    // Ready to punch
-  FETCHING_LOCATION: 'FETCHING_LOCATION',  // Getting GPS
-  FORM_OPEN: 'FORM_OPEN',          // Form modal visible
-  SUBMITTING: 'SUBMITTING',        // Submitting to backend
-  ACTIVE: 'ACTIVE',                // Punch is active
-  ERROR: 'ERROR',                  // Error occurred
-};
+{
+  id: 123,
+  latitude: 28.6139,
+  longitude: 77.2090,
+  current_address: "New Delhi, India",
+  visit_type: "CLIENT",
+  reason: "Client meeting",
+  accuracy: 10,
+  is_mock: false,
+  punched_at: "2026-04-17T10:30:00Z"
+}
 ```
 
----
+### Route Point
+```javascript
+{
+  latitude: 28.6140,
+  longitude: 77.2095,
+  accuracy: 15,
+  speed: 30,
+  timestamp: 1713343200000,
+  isMock: false
+}
+```
 
-## Files Modified
-
-| File | Changes |
-|------|---------|
-| `App.jsx` | Updated navigation and providers |
-| `src/api/api.js` | Added punch API methods |
-| `src/context/PunchContext.js` | Complete punch state management |
-| `src/screens/EmployeePunchScreen.js` | Main punch screen UI |
-| `src/services/LocationService.js` | GPS handling with mock support |
-| `src/theme/tokens.js` | Added error colors |
-| `src/components/CustomTabBar.js` | Tab bar with punch button |
-| `src/components/MapViewScreen.js` | Map display component |
+### Punch Out Payload
+```javascript
+{
+  punch_id: "123",
+  end_latitude: 28.6200,
+  end_longitude: 77.2150,
+  end_address: "Gurugram, India",
+  end_time: "2026-04-17T14:30:00Z",
+  route_points: [
+    { latitude: 28.6139, longitude: 77.2090, timestamp: 1713343200000 },
+    { latitude: 28.6145, longitude: 77.2100, timestamp: 1713343300000 },
+    // ...
+  ],
+  total_distance: 5.7,  // kilometers
+  total_duration_minutes: 240
+}
+```
 
 ---
 
@@ -127,102 +204,90 @@ const PUNCH_STATES = {
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/attendance/punches/` | POST | Create punch record |
-| `/attendance/punches/today_punches/` | GET | Get today's punches |
-| `/attendance/punches/daily_summary/` | GET | Get daily summary |
+| `/attendance/punches/` | POST | Punch In |
+| `/attendance/punches/punch_out/` | POST | Punch Out |
+| `/attendance/punches/today_punches/` | GET | Today's punches |
+| `/attendance/punches/daily_summary/` | GET | Daily summary |
 
 ---
 
-## Configuration
+## Distance Calculation
 
-### Backend URL:
-```
-https://tas-backend-8emb.onrender.com/api/v1
-```
+Uses Haversine formula:
 
-### Google Maps API Key:
-```
-AIzaSyDM0WAR3vYxXNqSklb868wEmtDftQvYDkQ
-```
-
-### Mock Config (LocationService.js):
 ```javascript
-const MOCK_CONFIG = {
-  enabled: __DEV__ || true,  // Set to false for production
-  fallback: {
-    latitude: 28.6139,
-    longitude: 77.2090,
-    address: 'New Delhi (Mock Location)',
-  },
-};
-```
-
----
-
-## Dependencies
-
-```json
-{
-  "dependencies": {
-    "@react-native-async-storage/async-storage": "^1.24.0",
-    "react-native-geolocation-service": "^5.3.1",
-    "react-native-maps": "^1.27.2",
-    "react-native-permissions": "^5.5.1",
-    "react-native-safe-area-context": "^5.7.0",
-    "@react-navigation/native": "^7.2.2",
-    "@react-navigation/bottom-tabs": "^7.15.9",
-    "axios": "^1.14.0"
-  }
+calcDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth radius in km
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = sin(dLat/2)² + cos(lat1) * cos(lat2) * sin(dLon/2)²;
+  const c = 2 * atan2(√a, √(1−a));
+  return R * c;
 }
 ```
 
 ---
 
+## Error Handling
+
+All GPS and API calls wrapped in try/catch:
+
+| Error | Action |
+|-------|--------|
+| Permission denied | Show settings prompt |
+| GPS timeout | Dev: use mock / Prod: show error |
+| Invalid coordinates | Dev: use mock / Prod: show error |
+| API failure | Show error banner, auto-dismiss 5s |
+
+---
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| `package.json` | Removed `react-native-background-geolocation` |
+| `LocationService.js` | Complete rewrite with free libraries |
+| `PunchContext.js` | Safe state management |
+| `EmployeePunchScreen.js` | Clean UI with all features |
+| `tokens.js` | Added missing color tokens |
+
+---
+
 ## Testing Checklist
 
-### Emulator:
-- [x] Tap punch button → Loading state visible
-- [x] Mock location displayed in form
-- [x] Yellow "Dev Mode" badge shown
-- [x] Form submission works
-- [x] Today's punches updated
+### Emulator/Dev Mode
+- [ ] Tap punch → Mock location used
+- [ ] "Dev Mode" badge shown
+- [ ] Form opens with address
+- [ ] Submit → Tracking starts
+- [ ] Route polyline on map
+- [ ] End punch → Data sent
 
-### Real Device:
-- [ ] Real GPS coordinates captured
-- [ ] Real address shown
-- [ ] No mock badge
-- [ ] Form submission works
-- [ ] Backend receives data
-
-### Error Cases:
-- [x] GPS timeout → Mock fallback
-- [ ] Permission denied → Error message
-- [ ] Network failure → Error banner
-- [ ] API error → Error banner (no crash)
+### Real Device/Production
+- [ ] GPS permission prompt
+- [ ] Real coordinates captured
+- [ ] "GPS Locked" badge shown
+- [ ] Live tracking works
+- [ ] Distance calculated accurately
 
 ---
 
-## Known Issues / TODO
+## Performance
 
-1. **Production Build** - Change `MOCK_CONFIG.enabled` to `__DEV__` before release
-2. **Android Permissions** - Ensure `ACCESS_FINE_LOCATION` is in manifest
-3. **iOS Permissions** - Add `NSLocationWhenInUseUsageDescription` to Info.plist
-
----
-
-## Next Steps
-
-1. Test on real device with GPS
-2. Verify backend integration
-3. Enable production mode (mock = false)
-4. Build release APK
-5. Test on physical device
+- GPS fetch: 20s timeout
+- Tracking interval: 10s
+- Distance filter: 20m (minimum movement to save point)
+- Max route points: 500 (FIFO)
+- Debounce clicks: 2s
 
 ---
 
-## Branch
+## Future Upgrade Path
 
-**Current Branch:** `feature/role-based-ui`
+LocationService is modular. To upgrade:
+1. Create new tracking provider
+2. Update LocationService methods
+3. No UI changes needed
 
 ---
 

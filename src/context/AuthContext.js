@@ -138,6 +138,7 @@ export const AuthProvider = ({ children }) => {
     const value = useMemo(() => ({
         user,
         role,
+        token: accessToken,
         accessToken,
         isAuthenticated,
         isLoading,
@@ -185,6 +186,7 @@ export const useAuth = () => {
         return {
             user: null,
             role: null,
+            token: null,
             accessToken: null,
             isAuthenticated: false,
             isLoading: true,

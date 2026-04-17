@@ -1,39 +1,40 @@
 export const colors = {
-    primary: '#DC2626',
-    primaryDark: '#991B1B',
-    primaryLight: '#FEE2E2',
+    primary: '#2563EB',
+    primaryDark: '#1D4ED8',
+    primaryLight: '#DBEAFE',
 
-    secondary: '#7C3AED',
+    secondary: '#DC2626',
 
-    success: '#10B981',
+    success: '#059669',
     successLight: '#D1FAE5',
 
-    error: '#EF4444',
+    error: '#DC2626',
     errorLight: '#FEE2E2',
 
-    warning: '#F59E0B',
+    warning: '#D97706',
     warningLight: '#FEF3C7',
 
-    danger: '#EF4444',
+    danger: '#DC2626',
     dangerLight: '#FEE2E2',
 
-    info: '#06B6D4',
+    info: '#0891B2',
     infoLight: '#CFFAFE',
-    
-    background: '#F5F7FA',
+
+    background: '#FFF5F5',
     surface: '#FFFFFF',
-    
-    textDark: '#1E293B',
-    textMedium: '#64748B',
-    textMuted: '#94A3B8',
-    textLight: '#CBD5E1',
-    
-    border: '#E2E8F0',
-    divider: '#F1F5F9',
-    
+
+    text: '#1F2937',
+    textDark: '#1F2937',
+    textMedium: '#4B5563',
+    textMuted: '#9CA3AF',
+    textLight: '#D1D5DB',
+
+    border: '#FECACA',
+    divider: '#FFF5F5',
+
     overlay: 'rgba(0, 0, 0, 0.5)',
 
-    skeleton: '#E2E8F0',
+    skeleton: '#FECACA',
 
     punchBlue: '#2563EB',
     punchBlueLight: '#DBEAFE',
@@ -90,37 +91,37 @@ export const borderRadius = {
 export const shadows = {
     none: {},
     xs: {
-        shadowColor: '#000',
+        shadowColor: '#DC2626',
         shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
+        shadowOpacity: 0.08,
         shadowRadius: 2,
         elevation: 1,
     },
     sm: {
-        shadowColor: '#000',
+        shadowColor: '#DC2626',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
+        shadowOpacity: 0.1,
         shadowRadius: 4,
         elevation: 2,
     },
     md: {
-        shadowColor: '#000',
+        shadowColor: '#DC2626',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
+        shadowOpacity: 0.12,
         shadowRadius: 8,
         elevation: 4,
     },
     lg: {
-        shadowColor: '#000',
+        shadowColor: '#DC2626',
         shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.1,
+        shadowOpacity: 0.15,
         shadowRadius: 16,
         elevation: 6,
     },
     xl: {
-        shadowColor: '#000',
+        shadowColor: '#DC2626',
         shadowOffset: { width: 0, height: 12 },
-        shadowOpacity: 0.15,
+        shadowOpacity: 0.2,
         shadowRadius: 24,
         elevation: 8,
     },
