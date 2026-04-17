@@ -29,6 +29,7 @@ export const createActivity = (data) => ({
     punchType: data.punch_type || null,
     visitType: data.visit_type || null,
     distance: data.distance || null,
+    distance_from_last: data.distance_from_last || 0,
 });
 
 export const mapApiResponseToActivities = (punchesData = [], allowanceData = []) => {
@@ -37,14 +38,21 @@ export const mapApiResponseToActivities = (punchesData = [], allowanceData = [])
     // Map punches to activities
     if (Array.isArray(punchesData)) {
         punchesData.forEach(punch => {
-            const isPunchIn = punch.visit_type === 'PUNCH_IN' || punch.punch_type === 'PUNCH_IN';
-            const isPunchOut = punch.visit_type === 'PUNCH_OUT' || punch.punch_type === 'PUNCH_OUT';
+            let activityType = ACTIVITY_TYPES.PUNCH_IN; // Default
+
+            // If it has a specific visit_type, use it to determine the activity type
+            if (punch.visit_type && ACTIVITY_TYPES[punch.visit_type]) {
+                activityType = ACTIVITY_TYPES[punch.visit_type];
+            } else if (punch.visit_type === 'PUNCH_OUT' || punch.punch_type === 'PUNCH_OUT') {
+                activityType = ACTIVITY_TYPES.PUNCH_OUT;
+            } else if (punch.visit_type === 'PUNCH_IN' || punch.punch_type === 'PUNCH_IN') {
+                // If it really is just a standard generic Punch In
+                activityType = ACTIVITY_TYPES.PUNCH_IN;
+            }
 
             activities.push(createActivity({
                 ...punch,
-                type: isPunchIn ? ACTIVITY_TYPES.PUNCH_IN : 
-                      isPunchOut ? ACTIVITY_TYPES.PUNCH_OUT : 
-                      ACTIVITY_TYPES.VISIT,
+                type: activityType,
             }));
         });
     }

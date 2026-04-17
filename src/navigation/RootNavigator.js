@@ -5,6 +5,44 @@ import { View, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography } from '../theme/tokens';
 
+
+import LoginScreen from '../screens/LoginScreen';
+import ChangePasswordScreen from '../screens/ChangePasswordScreen';
+
+import PunchScreen from '../screens/Employee/PunchScreen';
+import RouteMapScreen from '../screens/RouteMapScreen';
+import PunchHistoryScreen from '../screens/PunchHistoryScreen';
+import PunchCorrectionScreen from '../screens/PunchCorrectionScreen';
+import AllowanceHistoryScreen from '../screens/AllowanceHistoryScreen';
+import ApplyAllowanceScreen from '../screens/ApplyAllowanceScreen';
+import DailySummaryScreen from '../screens/DailySummaryScreen';
+
+import AdminDashboardScreen from '../screens/AdminDashboardScreen';
+import AdminApprovalsScreen from '../screens/AdminApprovalsScreen';
+import AdminDevicesScreen from '../screens/AdminDevicesScreen';
+
+import SuperAdminDashboardScreen from '../screens/SuperAdminDashboardScreen';
+import DashboardScreen from '../screens/DashboardScreen';
+
+import UserManagementScreen from '../screens/UserManagementScreen';
+import EmployeeListScreen from '../screens/EmployeeListScreen';
+import EmployeeTrackingScreen from '../screens/EmployeeTrackingScreen';
+import ApprovalRoutesScreen from '../screens/ApprovalRoutesScreen';
+import OrgSettingsScreen from '../screens/OrgSettingsScreen';
+import ReportsScreen from '../screens/ReportsScreen';
+import CreateUserScreen from '../screens/CreateUserScreen';
+
+import SuperAdminHomeScreen from '../screens/SuperAdminHomeScreen';
+import SuperAdminAnalyticsScreen from '../screens/SuperAdminAnalyticsScreen';
+import SuperAdminEmployeesScreen from '../screens/SuperAdminEmployeesScreen';
+import SuperAdminMoreScreen from '../screens/SuperAdminMoreScreen';
+
+import EmployeeHomeScreen from '../screens/EmployeeHomeScreen';
+import EmployeeCorrectionScreen from '../screens/EmployeeCorrectionScreen';
+import EmployeeAllowanceScreen from '../screens/EmployeeAllowanceScreen';
+import EmployeeMoreScreen from '../screens/EmployeeMoreScreen';
+import EmployeePunchScreen from '../screens/Employee/PunchScreen';
+=======
 // Auth Screens
 import LoginScreen from '../screens/Auth/LoginScreen';
 import ChangePasswordScreen from '../screens/Auth/ChangePasswordScreen';
@@ -44,6 +82,7 @@ import ApplyAllowanceScreen from '../screens/Common/ApplyAllowanceScreen';
 import DailySummaryScreen from '../screens/Common/DailySummaryScreen';
 import DashboardScreen from '../screens/Common/DashboardScreen';
 import EmployeeListScreen from '../screens/Common/EmployeeListScreen';
+
 
 import CustomTabBar from '../components/CustomTabBar';
 import { useAuth } from '../context/AuthContext';

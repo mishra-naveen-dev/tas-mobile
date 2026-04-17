@@ -8,7 +8,7 @@ import LoginScreen from '../screens/LoginScreen';
 import ChangePasswordScreen from '../screens/ChangePasswordScreen';
 
 // MAIN SCREENS
-import PunchScreen from '../screens/PunchScreen';
+import PunchScreen from '../screens/Employee/PunchScreen';
 import MapViewScreen from '../components/MapViewScreen';
 import RouteMapScreen from '../screens/RouteMapScreen';
 import MainTabNavigator from './MainTabNavigator';
