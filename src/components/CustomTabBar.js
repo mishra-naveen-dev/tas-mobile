@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Platform, Animated } from 're
 import Icon from 'react-native-vector-icons/Feather';
 import { colors } from '../theme/tokens';
 
-const CustomTabBar = memo(({ state, navigation }) => {
+const CustomTabBar = memo(function CustomTabBar({ state, navigation }) {
     const pulseAnim = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {
@@ -47,52 +47,55 @@ const CustomTabBar = memo(({ state, navigation }) => {
         }
     };
 
+    const renderTab = (route, index) => {
+        const currentIndex = state.routes.findIndex(r => r.key === route.key);
+        const isFocused = currentIndex === state.index;
+        const tab = tabs.find(t => t.name === route.name);
+        const label = tab?.label || route.name;
+        const iconName = tab?.icon || 'circle';
+
+        if (isPunchTab(route.name)) {
+            return (
+                <View key={route.key} style={styles.punchTabContainer}>
+                    <Animated.View style={[styles.punchButtonOuter, { transform: [{ scale: pulseAnim }] }]}>
+                        <TouchableOpacity
+                            style={styles.punchButton}
+                            onPress={() => handleTabPress(route, isFocused)}
+                            activeOpacity={0.85}
+                        >
+                            <Icon name="map-pin" size={26} color="#FFFFFF" />
+                        </TouchableOpacity>
+                    </Animated.View>
+                    <Text style={styles.punchLabel}>Punch</Text>
+                </View>
+            );
+        }
+
+        return (
+            <TouchableOpacity
+                key={route.key}
+                style={styles.tab}
+                onPress={() => handleTabPress(route, isFocused)}
+                activeOpacity={0.7}
+            >
+                <View style={[styles.iconContainer, isFocused && styles.iconContainerActive]}>
+                    <Icon
+                        name={iconName}
+                        size={22}
+                        color={isFocused ? colors.primary : colors.textMuted}
+                    />
+                </View>
+                <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
+                    {label}
+                </Text>
+            </TouchableOpacity>
+        );
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.tabBar}>
-                {state.routes.map((route) => {
-                    const isFocused = state.index === state.routes.findIndex(r => r.key === route.key);
-                    const tab = tabs.find(t => t.name === route.name);
-                    const label = tab?.label || route.name;
-                    const iconName = tab?.icon || 'circle';
-
-                    if (isPunchTab(route.name)) {
-                        return (
-                            <View key={route.key} style={styles.punchTabContainer}>
-                                <Animated.View style={[styles.punchButtonOuter, { transform: [{ scale: pulseAnim }] }]}>
-                                    <TouchableOpacity
-                                        style={styles.punchButton}
-                                        onPress={() => handleTabPress(route, isFocused)}
-                                        activeOpacity={0.85}
-                                    >
-                                        <Icon name="map-pin" size={26} color="#FFFFFF" />
-                                    </TouchableOpacity>
-                                </Animated.View>
-                                <Text style={styles.punchLabel}>Punch</Text>
-                            </View>
-                        );
-                    }
-
-                    return (
-                        <TouchableOpacity
-                            key={route.key}
-                            style={styles.tab}
-                            onPress={() => handleTabPress(route, isFocused)}
-                            activeOpacity={0.7}
-                        >
-                            <View style={[styles.iconContainer, isFocused && styles.iconContainerActive]}>
-                                <Icon
-                                    name={iconName}
-                                    size={22}
-                                    color={isFocused ? colors.primary : colors.textMuted}
-                                />
-                            </View>
-                            <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
-                                {label}
-                            </Text>
-                        </TouchableOpacity>
-                    );
-                })}
+                {state.routes.map((route, index) => renderTab(route, index))}
             </View>
         </View>
     );
