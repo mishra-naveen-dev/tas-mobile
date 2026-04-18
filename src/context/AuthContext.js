@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 import api from '../api/api';
 import { parseApiError } from '../core/error/AppErrorHandler';
+import SSEClient from '../services/SSEClient';
 
 const AuthContext = createContext(null);
 
@@ -118,6 +119,13 @@ export const AuthProvider = ({ children }) => {
             setAccessToken(access);
             setRefreshToken(refresh);
 
+            try {
+                SSEClient.connect();
+                console.log('[Auth] SSE connected after login');
+            } catch (e) {
+                console.log('[Auth] SSE connection error:', e.message);
+            }
+
             return { success: true, user: userData };
         } catch (error) {
             const parsed = parseApiError(error);
@@ -140,6 +148,7 @@ export const AuthProvider = ({ children }) => {
         } catch (error) {
             console.log('Logout API error:', error?.message);
         } finally {
+            SSEClient.disconnect();
             await AsyncStorage.multiRemove(Object.values(STORAGE_KEYS));
             setAccessToken(null);
             setRefreshToken(null);
