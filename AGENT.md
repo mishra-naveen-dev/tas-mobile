@@ -1333,6 +1333,223 @@ async def review(self, request, pk=None):
 
 ---
 
+# 22. Recent Updates & Changes (April 2026)
+
+This section documents all recent implementation updates and fixes.
+
+---
+
+## 22.1 SSE (Server-Sent Events) Implementation
+
+### Backend Changes
+
+**New Files:**
+- `backend/common/services/sse_service.py` - SSE event manager
+
+**Modified Files:**
+- `backend/apps/notifications/views.py` - Added SSE endpoints
+- `backend/apps/notifications/urls.py` - Added SSE URL routes
+- `backend/apps/attendance/models.py` - Added `cumulative_distance` field
+- `backend/apps/attendance/views.py` - Updated distance calculation with cumulative tracking
+
+**SSE Events:**
+- `punch_created` - When new punch is created
+- `correction_created` - When correction request is submitted
+- `correction_approved` - When correction is approved
+- `correction_rejected` - When correction is rejected
+- `allowance_created` - When allowance is applied
+- `allowance_approved` - When allowance is approved
+
+**Backend Endpoint:**
+```
+GET /api/v1/notifications/events/
+```
+
+---
+
+## 22.2 Cumulative Distance Tracking
+
+**Formula:**
+- `distance_from_last` = Segment distance (A→B)
+- `cumulative_distance` = Running total (A→B + A→B→C + ...)
+
+**Example:**
+A → B → C → D → E → return to A
+- A→B: 5km (cumulative: 5)
+- B→C: 6km (cumulative: 11)
+- C→D: 9km (cumulative: 20)
+- D→E: 8km (cumulative: 28)
+- E→A: 15km (cumulative: 43)
+
+**Backend Implementation:**
+```python
+# In AttendancePunch model
+cumulative_distance = models.FloatField(default=0)  # Running total from start
+
+# Recalculate on each punch
+def _recalculate_employee_routes(self, employee):
+    punches = AttendancePunch.objects.filter(employee=employee).order_by('punched_at')
+    running_total = 0
+    for punch in punches:
+        running_total += punch.distance_from_last or 0
+        punch.cumulative_distance = running_total
+        punch.save()
+```
+
+---
+
+## 22.3 Mobile SSE Integration
+
+**New Files:**
+- `src/services/SSEClient.js` - SSE client for mobile (polling-based)
+- `src/hooks/useSkeletonLoader.js` - Skeleton loading hook
+
+**Modified Files:**
+- `src/context/AuthContext.js` - Added SSE connect on login, disconnect on logout
+
+**Implementation:**
+```javascript
+// Connect on login
+import SSEClient from '../services/SSEClient';
+
+const login = useCallback(async (username, password) => {
+    // ... login logic
+    SSEClient.connect();
+}, []);
+
+// Disconnect on logout
+const logout = useCallback(async () => {
+    await api.logout();
+    SSEClient.disconnect();
+    // ... clear tokens
+}, []);
+
+// Event listeners
+SSEClient.onCorrection((data) => {
+    console.log('[Auth] Correction event received:', data);
+});
+```
+
+**Event Types:**
+- `correction_approved`
+- `correction_rejected`
+- `correction_created`
+- `allowance_approved`
+- `allowance_rejected`
+- `punch_created`
+
+---
+
+## 22.4 Backend Fixes
+
+### Correction Review 500 Error Fix
+
+**Issue:** POST to `/correction-requests/{id}/review/` returns 500 Internal Server Error
+
+**Root Cause:**
+1. Missing `select_related` for related fields (`employee`, `reviewed_by`)
+2. No error handling in serialization
+
+**Solution:**
+```python
+# Added select_related to queryset
+class CorrectionRequestViewSet(viewsets.ModelViewSet):
+    queryset = CorrectionRequest.objects.select_related('employee', 'reviewed_by').all()
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.role.name == 'SUPER_ADMIN':
+            return CorrectionRequest.objects.select_related('employee', 'reviewed_by').all()
+        if user.role.name == 'ADMIN':
+            return CorrectionRequest.objects.select_related('employee', 'reviewed_by').filter(
+                employee__branch=user.branch
+            )
+        return CorrectionRequest.objects.select_related('employee', 'reviewed_by').filter(employee=user)
+```
+
+**Branch:** `fix/correction-review-error`
+
+---
+
+## 22.5 Skeleton Loader Feature
+
+**New Hook:**
+```javascript
+// src/hooks/useSkeletonLoader.js
+import { useState, useCallback } from 'react';
+
+export const useSkeletonLoader = (initialLoading = true) => {
+  const [loading, setLoading] = useState(initialLoading);
+  const [data, setData] = useState(null);
+
+  const startLoading = useCallback(() => setLoading(true), []);
+  const stopLoading = useCallback((newData = null) => {
+    setLoading(false);
+    if (newData) setData(newData);
+  }, []);
+
+  return { loading, data, startLoading, stopLoading, setLoading };
+};
+```
+
+**Existing Components:**
+- `src/common/components/SkeletonLoader.js`
+- `src/components/SkeletonActivityList.js`
+- `src/components/SkeletonComponents.js`
+
+---
+
+## 22.6 Git Workflow
+
+**Current Branching Strategy:**
+1. Each fix/task → new branch
+2. Commit changes
+3. Push to remote
+4. Create PR (wait for approval before merging to main)
+
+**Backend Branches:**
+- `main` - Main production branch
+- `fix/correction-review-error` - Fix for correction review 500 error
+
+**Mobile Branches:**
+- `feature/ui-correction-employee` - Employee correction UI
+- `fix/sse-integration` - SSE integration
+
+---
+
+## 22.7 API Endpoints Summary
+
+### Attendance
+```
+GET    /api/v1/attendance/correction-requests/
+POST   /api/v1/attendance/correction-requests/
+GET    /api/v1/attendance/correction-requests/{id}/
+POST   /api/v1/attendance/correction-requests/{id}/review/
+GET    /api/v1/attendance/correction-requests/my_requests/
+```
+
+### Notifications (SSE)
+```
+GET    /api/v1/notifications/events/
+```
+
+### Distance Calculation
+- Mobile calculates using Google Distance Matrix API
+- Sends `calculated_distance` to backend
+- Backend prioritizes mobile-provided distance
+- Falls back to backend calculation if not provided
+
+---
+
+## 22.8 Known Issues (Resolved)
+
+1. **Navigation Reset Error** - Fixed by removing manual reset() calls
+2. **Distance showing 0** - Mobile now calculates and sends to backend
+3. **Correction review 500** - Added select_related and error handling
+4. **SSE import error** - Fixed import path `./api` → `../api/api`
+
+---
+
 # Conclusion
 
 This application must behave like a real enterprise-grade field tracking system. Every feature must be reliable, secure, and scalable. No shortcuts should be taken that compromise data integrity or user trust.
