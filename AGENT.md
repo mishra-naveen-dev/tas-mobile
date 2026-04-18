@@ -619,32 +619,437 @@ This section tracks completed work, fixes, and improvements made to the TAS mobi
 **New Files Added:**
 - src/core/error/AppErrorHandler.js - Enterprise error handling system
 - src/core/api/ApiResponseHandler.js - API response handler
+- docs/punch_feature.md - Correction & Allowance MVP spec
 
-## 18.2 Previous Work Summary
+## 18.2 Punch Correction & Allowance MVP
 
-### Backend Fixes
-- Fixed AttendancePunchSerializer - added missing serializer fields for punch creation
-- Fixed __init__ method causing 500 errors
-- Added visit_type support (COLLECTION, DISBURSEMENT)
+### Backend (Already Implemented)
+- **Models:** CorrectionRequest, AllowanceRequest, AllowanceConfig
+- **APIs:** Full CRUD + review endpoints
+- **Features:** 7-day correction window, Google Geocoding, auto distance calculation, admin review workflow
 
-### Mobile Fixes
-- PunchContext missing properties - added many properties used by EmployeePunchScreen
-- Navigation not connecting to Punch screen from tab bar
-- punch_type validation - fixed using visit_type value incorrectly
-- Punch button icons and colors updated
-- Form clears after successful submission
-- Map route path (polyline) connecting punches
-- Navigation icon added to RouteMap screen
-- Auto-focus to latest punch location
-- Dashboard fetch error handling improved
+### Mobile App (Already Implemented)
+- **Screens:** EmployeeCorrectionScreen, PunchCorrectionScreen, EmployeeAllowanceScreen
+- **API Integration:** Ready to use with backend
 
-### Auth/Session
-- Token refresh interceptor issues
-- Login error message clarity
-- Enterprise error handling system created
+## 18.3 Build Outputs
+- Debug APK: android/app/build/outputs/apk/debug/app-debug.apk
+- Release APK: android/app-release-v1.2.apk
 
-### Build
-- Debug APK built successfully
+---
+
+# 19. Punch Correction & Approval System (Enterprise Level)
+
+This section defines how employees can edit, delete, and add punches with a strict approval workflow.
+
+---
+
+## 19.1 Edit Punch (Restricted Editing)
+
+Employees can edit existing punches within a controlled time window.
+
+### Rules:
+
+* Editable only within **0–4 days** from punch date
+* Only specific fields can be edited:
+
+  * loan_id
+  * amount
+  * visit_type
+  * payment_type (cash / UPI / cheque)
+
+### Restrictions:
+
+* Location, time, and GPS data cannot be modified
+* All edits must be logged
+
+### Audit Fields:
+
+* edited_by
+* edited_at
+* previous_value (history tracking)
+
+---
+
+## 19.2 Delete Punch (Controlled + Audited)
+
+### Rules:
+
+* Same-day delete → allowed with approval
+* After same day → requires higher authority approval
+
+### Critical Requirement:
+
+Deleted punches must NOT be permanently removed.
+
+### Store in DB:
+
+* punch_id
+* user_id
+* deleted_by
+* approved_by
+* deleted_at
+* reason
+* original data snapshot
+
+### Behavior:
+
+* Mark as "DELETED" (soft delete)
+* Maintain full audit trail
+
+---
+
+## 19.3 Add Punch (Missed Punch Entry – Complex Flow)
+
+This is a controlled feature for adding missed punches.
+
+### Input Fields:
+
+* punch_type (only Punch In)
+* visit_type
+* date
+* time
+* from_address
+* from_pincode
+* to_address
+* to_pincode
+* reason
+* travel_with (alone / employee)
+* distance (auto-calculated, non-editable)
+
+### Distance Calculation:
+
+* Initially disabled in UI
+* Backend calculates using **Google Maps API**
+* Based on from_address → to_address
+* Automatically returned and displayed
+
+### Rules:
+
+* User cannot manually edit distance
+* Submission only after distance calculation
+
+---
+
+## 19.4 Approval Workflow System
+
+All correction actions (Edit / Delete / Add Punch) must go through approval hierarchy.
+
+### Default Flow:
+
+User → Admin → Superadmin
+
+### Behavior:
+
+* Request created by user
+* Sent to assigned Admin
+* Admin approves/rejects
+* If required → escalated to Superadmin
+
+---
+
+## 19.5 Dynamic Approval Hierarchy (Superadmin Control)
+
+Superadmin must have full control over approval routing.
+
+### Capabilities:
+
+* Assign specific Admin to specific Users
+
+* Example:
+
+  * UserA → AdminB
+  * UserB → AdminA
+
+* Configure multi-level approval chains
+
+* Modify approval roles dynamically
+
+### Rules:
+
+* Only Superadmin can change hierarchy
+* Changes must reflect instantly in approval flow
+
+---
+
+## 19.6 Approval Window System
+
+Approval requests must follow fixed time windows.
+
+### Default Windows:
+
+* 1st – 15th of month
+* 16th – End of month
+
+### Behavior:
+
+* Users can submit correction requests only within active window
+* After window closes:
+
+  * No new requests allowed
+  * System locks entries
+
+### Superadmin Control:
+
+* Can modify date ranges dynamically
+
+---
+
+## 19.7 Notifications System
+
+### Triggers:
+
+* When approval window opens → notify users
+* Before window closes → reminder notification
+* After window closes → notify missed users
+
+### Purpose:
+
+* Ensure users apply for missed punches on time
+
+---
+
+## 19.8 Enterprise Rules
+
+* Every action must be auditable
+* No hard delete allowed
+* Approval is mandatory for all corrections
+* Distance must always be system-calculated
+* Role-based access must be strictly enforced
+
+---
+
+# 20. Allowance System (Enterprise Logic)
+
+Allowance calculation and application must support both manual and system-driven workflows.
+
+---
+
+## 20.1 Manual Allowance (User Applied)
+
+This is based on missed punches or manually added entries by the user.
+
+### Source:
+
+* Add Punch (missed entry)
+* Corrected punch data
+
+### Behavior:
+
+* Allowance is calculated based on:
+
+  * Distance (auto-calculated)
+  * Visit type
+  * Organization rules
+
+### Flow:
+
+* User adds missed punch
+* Distance is calculated via backend
+* Allowance value derived from that distance
+* Submitted for approval (same approval hierarchy)
+
+### Rules:
+
+* User cannot manually edit allowance amount
+* Amount must always be system-derived
+* Linked directly with punch record
+
+---
+
+## 20.2 System-Based Allowance (Auto Calculated)
+
+This is based on total travel done by the user in a month.
+
+### Source:
+
+* All valid punches
+* Route tracking data
+* Total distance traveled
+
+### Behavior:
+
+* System calculates total monthly distance
+* Applies organization policy:
+
+  * Rate per km
+  * Slab-based allowance
+  * Fixed + variable structure (if applicable)
+
+### Output:
+
+* Monthly allowance summary
+* Auto-generated record for user
+
+### Rules:
+
+* Fully backend controlled
+* No manual intervention
+* Must be transparent and auditable
+
+---
+
+## 20.3 Enterprise Rules
+
+* Manual and system allowances must not conflict
+* Each allowance entry must be traceable to source (punch / distance)
+* Approval required for manual entries
+* Monthly allowance must be auto-generated and locked after cycle
+
+---
+
+# 21. Approval Status Dashboard (Enterprise Visibility)
+
+A unified approval tracking system must be implemented across User, Admin, and Superadmin interfaces.
+
+---
+
+## 21.1 Core Status Types
+
+All correction and allowance requests must have standardized statuses:
+
+* PENDING
+* APPROVED
+* REJECTED
+
+Each request must include:
+
+* request_id
+* user_id
+* request_type (Edit / Delete / Add Punch / Allowance)
+* status
+* created_at
+* updated_at
+* approved_by
+* rejection_reason (if rejected)
+
+---
+
+## 21.2 User View (Employee)
+
+### Home Screen Integration
+
+* Show summary widget:
+
+  * Pending Requests Count
+  * Approved Requests Count
+  * Rejected Requests Count
+
+### Detailed Screen
+
+* List all requests with filters:
+
+  * Status (Pending / Approved / Rejected)
+  * Date range
+
+### Behavior:
+
+* User can track status in real-time
+* Rejected requests must show reason
+* Approved requests must show approver details
+
+---
+
+## 21.3 Admin View
+
+### Dashboard
+
+* List of all requests from assigned users
+
+### Features:
+
+* Filter by:
+
+  * Status
+  * User
+  * Date
+  * Request type
+
+### Actions:
+
+* Approve
+* Reject (mandatory reason)
+
+### Rules:
+
+* Cannot modify request data
+* Only decision allowed
+
+---
+
+## 21.4 Superadmin View
+
+### Full Control Dashboard
+
+* Access to all requests across organization
+
+### Features:
+
+* Override decisions
+* Reassign approvals
+* View complete audit trail
+
+### Filters:
+
+* Region / Branch / User
+* Status / Type / Date
+
+---
+
+## 21.5 UI/UX Guidelines
+
+### Design Requirements:
+
+* Clean tab-based UI:
+
+  * Pending | Approved | Rejected
+* Color Coding:
+
+  * Pending → Yellow
+  * Approved → Green
+  * Rejected → Red
+
+### Components:
+
+* Status badges
+* Timeline view for each request
+* Expandable cards with details
+
+### Performance:
+
+* Pagination for large data
+* Lazy loading
+
+---
+
+## 21.6 Backend Requirements
+
+* Centralized Approval Table
+* Status-based indexing for fast queries
+* Audit logs for every action
+
+### APIs:
+
+* GET /approvals?status=pending
+* POST /approvals/{id}/approve
+* POST /approvals/{id}/reject
+
+---
+
+## 21.7 Real-Time Updates
+
+* Use polling or websocket (future)
+* Refresh status automatically
+* Notify user on status change
+
+---
+
+## 21.8 Enterprise Rules
+
+* Status must be consistent across all roles
+* No data duplication
+* Every action must be logged
+* UI must reflect backend truth only
 
 ---
 
