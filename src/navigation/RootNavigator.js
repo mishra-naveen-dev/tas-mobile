@@ -1,48 +1,12 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
 import { View, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography } from '../theme/tokens';
 
-
-import LoginScreen from '../screens/LoginScreen';
-import ChangePasswordScreen from '../screens/ChangePasswordScreen';
-
-import PunchScreen from '../screens/Employee/PunchScreen';
-import RouteMapScreen from '../screens/RouteMapScreen';
-import PunchHistoryScreen from '../screens/PunchHistoryScreen';
-import PunchCorrectionScreen from '../screens/PunchCorrectionScreen';
-import AllowanceHistoryScreen from '../screens/AllowanceHistoryScreen';
-import ApplyAllowanceScreen from '../screens/ApplyAllowanceScreen';
-import DailySummaryScreen from '../screens/DailySummaryScreen';
-
-import AdminDashboardScreen from '../screens/AdminDashboardScreen';
-import AdminApprovalsScreen from '../screens/AdminApprovalsScreen';
-import AdminDevicesScreen from '../screens/AdminDevicesScreen';
-
-import SuperAdminDashboardScreen from '../screens/SuperAdminDashboardScreen';
-import DashboardScreen from '../screens/DashboardScreen';
-
-import UserManagementScreen from '../screens/UserManagementScreen';
-import EmployeeListScreen from '../screens/EmployeeListScreen';
-import EmployeeTrackingScreen from '../screens/EmployeeTrackingScreen';
-import ApprovalRoutesScreen from '../screens/ApprovalRoutesScreen';
-import OrgSettingsScreen from '../screens/OrgSettingsScreen';
-import ReportsScreen from '../screens/ReportsScreen';
-import CreateUserScreen from '../screens/CreateUserScreen';
-
-import SuperAdminHomeScreen from '../screens/SuperAdminHomeScreen';
-import SuperAdminAnalyticsScreen from '../screens/SuperAdminAnalyticsScreen';
-import SuperAdminEmployeesScreen from '../screens/SuperAdminEmployeesScreen';
-import SuperAdminMoreScreen from '../screens/SuperAdminMoreScreen';
-
-import EmployeeHomeScreen from '../screens/EmployeeHomeScreen';
-import EmployeeCorrectionScreen from '../screens/EmployeeCorrectionScreen';
-import EmployeeAllowanceScreen from '../screens/EmployeeAllowanceScreen';
-import EmployeeMoreScreen from '../screens/EmployeeMoreScreen';
-import EmployeePunchScreen from '../screens/Employee/PunchScreen';
-=======
+// Auth Screens
 // Auth Screens
 import LoginScreen from '../screens/Auth/LoginScreen';
 import ChangePasswordScreen from '../screens/Auth/ChangePasswordScreen';
@@ -105,25 +69,33 @@ const AuthStackNavigator = () => (
     </AuthStack.Navigator>
 );
 
-const EmployeeTabNavigator = () => (
-    <EmployeeTab.Navigator
-        tabBar={(props) => <CustomTabBar {...props} />}
-        screenOptions={{
-            headerShown: false,
-        }}
-    >
-        <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
-        <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
-        <EmployeeTab.Screen name="EmployeePunch" component={PunchScreen} />
-        <EmployeeTab.Screen name="EmployeeAllowance" component={EmployeeAllowanceScreen} />
-        <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
-    </EmployeeTab.Navigator>
-);
+const EmployeeTabNavigator = () => {
+    const navigation = useNavigation();
+    
+    const handlePunchPress = () => {
+        navigation.navigate('Punch');
+    };
+    
+    return (
+        <EmployeeTab.Navigator
+            tabBar={(props) => <CustomTabBar {...props} onPunchPress={handlePunchPress} />}
+            screenOptions={{
+                headerShown: false,
+            }}
+        >
+            <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
+            <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
+            <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
+            <EmployeeTab.Screen name="EmployeeAllowance" component={EmployeeAllowanceScreen} />
+            <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
+        </EmployeeTab.Navigator>
+    );
+};
 
 const EmployeeStackNavigator = () => (
     <EmployeeStack.Navigator screenOptions={commonScreenOptions}>
         <EmployeeStack.Screen name="EmployeeTabs" component={EmployeeTabNavigator} />
-        <EmployeeStack.Screen name="Punch" component={PunchScreen} />
+        <EmployeeStack.Screen name="Punch" component={EmployeePunchScreen} />
         <EmployeeStack.Screen name="RouteMap" component={RouteMapScreen} />
         <EmployeeStack.Screen name="PunchHistory" component={PunchHistoryScreen} />
         <EmployeeStack.Screen name="PunchCorrection" component={PunchCorrectionScreen} />

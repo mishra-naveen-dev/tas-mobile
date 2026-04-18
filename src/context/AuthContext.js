@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
-import { loginUser } from '../api/authApi';
 
 const AuthContext = createContext(null);
 
@@ -86,8 +85,12 @@ export const AuthProvider = ({ children }) => {
 
     const login = useCallback(async (username, password) => {
         try {
-            const response = await loginUser(username, password);
-            const { access, refresh, user: userData } = response.data;
+            const response = await api.login(username, password);
+            const data = response.data;
+
+            const access = data.access;
+            const refresh = data.refresh;
+            const userData = data.user;
 
             if (!access || !refresh) {
                 throw new Error('Invalid server response: missing tokens');
@@ -111,17 +114,21 @@ export const AuthProvider = ({ children }) => {
             console.error('Login error:', error);
             return {
                 success: false,
-                error: error?.response?.data?.detail || error?.message || 'Login failed',
+                error: error?.response?.data?.detail || 
+                      error?.response?.data?.non_field_errors?.[0] || 
+                      error?.message || 
+                      'Login failed',
             };
         }
     }, []);
 
     const logout = useCallback(async () => {
         try {
-            await AsyncStorage.multiRemove(Object.values(STORAGE_KEYS));
+            await api.logout();
         } catch (error) {
-            console.error('Logout cleanup error:', error);
+            console.log('Logout API error:', error?.message);
         } finally {
+            await AsyncStorage.multiRemove(Object.values(STORAGE_KEYS));
             setAccessToken(null);
             setRefreshToken(null);
             setUser(null);

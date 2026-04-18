@@ -8,7 +8,9 @@ import {
     TouchableOpacity,
     ActivityIndicator,
     Dimensions,
-    ScrollView
+    ScrollView,
+    Linking,
+    Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -84,6 +86,17 @@ const RouteMapScreen = ({ navigation, route }) => {
                 animated: true
             });
         }
+    };
+
+    const openInGoogleMaps = () => {
+        if (!latestPoint) return;
+        
+        const { latitude, longitude } = latestPoint;
+        const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+        
+        Linking.openURL(url).catch(() => {
+            Alert.alert('Error', 'Could not open maps');
+        });
     };
 
     const getAllCoordinates = () => {
@@ -257,6 +270,13 @@ const RouteMapScreen = ({ navigation, route }) => {
                         activeOpacity={0.8}
                     >
                         <Icon name="maximize-2" size={22} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                        style={styles.mapControlBtn} 
+                        onPress={openInGoogleMaps}
+                        activeOpacity={0.8}
+                    >
+                        <Icon name="navigation" size={22} color={colors.primary} />
                     </TouchableOpacity>
                 </View>
 

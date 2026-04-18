@@ -1,17 +1,20 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createBottomTabNavigator } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 
-import DashboardScreen from '../screens/DashboardScreen';
-import ApplyAllowanceScreen from '../screens/ApplyAllowanceScreen';
-import PunchCorrectionScreen from '../screens/PunchCorrectionScreen';
-import HistoryHubScreen from '../screens/HistoryHubScreen';
+import DashboardScreen from '../screens/Common/DashboardScreen';
+import ApplyAllowanceScreen from '../screens/Common/ApplyAllowanceScreen';
+import PunchCorrectionScreen from '../screens/Common/PunchCorrectionScreen';
+import HistoryHubScreen from '../screens/Common/HistoryHubScreen';
+import EmployeePunchScreen from '../screens/Employee/EmployeePunchScreen';
 
 import CustomTabBar from './CustomTabBar';
 import { colors } from '../theme/tokens';
 
 const Tab = createBottomTabNavigator();
+const Stack = createNativeStackNavigator();
 
 const MainTabNavigator = () => {
     const navigation = useNavigation();
@@ -43,6 +46,15 @@ const MainTabNavigator = () => {
                 />
             </Tab.Navigator>
         </View>
+    );
+};
+
+export const MainStackNavigator = () => {
+    return (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="MainTabs" component={MainTabNavigator} />
+            <Stack.Screen name="Punch" component={EmployeePunchScreen} />
+        </Stack.Navigator>
     );
 };
 

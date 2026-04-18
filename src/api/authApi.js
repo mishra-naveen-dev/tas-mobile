@@ -1,32 +1,19 @@
 import api from './api';
 
 export const loginUser = async (username, password) => {
-    const deviceId = await api.getDeviceId();
-    const platform = api.getPlatform();
-
-    return api.post('/auth/token/', {
-        username,
-        password,
-    }, {
-        headers: {
-            'X-DEVICE-ID': deviceId,
-            'X-PLATFORM': platform,
-        }
-    });
+    return api.login(username, password);
 };
 
 export const logoutUser = async () => {
-    const keys = ['access', 'refresh', 'user', 'device_id', 'device_info', 'last_punch'];
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-    await AsyncStorage.multiRemove(keys);
+    return api.logout();
 };
 
-export const changePassword = async (newPassword, token) => {
-    return api.post('/auth/change-password/', {
-        new_password: newPassword,
-    }, {
-        headers: {
-            Authorization: `Bearer ${token}`,
-        }
-    });
+export const changePassword = async (oldPassword, newPassword) => {
+    return api.changePassword(oldPassword, newPassword);
+};
+
+export default {
+    loginUser,
+    logoutUser,
+    changePassword,
 };

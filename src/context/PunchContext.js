@@ -1,21 +1,36 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
+import LocationService from '../services/LocationService';
 
 const IS_DEV = __DEV__;
-
-const PunchContext = createContext(null);
 
 export const STATES = {
   IDLE: 'IDLE',
   LOADING: 'LOADING',
+  FETCHING_LOCATION: 'FETCHING_LOCATION',
+  FORM_OPEN: 'FORM_OPEN',
+  SUBMITTING: 'SUBMITTING',
+  PUNCHING_OUT: 'PUNCHING_OUT',
   ERROR: 'ERROR',
 };
+
+const PunchContext = createContext(null);
 
 export const PunchProvider = ({ children }) => {
   const [punches, setPunches] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [success, setSuccess] = useState(false);
+  
+  const [punchState, setPunchState] = useState(STATES.IDLE);
+  const [isActive, setIsActive] = useState(false);
+  const [capturedLocation, setCapturedLocation] = useState(null);
+  const [isMockLocation, setIsMockLocation] = useState(false);
+  
+  const trackingStartTime = useRef(null);
+  const routePoints = useRef([]);
 
   const fetchTodayPunches = useCallback(async () => {
     try {
@@ -40,26 +55,158 @@ export const PunchProvider = ({ children }) => {
     }
   }, []);
 
-  const addPunch = useCallback(async (punchData) => {
-    setLoading(true);
-    setError(null);
+  const fetchLocation = useCallback(async () => {
+    setPunchState(STATES.FETCHING_LOCATION);
+    setErrorMessage(null);
+    setSuccess(false);
     
     try {
-      const res = await api.post('/attendance/punches/', punchData);
+      const location = await LocationService.getCurrentLocation();
+      
+      if (location.error) {
+        setPunchState(STATES.ERROR);
+        setErrorMessage(location.error);
+        return { success: false, error: location.error };
+      }
+      
+      const address = location.address || `${location.latitude?.toFixed(5)}, ${location.longitude?.toFixed(5)}`;
+      
+      setCapturedLocation({
+        latitude: location.latitude,
+        longitude: location.longitude,
+        current_address: address,
+        accuracy: location.accuracy,
+        speed: location.speed,
+        isMock: location.isMock,
+      });
+      
+      setIsMockLocation(location.isMock || false);
+      setPunchState(STATES.FORM_OPEN);
+      
+      return { success: true, location: { ...location, current_address: address } };
+    } catch (err) {
+      const errorMsg = err?.message || 'Failed to get location';
+      setPunchState(STATES.ERROR);
+      setErrorMessage(errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  }, []);
+
+  const punchIn = useCallback(async (formData, locationData) => {
+    setPunchState(STATES.SUBMITTING);
+    setErrorMessage(null);
+    setSuccess(false);
+    
+    try {
+      const payload = {
+        punch_type: 'PUNCH_IN',  // Always PUNCH_IN for initial punch
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
+        current_address: locationData.current_address || '',
+        customer_address: formData.customer_address || '',
+        customer_name: formData.customer_name || '',
+        notes: formData.reason || '',
+        visit_type: formData.visit_type || 'VISIT',
+        loan_id: formData.loan_id || '',
+        amount: formData.amount ? parseFloat(formData.amount) : null,
+        payment_mode: formData.payment_mode || '',
+        upi_ref: formData.upi_ref || '',
+        cheque_no: formData.cheque_no || '',
+        travel_with: formData.travel_with || 'ALONE',
+        co_employee_id: formData.co_employee_id || '',
+        co_employee_name: formData.co_employee_name || '',
+        vehicle_number: formData.vehicle_number || '',
+      };
+      
+      if (IS_DEV) console.log('[Punch] Submitting punch:', JSON.stringify(payload, null, 2));
+      
+      const res = await api.post('/attendance/punches/', payload);
+      
+      if (IS_DEV) console.log('[Punch] Success:', JSON.stringify(res.data, null, 2));
+      
+      setIsActive(true);
+      setPunchState(STATES.IDLE);
+      setSuccess(true);
+      trackingStartTime.current = Date.now();
+      routePoints.current = [];
+      
       await fetchTodayPunches();
+      
       return { success: true, data: res.data };
     } catch (err) {
-      if (IS_DEV) console.error('[Punch] Add error:', err);
-      const errorMsg = err?.response?.data?.detail || err.message || 'Failed to add punch';
-      setError(errorMsg);
+      if (IS_DEV) console.error('[Punch] Error:', err?.response?.data || err.message);
+      const errorMsg = err?.response?.data?.detail || 
+                      err?.response?.data?.message ||
+                      JSON.stringify(err?.response?.data) || 
+                      err?.message || 'Failed to punch in';
+      setPunchState(STATES.ERROR);
+      setErrorMessage(errorMsg);
       return { success: false, error: errorMsg };
-    } finally {
-      setLoading(false);
     }
   }, [fetchTodayPunches]);
 
+  const punchOut = useCallback(async () => {
+    setPunchState(STATES.PUNCHING_OUT);
+    setErrorMessage(null);
+    setSuccess(false);
+    
+    try {
+      const payload = {
+        punch_type: 'PUNCH_OUT',
+        latitude: capturedLocation?.latitude || 0,
+        longitude: capturedLocation?.longitude || 0,
+        current_address: capturedLocation?.current_address || '',
+        notes: 'Punch Out',
+      };
+      
+      if (IS_DEV) console.log('[Punch] Submitting punch out:', JSON.stringify(payload, null, 2));
+      
+      await api.post('/attendance/punches/', payload);
+      
+      if (IS_DEV) console.log('[Punch] Punch out success');
+      
+      setIsActive(false);
+      setPunchState(STATES.IDLE);
+      setSuccess(true);
+      setCapturedLocation(null);
+      trackingStartTime.current = null;
+      routePoints.current = [];
+      
+      await fetchTodayPunches();
+      
+      return { success: true };
+    } catch (err) {
+      const errorMsg = err?.response?.data?.detail || err?.message || 'Failed to punch out';
+      setPunchState(STATES.ERROR);
+      setErrorMessage(errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  }, [capturedLocation, fetchTodayPunches]);
+
+  const resetForm = useCallback(() => {
+    setPunchState(STATES.IDLE);
+    setCapturedLocation(null);
+    setErrorMessage(null);
+    setSuccess(false);
+  }, []);
+
+  const dismissError = useCallback(() => {
+    setErrorMessage(null);
+  }, []);
+
   const clearError = useCallback(() => {
     setError(null);
+    setErrorMessage(null);
+  }, []);
+
+  const getTotalDistance = useCallback(() => {
+    return LocationService.getTotalDistance();
+  }, []);
+
+  const getTrackingDuration = useCallback(() => {
+    if (!trackingStartTime.current) return 0;
+    const durationMs = Date.now() - trackingStartTime.current;
+    return Math.floor(durationMs / 60000);
   }, []);
 
   useEffect(() => {
@@ -70,11 +217,31 @@ export const PunchProvider = ({ children }) => {
     punches,
     loading,
     error,
+    errorMessage,
+    success,
+    punchState,
+    isActive,
+    isIdle: punchState === STATES.IDLE,
+    isTracking: isActive,
+    isMockLocation,
+    capturedLocation,
+    todayPunches: punches,
     fetchTodayPunches,
-    addPunch,
+    addPunch: punchIn,
+    punchIn,
+    punchOut,
+    fetchLocation,
+    resetForm,
+    dismissError,
     clearError,
-    punchCount: punches.length,
-  }), [punches, loading, error, fetchTodayPunches, addPunch, clearError]);
+    getTotalDistance,
+    getTrackingDuration,
+    LocationService,
+  }), [
+    punches, loading, error, errorMessage, success, punchState, isActive, 
+    isMockLocation, capturedLocation, fetchTodayPunches, punchIn, punchOut, 
+    fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration
+  ]);
 
   return <PunchContext.Provider value={value}>{children}</PunchContext.Provider>;
 };
@@ -87,10 +254,26 @@ export const usePunch = () => {
       punches: [],
       loading: false,
       error: null,
+      errorMessage: null,
+      success: false,
+      punchState: STATES.IDLE,
+      isActive: false,
+      isIdle: true,
+      isTracking: false,
+      isMockLocation: false,
+      capturedLocation: null,
+      todayPunches: [],
       fetchTodayPunches: () => {},
       addPunch: () => Promise.resolve({ success: false, error: 'Context not ready' }),
+      punchIn: () => Promise.resolve({ success: false, error: 'Context not ready' }),
+      punchOut: () => Promise.resolve({ success: false, error: 'Context not ready' }),
+      fetchLocation: () => Promise.resolve({ success: false, error: 'Context not ready' }),
+      resetForm: () => {},
+      dismissError: () => {},
       clearError: () => {},
-      punchCount: 0,
+      getTotalDistance: () => 0,
+      getTrackingDuration: () => 0,
+      LocationService: null,
     };
   }
   return ctx;

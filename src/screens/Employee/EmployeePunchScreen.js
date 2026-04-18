@@ -197,8 +197,25 @@ const EmployeePunchScreen = ({ navigation }) => {
     const result = await punchIn(form, locationData);
 
     if (result.success) {
-      setModalVisible(false);
+      // Clear form for next punch - don't close modal
+      setForm({
+        reason: '',
+        visit_type: '',
+        loan_id: '',
+        amount: '',
+        payment_mode: '',
+        upi_ref: '',
+        cheque_no: '',
+        customer_address: '',
+        customer_name: '',
+        travel_with: 'ALONE',
+        co_employee_id: '',
+        co_employee_name: '',
+        vehicle_number: '',
+      });
+      setLocalLocation(null);
       resetForm();
+      Alert.alert('Success', 'Punch recorded! Add another punch or tap close.');
     }
   };
 
@@ -320,26 +337,30 @@ const EmployeePunchScreen = ({ navigation }) => {
           <View style={[styles.statusBadge, { backgroundColor: isActive ? colors.successLight : colors.surface }]}>
             <View style={[styles.dot, { backgroundColor: isActive ? colors.success : colors.textMuted }]} />
             <Text style={[styles.statusText, { color: isActive ? colors.success : colors.textMuted }]}>
-              {isFetching ? 'Getting GPS...' : isActive ? 'Tracking Active' : 'Ready to Punch'}
+              {isFetching ? 'Getting GPS...' : isActive ? 'Punch Active' : 'Ready to Punch'}
             </Text>
           </View>
 
           <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
             <TouchableOpacity
-              style={[styles.punchBtn, { backgroundColor: isActive ? colors.error : colors.primary }]}
-              onPress={isActive ? handlePunchOutPress : handlePunchPress}
+              style={[styles.punchBtn, { backgroundColor: isActive ? colors.success : colors.primary }]}
+              onPress={handlePunchPress}
               disabled={isLoading}
             >
               {isLoading ? (
                 <ActivityIndicator size="large" color="#fff" />
               ) : (
-                <Icon name={isActive ? 'square' : 'map-pin'} size={48} color="#fff" />
+                <Icon 
+                  name="map-pin" 
+                  size={48} 
+                  color="#fff" 
+                />
               )}
             </TouchableOpacity>
           </Animated.View>
 
           <Text style={styles.punchLabel}>
-            {isActive ? 'Tap  Punch' : isFetching ? 'Getting location...' : 'Tap to Punch'}
+            {isFetching ? 'Getting location...' : 'Tap to Punch'}
           </Text>
         </View>
 

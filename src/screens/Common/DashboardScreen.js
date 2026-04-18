@@ -6,7 +6,9 @@ import {
     StyleSheet,
     TouchableOpacity,
     RefreshControl,
-    StatusBar
+    StatusBar,
+    Linking,
+    Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -26,8 +28,11 @@ import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
 
+const IS_DEV = __DEV__;
+
 const MapPreview = React.memo(({ points, mapRef, navigation }) => {
     const latestPoint = points[0];
+    const [isMapReady, setIsMapReady] = useState(false);
     
     const centerOnLatest = () => {
         if (!latestPoint || !mapRef.current) return;
@@ -48,11 +53,45 @@ const MapPreview = React.memo(({ points, mapRef, navigation }) => {
         }
     };
 
+    const openInGoogleMaps = () => {
+        if (!latestPoint) return;
+        const { latitude, longitude } = latestPoint;
+        const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+        Linking.openURL(url).catch(() => {
+            Alert.alert('Error', 'Could not open maps');
+        });
+    };
+
+    const formatCoords = (point) => ({
+        latitude: Number(point.latitude),
+        longitude: Number(point.longitude)
+    });
+
+    const routeCoordinates = points.map(formatCoords).reverse();
+
+    // Auto-center on latest point when map is ready
+    const onMapReady = () => {
+        if (!isMapReady && latestPoint && mapRef.current) {
+            setIsMapReady(true);
+            setTimeout(() => {
+                if (mapRef.current && latestPoint) {
+                    mapRef.current.animateToRegion({
+                        latitude: latestPoint.latitude,
+                        longitude: latestPoint.longitude,
+                        latitudeDelta: 0.02,
+                        longitudeDelta: 0.02
+                    }, 500);
+                }
+            }, 100);
+        }
+    };
+
     return (
         <View style={styles.mapContainer}>
             <MapView
                 ref={mapRef}
                 style={{ flex: 1, width: '100%', height: '100%' }}
+                onMapReady={onMapReady}
                 initialRegion={{
                     latitude: latestPoint?.latitude || 23.0225,
                     longitude: latestPoint?.longitude || 72.5714,
@@ -60,26 +99,38 @@ const MapPreview = React.memo(({ points, mapRef, navigation }) => {
                     longitudeDelta: 0.05,
                 }}
             >
-                {latestPoint && <Marker coordinate={latestPoint} pinColor="red" />}
-                {points.length > 1 && (
+                {routeCoordinates.length > 0 && (
                     <>
-                        <Marker coordinate={points[points.length - 1]} pinColor="green" />
-                        <Polyline coordinates={[...points].reverse()} strokeWidth={4} strokeColor={colors.info} />
+                        <Polyline 
+                            coordinates={routeCoordinates} 
+                            strokeWidth={4} 
+                            strokeColor={colors.primary} 
+                        />
+                        {routeCoordinates.map((coord, index) => (
+                            <Marker 
+                                key={index}
+                                coordinate={coord}
+                                pinColor={index === routeCoordinates.length - 1 ? colors.danger : colors.success}
+                            />
+                        ))}
                     </>
                 )}
             </MapView>
             
             <View style={styles.mapControls}>
                 <TouchableOpacity style={styles.controlBtn} onPress={centerOnLatest} activeOpacity={0.8}>
-                    <Icon name="crosshair" size={18} color={colors.primary} />
+                    <Icon name="map-pin" size={18} color={colors.danger} />
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.controlBtn, styles.controlBtnLast]} onPress={fitAll} activeOpacity={0.8}>
+                <TouchableOpacity style={styles.controlBtn} onPress={fitAll} activeOpacity={0.8}>
                     <Icon name="maximize-2" size={18} color={colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.controlBtn} onPress={openInGoogleMaps} activeOpacity={0.8}>
+                    <Icon name="navigation" size={18} color={colors.primary} />
                 </TouchableOpacity>
             </View>
 
             <TouchableOpacity style={styles.mapCta} onPress={() => navigation.navigate('RouteMap')} activeOpacity={0.8}>
-                <Icon name="maximize-2" size={14} color="#FFFFFF" />
+                <Icon name="maximize" size={14} color="#FFFFFF" />
                 <Text style={styles.mapCtaText}>View Full Route</Text>
             </TouchableOpacity>
         </View>
@@ -88,7 +139,7 @@ const MapPreview = React.memo(({ points, mapRef, navigation }) => {
 
 const DashboardScreen = ({ navigation }) => {
     const auth = useAuth();
-    const { token, logout } = auth;
+    const { logout } = auth;
     const user = auth?.user;
     const mapRef = useRef(null);
 
@@ -97,56 +148,58 @@ const DashboardScreen = ({ navigation }) => {
     const [hasError, setHasError] = useState(false);
     const [summary, setSummary] = useState({});
     const [punches, setPunches] = useState([]);
-    const [isOnline, setIsOnline] = useState(true);
     const [isGpsActive, setIsGpsActive] = useState(false);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
 
-    const checkNetwork = useCallback(async () => {
-        try {
-            const controller = new AbortController();
-            await fetch('https://www.google.com/favicon.ico', { method: 'HEAD', signal: controller.signal });
-            setIsOnline(true);
-        } catch { setIsOnline(false); }
-    }, []);
-
     const fetchData = useCallback(async (isRefresh = false) => {
-        if (!token) return;
         try {
             setHasError(false);
             if (!isRefresh) setIsLoading(true);
-            await checkNetwork();
 
             const cachedSummary = await AsyncStorage.getItem('@dashboard_summary');
             const cachedPunches = await AsyncStorage.getItem('@dashboard_punches');
             if (cachedSummary) setSummary(JSON.parse(cachedSummary));
             if (cachedPunches) setPunches(JSON.parse(cachedPunches));
 
-            const [summaryRes, punchRes] = await Promise.all([
-                api.get(`/attendance/punches/daily_summary/?t=${Date.now()}`),
-                api.get(`/attendance/punches/today_punches/?t=${Date.now()}`),
-            ]);
+            try {
+                const [summaryRes, punchRes] = await Promise.all([
+                    api.get(`/attendance/punches/daily_summary/`),
+                    api.get(`/attendance/punches/today_punches/`),
+                ]);
 
-            const liveSummary = summaryRes?.data || {};
-            const livePunches = punchRes?.data?.results || punchRes?.data || [];
-            setSummary(liveSummary);
-            setPunches(livePunches);
-            setIsGpsActive(livePunches.length > 0);
+                const liveSummary = summaryRes?.data || {};
+                const livePunches = punchRes?.data?.results || punchRes?.data || [];
+                setSummary(liveSummary);
+                setPunches(livePunches);
+                setIsGpsActive(livePunches.length > 0);
 
-            AsyncStorage.setItem('@dashboard_summary', JSON.stringify(liveSummary));
-            AsyncStorage.setItem('@dashboard_punches', JSON.stringify(livePunches));
-        } catch {
-            setHasError(true);
+                AsyncStorage.setItem('@dashboard_summary', JSON.stringify(liveSummary));
+                AsyncStorage.setItem('@dashboard_punches', JSON.stringify(livePunches));
+            } catch (apiError) {
+                if (IS_DEV) console.log('[Dashboard] API error:', apiError?.message || apiError);
+                // If session expired, try to use cached data
+                if (apiError?.message?.includes('Session expired') || apiError?.message?.includes('login')) {
+                    // Keep cached data, just show refresh needed
+                    if (IS_DEV) console.log('[Dashboard] Session expired, using cached data');
+                } else {
+                    // Other API error - keep showing error
+                    setHasError(true);
+                }
+            }
+        } catch (error) {
+            if (IS_DEV) console.log('[Dashboard] Fetch error:', error?.message);
+            if (!summary || !punches) {
+                setHasError(true);
+            }
         } finally {
             setIsLoading(false);
             setIsRefreshing(false);
         }
-    }, [token, checkNetwork]);
+    }, []);
 
     useFocusEffect(useCallback(() => {
         fetchData(false);
-        const interval = setInterval(checkNetwork, 30000);
-        return () => clearInterval(interval);
-    }, [fetchData, checkNetwork]));
+    }, [fetchData]));
 
     const onRefresh = useCallback(() => {
         setIsRefreshing(true);
@@ -162,7 +215,7 @@ const DashboardScreen = ({ navigation }) => {
 
     const routePoints = useMemo(() =>
         punches.filter(p => p.latitude && p.longitude)
-            .sort((a, b) => new Date(b.punched_at) - new Date(a.punched_at))
+            .sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
             .map(p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) })),
         [punches]
     );
@@ -207,9 +260,9 @@ const DashboardScreen = ({ navigation }) => {
                                         <Text style={styles.roleText}>EMPLOYEE</Text>
                                     </View>
                                     <View style={styles.statusBadge}>
-                                        <View style={[styles.statusDot, { backgroundColor: !isOnline ? colors.textMuted : isGpsActive ? colors.info : colors.success }]} />
-                                        <Text style={[styles.statusText, { color: !isOnline ? colors.textMuted : isGpsActive ? colors.info : colors.success }]}>
-                                            {!isOnline ? 'Offline' : isGpsActive ? 'Tracking' : 'Online'}
+                                        <View style={[styles.statusDot, { backgroundColor: isGpsActive ? colors.info : colors.success }]} />
+                                        <Text style={[styles.statusText, { color: isGpsActive ? colors.info : colors.success }]}>
+                                            {isGpsActive ? 'Active' : 'Ready'}
                                         </Text>
                                     </View>
                                 </View>
@@ -253,7 +306,7 @@ const DashboardScreen = ({ navigation }) => {
                 />
             </View>
         </>
-    ), [user, logout, isOnline, isGpsActive, hasError, isLoading, statsData, routePoints, navigation, fetchData, activities, selectedFilter]);
+    ), [user, logout, isGpsActive, hasError, isLoading, statsData, routePoints, navigation, fetchData, activities, selectedFilter]);
 
     const renderItem = useCallback(({ item }) => {
         if (item.type === 'sectionHeader') {
@@ -399,9 +452,8 @@ const styles = StyleSheet.create({
     contentSection: { paddingHorizontal: spacing.md, marginTop: spacing.lg },
     mapContainer: { height: 160, marginTop: spacing.md, marginHorizontal: spacing.md, borderRadius: borderRadius.md, overflow: 'hidden', ...shadows.sm },
     map: { flex: 1 },
-    mapControls: { position: 'absolute', top: spacing.xs, right: spacing.xs, backgroundColor: colors.surface, borderRadius: borderRadius.sm, ...shadows.sm },
+    mapControls: { position: 'absolute', top: spacing.xs, right: spacing.xs, backgroundColor: colors.surface, borderRadius: borderRadius.sm, flexDirection: 'column', ...shadows.sm },
     controlBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 1, borderBottomColor: colors.divider },
-    controlBtnLast: { borderBottomWidth: 0 },
     mapCta: { position: 'absolute', bottom: spacing.xs, right: spacing.xs, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.primary, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.sm },
     mapCtaText: { color: '#FFFFFF', fontSize: 10, fontWeight: typography.weights.semibold, marginLeft: 4 },
     sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.lg, marginBottom: spacing.sm, paddingHorizontal: spacing.md },

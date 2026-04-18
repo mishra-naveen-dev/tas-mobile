@@ -8,7 +8,6 @@ const getBaseURL = () => {
     return PROD_URL;
 };
 
-// Generate stable device fingerprint
 const generateDeviceFingerprint = async () => {
     try {
         const uniqueId = await DeviceInfo.getUniqueId();
@@ -16,10 +15,8 @@ const generateDeviceFingerprint = async () => {
         const manufacturer = await DeviceInfo.getManufacturer();
         const systemVersion = await DeviceInfo.getSystemVersion();
         
-        // Create fingerprint from hardware info
         const fingerprint = `${uniqueId}|${model}|${manufacturer}|${systemVersion}`;
         
-        // Simple hash
         let hash = 0;
         for (let i = 0; i < fingerprint.length; i++) {
             const char = fingerprint.charCodeAt(i);
@@ -72,6 +69,10 @@ const getDeviceInfo = async () => {
     }
 };
 
+const clearAuthData = async () => {
+    await AsyncStorage.multiRemove(['access', 'refresh', 'user', 'device_id', 'device_fingerprint', 'device_info']);
+};
+
 const api = axios.create({
     baseURL: getBaseURL(),
 });
@@ -109,7 +110,10 @@ api.interceptors.response.use(
             try {
                 const refresh = await AsyncStorage.getItem('refresh');
 
-                if (!refresh) throw new Error("No refresh token");
+                if (!refresh) {
+                    console.log("No refresh token - need to login");
+                    return Promise.reject(new Error("Session expired. Please login again."));
+                }
 
                 const res = await axios.post(
                     `${getBaseURL()}/auth/token/refresh/`,
@@ -125,9 +129,9 @@ api.interceptors.response.use(
                 return api(originalRequest);
 
             } catch (err) {
-                console.log("Refresh failed:", err);
+                console.log("Refresh failed:", err?.message);
                 await clearAuthData();
-                return Promise.reject(err);
+                return Promise.reject(new Error("Session expired. Please login again."));
             }
         }
 
@@ -147,37 +151,6 @@ api.interceptors.response.use(
         return Promise.reject(error);
     }
 );
-
-const clearAuthData = async () => {
-    await AsyncStorage.multiRemove(['access', 'refresh', 'user', 'device_id', 'device_fingerprint', 'device_info']);
-};
-
-// ================= Role-based API methods =================
-
-// Admin APIs
-api.getAllEmployees = () => api.get('/organization/users/?role=EMPLOYEE');
-api.getEmployeeTracking = () => api.get('/tracking/employees/');
-api.getAllPunches = (params) => api.get('/attendance/punches/', { params });
-api.getAllAllowanceRequests = (params) => api.get('/allowance/requests/', { params });
-api.approveAllowance = (id, status) => api.patch(`/allowance/requests/${id}/`, { status });
-api.getCorrectionRequests = () => api.get('/attendance/correction-requests/');
-api.approveCorrection = (id, status) => api.patch(`/attendance/correction-requests/${id}/`, { status });
-api.getDevices = (params) => api.get('/organization/devices/', { params });
-api.approveDevice = (id, status) => api.patch(`/organization/devices/${id}/`, { status });
-api.blockDevice = (id) => api.post(`/organization/devices/${id}/block/`);
-
-// Super Admin APIs
-api.getAllUsers = (params) => api.get('/organization/users/', { params });
-api.createUser = (data) => api.post('/organization/users/', data);
-api.updateUser = (id, data) => api.patch(`/organization/users/${id}/`, data);
-api.deleteUser = (id) => api.delete(`/organization/users/${id}/`);
-api.getApprovalRoutes = () => api.get('/organization/approval-routes/');
-api.createApprovalRoute = (data) => api.post('/organization/approval-routes/', data);
-api.getOrganizationStats = () => api.get('/organization/users/stats/');
-
-// Employee APIs
-api.getMyDevices = () => api.get('/organization/devices/my_devices/');
-api.requestDeviceBinding = (data) => api.post('/organization/devices/request/', data);
 
 api.createPunchRecord = (data) => {
     const payload = {
@@ -213,42 +186,6 @@ api.punchOut = (punchId, data = {}) => {
     return api.post('/attendance/punches/', payload);
 };
 
-// Punch validation helper
-api.validatePunchPayload = (data) => {
-    const errors = [];
-
-    if (!data) {
-        errors.push('Data is required');
-        return { valid: false, errors };
-    }
-
-    if (!data.latitude || typeof data.latitude !== 'number') {
-        errors.push('Valid latitude is required');
-    }
-
-    if (!data.longitude || typeof data.longitude !== 'number') {
-        errors.push('Valid longitude is required');
-    }
-
-    if (!data.visit_type) {
-        errors.push('Visit type is required');
-    }
-
-    if (data.latitude && (data.latitude < -90 || data.latitude > 90)) {
-        errors.push('Latitude must be between -90 and 90');
-    }
-
-    if (data.longitude && (data.longitude < -180 || data.longitude > 180)) {
-        errors.push('Longitude must be between -180 and 180');
-    }
-
-    if (data.amount && typeof data.amount !== 'number') {
-        errors.push('Amount must be a number');
-    }
-
-    return { valid: errors.length === 0, errors };
-};
-
 api.getDailySummary = () => {
     return api.get('/attendance/punches/daily_summary/');
 };
@@ -257,118 +194,85 @@ api.getTodayPunches = () => {
     return api.get('/attendance/punches/today_punches/');
 };
 
-api.getPunchHistory = () => {
-    return api.get('/attendance/punches/');
+api.getPunchHistory = (params = {}) => {
+    return api.get('/attendance/punches/', { params });
 };
 
-api.getHistoricalSummary = (dateStr) => {
-    return api.get(`/attendance/punches/daily_summary/?date=${dateStr}`);
+api.createCorrectionRequest = (data) => {
+    return api.post('/attendance/correction-requests/', data);
 };
 
-api.getAllowanceHistory = () => {
-    return api.get('/allowance/requests/');
+api.getMyCorrectionRequests = () => {
+    return api.get('/attendance/correction-requests/my_requests/');
 };
 
-api.getDeviceId = getDeviceId;
-api.getPlatform = getPlatform;
+api.createAllowanceRequest = (data) => {
+    return api.post('/allowance/requests/', data);
+};
 
-// ================= Employee APIs =================
+api.getAllowanceHistory = (params = {}) => {
+    return api.get('/allowance/requests/', { params });
+};
 
-// Correction Requests (New system)
-api.getMyCorrectionRequests = () => api.get('/attendance/correction-requests/my_requests/');
-api.createCorrectionRequest = (data) => api.post('/attendance/correction-requests/', data);
-api.getCorrectionRequests = (params) => api.get('/attendance/correction-requests/', { params });
-api.getPendingCorrections = () => api.get('/attendance/correction-requests/pending/');
-api.reviewCorrection = (id, action, comment) => api.post(`/attendance/correction-requests/${id}/review/`, { action, comment });
-api.getCorrectionSettings = () => api.get('/attendance/correction-settings/');
+api.getUserProfile = () => {
+    return api.get('/organization/users/me/');
+};
 
-// Legacy Corrections
-api.getCorrections = (params) => api.get('/attendance/corrections/', { params });
-api.createCorrection = (data) => api.post('/attendance/corrections/', data);
+api.updateUserProfile = (data) => {
+    return api.patch('/organization/users/me/', data);
+};
 
-// Allowance
-api.createAllowanceRequest = (data) => api.post('/allowance/requests/', data);
-api.getAllowanceRequests = (params) => api.get('/allowance/requests/', { params });
-api.approveAllowanceRequest = (id) => api.post(`/allowance/requests/${id}/approve/`);
-api.rejectAllowanceRequest = (id, data) => api.post(`/allowance/requests/${id}/reject/`, data);
+api.changePassword = (currentPassword, newPassword) => {
+    return api.post('/auth/change-password/', {
+        old_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: newPassword,
+    });
+};
 
-// Tracking Routes
-api.getDailyRoute = (employeeId, params) => api.get(`/tracking/routes/daily/${employeeId}/`, { params });
-api.getRouteHistory = (params) => api.get('/tracking/routes/history/', params);
-api.getRouteDetail = (sessionId) => api.get(`/tracking/routes/detail/${sessionId}/`);
+api.getAllEmployees = (params = {}) => {
+    return api.get('/organization/users/', { params });
+};
 
-// Address
-api.getAddressSuggestions = (query, limit = 5) => api.get('/attendance/address/suggestions/', { q: query, limit });
-api.getAddressDetails = (placeId) => api.get(`/attendance/address/details/${placeId}/`);
+api.getDevices = (params = {}) => {
+    return api.get('/organization/devices/', { params });
+};
 
-// Organization
-api.getCurrentUser = () => api.get('/organization/users/me/');
-api.getUserProfile = () => api.get('/organization/profile-update/');
-api.getNotifications = (params) => api.get('/organization/notifications/', { params });
-api.markNotificationRead = (id) => api.post(`/organization/notifications/${id}/mark_read/`);
+api.getOrganizationStats = () => {
+    return api.get('/organization/users/stats/');
+};
 
-// Sessions
-api.getMySessions = () => api.get('/organization/sessions/my_sessions/');
-api.getActiveSession = () => api.get('/organization/sessions/active_session/');
-api.terminateSession = (id) => api.post(`/organization/sessions/${id}/terminate/`);
-
-// ================= Data Processing Utilities =================
-
-api.processData = {
-    generateKey: (item, prefix = 'item', index = 0) => {
-        const id = item?.id;
-        const timestamp = item?.punched_at || item?.created_at || item?.updated_at;
-        const keyId = id ? `${prefix}_${id}` : null;
-        const keyTime = timestamp ? `${prefix}_${timestamp}` : null;
-        return keyId || keyTime || `${prefix}_${index}_${Date.now()}`;
-    },
-
-    deduplicateById: (items) => {
-        if (!Array.isArray(items)) return [];
-        const seen = new Set();
-        return items.filter(item => {
-            if (item?.id == null) return true;
-            if (seen.has(item.id)) {
-                console.warn('[api] Duplicate ID found:', item.id);
-                return false;
-            }
-            seen.add(item.id);
-            return true;
-        });
-    },
-
-    deduplicateByKey: (items, keyFn) => {
-        if (!Array.isArray(items)) return [];
-        const seen = new Set();
-        return items.filter((item, index) => {
-            const key = keyFn(item, index);
-            if (seen.has(key)) {
-                console.warn('[api] Duplicate key found:', key);
-                return false;
-            }
-            seen.add(key);
-            return true;
-        });
-    },
-
-    normalizeList: (response, options = {}) => {
-        const { keyField = 'id', deduplicate = true } = options;
-        let data = response?.data;
-
-        if (!data) return [];
-        if (Array.isArray(data?.results)) data = data.results;
-        if (!Array.isArray(data)) data = [data];
-
-        const items = data.filter(Boolean);
-
-        if (deduplicate) {
-            return api.processData.deduplicateByKey(items, (item, idx) =>
-                item[keyField] != null ? `${item[keyField]}` : `idx_${idx}_${item.punched_at || item.created_at || Date.now()}`
-            );
+api.login = async (username, password) => {
+    const deviceId = await getDeviceId();
+    const platform = getPlatform();
+    
+    return api.post('/auth/token/', {
+        username,
+        password,
+    }, {
+        headers: {
+            'X-DEVICE-ID': deviceId,
+            'X-PLATFORM': platform,
         }
+    });
+};
 
-        return items;
-    }
+api.refreshToken = async (refreshToken) => {
+    return api.post('/auth/token/refresh/', {
+        refresh: refreshToken
+    });
+};
+
+api.logout = async () => {
+    return api.post('/auth/logout/');
+};
+
+api.changePassword = async (oldPassword, newPassword) => {
+    return api.post('/auth/change-password/', {
+        old_password: oldPassword,
+        new_password: newPassword,
+        confirm_password: newPassword,
+    });
 };
 
 export default api;
