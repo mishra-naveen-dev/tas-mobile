@@ -45,12 +45,6 @@ const SuperAdminHomeScreen = ({ navigation }) => {
                     style: 'destructive',
                     onPress: async () => {
                         await auth.logout();
-                        if (auth.navigationRef?.current) {
-                            auth.navigationRef.current.reset({
-                                index: 0,
-                                routes: [{ name: 'Login' }],
-                            });
-                        }
                     },
                 },
             ]

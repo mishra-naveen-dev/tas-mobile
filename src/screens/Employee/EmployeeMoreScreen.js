@@ -18,12 +18,6 @@ const EmployeeMoreScreen = ({ navigation }) => {
 
     const handleLogout = () => {
         auth.logout();
-        if (auth.navigationRef?.current) {
-            auth.navigationRef.current.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-            });
-        }
     };
 
     const MenuItem = ({ title, subtitle, icon, color, onPress }) => (

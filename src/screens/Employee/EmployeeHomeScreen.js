@@ -235,17 +235,6 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     onPress: async () => {
                         try {
                             await logout();
-                            if (auth.navigationRef?.current) {
-                                auth.navigationRef.current.reset({
-                                    index: 0,
-                                    routes: [{ name: 'Login' }],
-                                });
-                            } else if (navigation) {
-                                navigation.reset({
-                                    index: 0,
-                                    routes: [{ name: 'Login' }],
-                                });
-                            }
                         } catch (err) {
                             if (IS_DEV) console.error('[Home] Logout error:', err);
                         }
