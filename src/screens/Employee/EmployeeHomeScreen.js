@@ -146,6 +146,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [summary, setSummary] = useState({});
+    const [correctionSummary, setCorrectionSummary] = useState({});
     const [punches, setPunches] = useState([]);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
 
@@ -190,18 +191,21 @@ const EmployeeHomeScreen = ({ navigation }) => {
         try {
             if (!isRefresh) setIsLoading(true);
 
-            const [summaryRes, punchRes] = await Promise.all([
+            const [summaryRes, punchRes, correctionRes] = await Promise.all([
                 api.get('/attendance/punches/daily_summary/'),
                 api.get('/attendance/punches/today_punches/'),
-            ]).catch(() => [null, null]);
+                api.getCorrectionCounts(),
+            ]).catch(() => [null, null, null]);
 
             if (!isMountedRef.current) return;
 
             const liveSummary = summaryRes?.data || {};
             const livePunches = punchRes?.data?.results || punchRes?.data || [];
-            
+            const correctionCounts = correctionRes || {};
+
             setSummary(liveSummary);
             setPunches(livePunches);
+            setCorrectionSummary(correctionCounts);
         } catch (err) {
             if (IS_DEV) console.error('[Home] Fetch error:', err);
         } finally {
@@ -250,6 +254,12 @@ const EmployeeHomeScreen = ({ navigation }) => {
         { id: 'collected', icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
         { id: 'disbursement', icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.danger, bgColor: colors.dangerLight, prefix: '₹' },
     ], [summary]);
+
+    const correctionCounts = useMemo(() => ({
+        pending: correctionSummary?.pending || 0,
+        approved: correctionSummary?.approved || 0,
+        rejected: correctionSummary?.rejected || 0,
+    }), [correctionSummary]);
 
     const allPunches = useMemo(() => {
         const combined = [...(punches || []), ...(todayPunches || [])];
@@ -388,6 +398,29 @@ const EmployeeHomeScreen = ({ navigation }) => {
                             </View>
                         </View>
                     </>
+                )}
+
+                {correctionCounts.total > 0 && (
+                    <View style={styles.correctionWidget}>
+                        <View style={styles.correctionHeader}>
+                            <Icon name="edit-3" size={16} color={colors.text} />
+                            <Text style={styles.correctionTitle}>My Requests</Text>
+                        </View>
+                        <View style={styles.correctionStats}>
+                            <View style={styles.correctionStat}>
+                                <Text style={styles.correctionCount}>{correctionCounts.pending}</Text>
+                                <Text style={[styles.correctionLabel, { color: colors.warning }]}>Pending</Text>
+                            </View>
+                            <View style={styles.correctionStat}>
+                                <Text style={styles.correctionCount}>{correctionCounts.approved}</Text>
+                                <Text style={[styles.correctionLabel, { color: colors.success }]}>Approved</Text>
+                            </View>
+                            <View style={styles.correctionStat}>
+                                <Text style={styles.correctionCount}>{correctionCounts.rejected}</Text>
+                                <Text style={[styles.correctionLabel, { color: colors.danger }]}>Rejected</Text>
+                            </View>
+                        </View>
+                    </View>
                 )}
 
                 <View style={styles.statsSection}>
@@ -611,6 +644,39 @@ const styles = StyleSheet.create({
         color: colors.textMuted,
         marginTop: spacing.sm,
         textAlign: 'center',
+    },
+    correctionWidget: {
+        backgroundColor: colors.surface,
+        borderRadius: 14,
+        padding: spacing.md,
+        marginTop: spacing.sm,
+    },
+    correctionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: spacing.sm,
+    },
+    correctionTitle: {
+        fontSize: typography.sizes.base,
+        fontWeight: typography.weights.semibold,
+        color: colors.text,
+        marginLeft: spacing.sm,
+    },
+    correctionStats: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+    },
+    correctionStat: {
+        alignItems: 'center',
+    },
+    correctionCount: {
+        fontSize: typography.sizes.xl,
+        fontWeight: typography.weights.bold,
+        color: colors.text,
+    },
+    correctionLabel: {
+        fontSize: typography.sizes.xs,
+        marginTop: 2,
     },
 });
 

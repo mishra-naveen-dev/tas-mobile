@@ -75,6 +75,7 @@ const clearAuthData = async () => {
 
 const api = axios.create({
     baseURL: getBaseURL(),
+    timeout: 30000, // 30 seconds timeout
 });
 
 api.interceptors.request.use(async (config) => {
@@ -99,10 +100,30 @@ api.interceptors.response.use(
     (response) => response,
     async (error) => {
         const originalRequest = error.config;
+        const status = error.response?.status;
+        const errorData = error.response?.data;
+
+        console.log('[API] Error:', status, errorData);
+
+        // Handle 502 Bad Gateway - server issue
+        if (status === 502) {
+            console.log('[API] 502 Bad Gateway - backend issue');
+            return Promise.reject(new Error("Server temporarily unavailable. Please try again later."));
+        }
+
+        // Handle 503 Service Unavailable
+        if (status === 503) {
+            return Promise.reject(new Error("Service unavailable. Please try again later."));
+        }
+
+        // Handle 504 Gateway Timeout
+        if (status === 504) {
+            return Promise.reject(new Error("Request timeout. Please check your connection."));
+        }
 
         // Check for 401 Unauthorized (token expired)
         if (
-            error.response?.status === 401 &&
+            status === 401 &&
             !originalRequest._retry &&
             !originalRequest.url.includes('/auth/token/')
         ) {
@@ -146,32 +167,12 @@ api.interceptors.response.use(
             }
         }
 
-        // Handle 403 errors (device, permissions)
-        if (error.response?.status === 403) {
-            const errorCode = error.response?.data?.code;
-            const errorMsg = error.response?.data?.error || error.response?.data?.detail;
-            
-            console.log("[API] 403 Error:", errorCode, errorMsg);
-            
-            if (errorCode === 'DEVICE_NOT_BINDED' || errorCode === 'DEVICE_ID_REQUIRED') {
-                await AsyncStorage.removeItem('device_id');
-                await clearAuthData();
-            }
-            
-            if (errorCode === 'PLATFORM_NOT_ALLOWED') {
-                console.warn('This action is only available on desktop/web platform.');
-            }
-            
-            // Return the actual error message for 403
-            return Promise.reject(new Error(errorMsg || "Access denied"));
-        }
-
-        // Handle other errors (500, network, etc.)
-        if (error.response?.status >= 500) {
-            console.log("[API] Server error:", error.response?.status, error.response?.data);
-        }
-
-        return Promise.reject(error);
+        // Return proper error message
+        const errorMessage = errorData?.error || 
+                         errorData?.detail || 
+                         error.message || 
+                         'Request failed';
+        return Promise.reject(new Error(errorMessage));
     }
 );
 
@@ -227,6 +228,76 @@ api.createCorrectionRequest = (data) => {
 
 api.getMyCorrectionRequests = () => {
     return api.get('/attendance/correction-requests/my_requests/');
+};
+
+api.getCorrectionCounts = async () => {
+    try {
+        const res = await api.get('/attendance/correction-requests/');
+        let requests = [];
+        if (Array.isArray(res.data)) {
+            requests = res.data;
+        } else if (res.data?.results) {
+            requests = res.data.results;
+        }
+        
+        const counts = {
+            pending: requests.filter(r => r.status === 'PENDING').length,
+            approved: requests.filter(r => r.status?.includes('APPROVED')).length,
+            rejected: requests.filter(r => r.status?.includes('REJECTED')).length,
+            total: requests.length
+        };
+        console.log('[API] Correction counts:', counts);
+        return counts;
+    } catch (err) {
+        console.log('[API] Correction counts error:', err);
+        return { pending: 0, approved: 0, rejected: 0, total: 0 };
+    }
+};
+
+api.getCorrectionRequests = (params = {}) => {
+    return api.get('/attendance/correction-requests/', { params });
+};
+
+api.getPendingCorrectionRequests = () => {
+    return api.get('/attendance/correction-requests/pending/');
+};
+
+api.reviewCorrection = (id, action, comment = '') => {
+    return api.post(`/attendance/correction-requests/${id}/review/`, {
+        action,
+        comment
+    });
+};
+
+api.recalculateDistance = async (fromAddress, toAddress) => {
+    try {
+        const fromRes = await api.get('/attendance/address/suggestions/', { params: { q: fromAddress } });
+        const toRes = await api.get('/attendance/address/suggestions/', { params: { q: toAddress } });
+        
+        const fromLoc = fromRes.data?.[0];
+        const toLoc = toRes.data?.[0];
+        
+        if (fromLoc?.geometry?.location && toLoc?.geometry?.location) {
+            const fromLat = fromLoc.geometry.location.lat;
+            const fromLng = fromLoc.geometry.location.lng;
+            const toLat = toLoc.geometry.location.lat;
+            const toLng = toLoc.geometry.location.lng;
+            
+            const R = 6371;
+            const dLat = (toLat - fromLat) * Math.PI / 180;
+            const dLon = (toLng - fromLng) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(fromLat * Math.PI / 180) * Math.cos(toLat * Math.PI / 180) *
+                    Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            const distance = R * c;
+            
+            return { distance: Math.round(distance * 100) / 100 };
+        }
+        return { distance: 0, error: 'Could not geocode addresses' };
+    } catch (err) {
+        return { distance: 0, error: err.message };
+    }
 };
 
 api.createAllowanceRequest = (data) => {

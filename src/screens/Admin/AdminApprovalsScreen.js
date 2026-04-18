@@ -29,19 +29,41 @@ const AdminApprovalsScreen = ({ navigation }) => {
         }
     };
 
-    const fetchData = useCallback(async () => {
+const fetchData = useCallback(async () => {
         try {
-            const [allowanceRes, correctionRes, deviceRes] = await Promise.all([
-                api.getAllAllowanceRequests({ status: 'PENDING' }),
-                api.getCorrectionRequests({ status: 'PENDING' }),
-                api.getDevices({ status: 'PENDING' })
-            ]);
+            setLoading(true);
+            console.log('[AdminApprovals] Fetching...');
             
-            setAllowances(allowanceRes.data?.results || allowanceRes.data || []);
-            setCorrections(correctionRes.data?.results || correctionRes.data || []);
-            setDevices(deviceRes.data?.results || deviceRes.data || []);
+            // Fetch corrections
+            const correctionRes = await api.get('/attendance/correction-requests/');
+            const correctionData = correctionRes?.data || [];
+            const correctionsList = Array.isArray(correctionData) ? correctionData : (correctionData?.results || []);
+            
+            console.log('[AdminApprovals] Corrections:', correctionsList.length);
+            
+            // Fetch allowances
+            const allowanceRes = await api.get('/allowance/requests/');
+            const allowanceList = allowanceRes?.data || [];
+            const allowancesData = Array.isArray(allowanceList) ? allowanceList : (allowanceList?.results || []);
+            
+            // Fetch devices
+            const deviceRes = await api.get('/organization/devices/');
+            const deviceList = deviceRes?.data || [];
+            const devicesData = Array.isArray(deviceList) ? deviceList : (deviceList?.results || []);
+            
+            // Filter pending for display
+            const pendingCorrections = correctionsList.filter(c => c.status === 'PENDING');
+            const pendingAllowances = allowancesData.filter(a => a.status === 'PENDING');
+            const pendingDevices = devicesData.filter(d => d.status === 'PENDING');
+            
+            setCorrections(pendingCorrections);
+            setAllowances(pendingAllowances);
+            setDevices(pendingDevices);
+            
+            console.log('[AdminApprovals] Pending corrections:', pendingCorrections.length);
         } catch (err) {
-            console.log('Error fetching approvals:', err);
+            console.log('[AdminApprovals] Error:', err);
+            Alert.alert('Error', 'Failed to load');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -57,12 +79,12 @@ const AdminApprovalsScreen = ({ navigation }) => {
         fetchData();
     };
 
-    const handleApprove = async (type, id) => {
+const handleApprove = async (type, id) => {
         try {
             if (type === 'allowance') {
                 await api.approveAllowance(id, 'APPROVED');
             } else if (type === 'correction') {
-                await api.approveCorrection(id, 'APPROVED');
+                await api.reviewCorrection(id, 'APPROVE');
             } else if (type === 'device') {
                 await api.approveDevice(id, 'APPROVED');
             }
@@ -74,20 +96,20 @@ const AdminApprovalsScreen = ({ navigation }) => {
     };
 
     const handleReject = async (type, id) => {
-        Alert.alert(
-            'Confirm Reject',
-            'Are you sure you want to reject?',
+        Alert.prompt(
+            'Reject Request',
+            'Please provide a reason for rejection:',
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
                     text: 'Reject',
                     style: 'destructive',
-                    onPress: async () => {
+                    onPress: async (reason) => {
                         try {
                             if (type === 'allowance') {
                                 await api.approveAllowance(id, 'REJECTED');
                             } else if (type === 'correction') {
-                                await api.approveCorrection(id, 'REJECTED');
+                                await api.reviewCorrection(id, 'REJECT', reason || '');
                             } else if (type === 'device') {
                                 await api.approveDevice(id, 'REJECTED');
                             }
@@ -98,7 +120,54 @@ const AdminApprovalsScreen = ({ navigation }) => {
                         }
                     }
                 }
-            ]
+            ],
+            'plain-default'
+        );
+    };
+
+    const renderCorrectionItem = ({ item }) => {
+        console.log('[AdminApprovals] Rendering correction item:', item);
+        return (
+            <View style={styles.card}>
+                <View style={styles.cardContent}>
+                    <Text style={styles.cardTitle}>
+                        {item.employee_name || item.employee?.first_name || 'Employee'}
+                    </Text>
+                    <Text style={styles.cardSubtitle}>
+                        {item.correction_type} Punch | {item.correction_date} {item.correction_time}
+                    </Text>
+                    <Text style={styles.detailText}>
+                        📍 From: {item.from_address || 'N/A'}
+                    </Text>
+                    {item.to_address ? (
+                        <Text style={styles.detailText}>
+                            📍 To: {item.to_address}
+                        </Text>
+                    ) : null}
+                    <Text style={styles.detailText}>
+                        📏 Distance: {item.calculated_distance || 0} km
+                    </Text>
+                    {item.reason ? (
+                        <Text style={styles.detailText}>
+                            📝 Reason: {item.reason}
+                        </Text>
+                    ) : null}
+                </View>
+                <View style={styles.cardActions}>
+                    <TouchableOpacity
+                        style={[styles.actionBtn, styles.approveBtn]}
+                        onPress={() => handleApprove('correction', item.id)}
+                    >
+                        <Text style={styles.actionBtnText}>Approve</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.actionBtn, styles.rejectBtn]}
+                        onPress={() => handleReject('correction', item.id)}
+                    >
+                        <Text style={styles.actionBtnText}>Reject</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
         );
     };
 
@@ -107,13 +176,13 @@ const AdminApprovalsScreen = ({ navigation }) => {
             <View style={styles.cardContent}>
                 <Text style={styles.cardTitle}>
                     {type === 'allowance' ? `${item.employee_name} - ₹${item.total_amount}` :
-                     type === 'correction' ? `${item.employee_name} - ${item.punch_type}` :
-                     `${item.username} - ${item.device_name}`}
+                     type === 'correction' ? `${item.employee_name} - ${item.correction_type}` :
+                      `${item.username} - ${item.device_name}`}
                 </Text>
                 <Text style={styles.cardSubtitle}>
                     {type === 'allowance' ? `${item.total_distance} km | ${item.travel_date}` :
-                     type === 'correction' ? `${item.punched_at} | ${item.current_address}` :
-                     `${item.platform} | ${item.browser} on ${item.os}`}
+                     type === 'correction' ? `${item.correction_date} | ${item.from_address}` :
+                      `${item.platform} | ${item.browser} on ${item.os}`}
                 </Text>
             </View>
             <View style={styles.cardActions}>
@@ -171,8 +240,13 @@ const AdminApprovalsScreen = ({ navigation }) => {
 
             <FlatList
                 data={currentData}
-                keyExtractor={(item, index) => item.id ? `${currentType}_${item.id}` : `${currentType}-${index}`}
-                renderItem={({ item }) => renderItem({ item, type: currentType })}
+                keyExtractor={(item, index) => item?.id ? String(item.id) : String(index)}
+                renderItem={({ item }) => {
+                    if (currentType === 'correction') {
+                        return renderCorrectionItem({ item });
+                    }
+                    return renderItem({ item, type: currentType });
+                }}
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                 }
