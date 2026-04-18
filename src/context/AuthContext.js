@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 import api from '../api/api';
+import { parseApiError } from '../core/error/AppErrorHandler';
 
 const AuthContext = createContext(null);
 
@@ -85,23 +87,23 @@ export const AuthProvider = ({ children }) => {
 
     const login = useCallback(async (username, password) => {
         try {
-            console.log("[Auth] Attempting login for:", username);
+            console.log('[Auth] Attempting login for:', username);
             
             const response = await api.login(username, password);
-            console.log("[Auth] Login response:", response.status, response.data);
+            console.log('[Auth] Login response:', response.status);
             
             const data = response.data;
-
             const access = data.access;
             const refresh = data.refresh;
             const userData = data.user;
 
             if (!access || !refresh) {
-                console.log("[Auth] Invalid response - missing tokens");
-                throw new Error('Invalid server response: missing tokens');
+                console.log('[Auth] Invalid response - missing tokens');
+                Alert.alert('Login Error', 'Invalid server response. Please try again.');
+                return { success: false, error: 'Invalid server response' };
             }
 
-            console.log("[Auth] Login success! User:", userData?.username);
+            console.log('[Auth] Login success! User:', userData?.username);
 
             await Promise.all([
                 AsyncStorage.setItem(STORAGE_KEYS.ACCESS, access),
@@ -118,33 +120,16 @@ export const AuthProvider = ({ children }) => {
 
             return { success: true, user: userData };
         } catch (error) {
-            console.error('[Auth] Login error:', error);
-            console.error('[Auth] Error response:', error.response?.data);
+            const parsed = parseApiError(error);
+            console.log('[Auth] Login failed:', parsed);
             
-            let errorMessage = 'Login failed';
-            
-            if (error.response?.data) {
-                const responseData = error.response.data;
-                if (responseData.detail) {
-                    errorMessage = responseData.detail;
-                } else if (responseData.non_field_errors) {
-                    errorMessage = responseData.non_field_errors[0];
-                } else if (responseData.error) {
-                    errorMessage = responseData.error;
-                } else if (responseData.username) {
-                    errorMessage = responseData.username[0];
-                } else if (responseData.password) {
-                    errorMessage = responseData.password[0];
-                }
-            } else if (error.message) {
-                errorMessage = error.message;
-            }
-            
-            console.log('[Auth] Error message:', errorMessage);
+            // Show user-friendly error message
+            Alert.alert('Login Failed', parsed.message);
             
             return {
                 success: false,
-                error: errorMessage,
+                error: parsed.message,
+                type: parsed.type,
             };
         }
     }, []);
