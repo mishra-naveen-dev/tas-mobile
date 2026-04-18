@@ -100,6 +100,7 @@ api.interceptors.response.use(
     async (error) => {
         const originalRequest = error.config;
 
+        // Check for 401 Unauthorized (token expired)
         if (
             error.response?.status === 401 &&
             !originalRequest._retry &&
@@ -115,28 +116,42 @@ api.interceptors.response.use(
                     return Promise.reject(new Error("Session expired. Please login again."));
                 }
 
+                console.log("[API] Refreshing token...");
+                
                 const res = await axios.post(
                     `${getBaseURL()}/auth/token/refresh/`,
-                    { refresh }
+                    { refresh: refresh }
                 );
 
-                const newAccess = res.data.access;
+                console.log("[API] Token refresh response:", res.data);
 
+                const newAccess = res.data.access;
+                const newRefresh = res.data.refresh;
+
+                // Update both tokens
                 await AsyncStorage.setItem('access', newAccess);
+                if (newRefresh) {
+                    await AsyncStorage.setItem('refresh', newRefresh);
+                }
 
                 originalRequest.headers.Authorization = `Bearer ${newAccess}`;
 
+                console.log("[API] Token refreshed, retrying request");
                 return api(originalRequest);
 
-            } catch (err) {
-                console.log("Refresh failed:", err?.message);
+            } catch (refreshErr) {
+                console.log("[API] Token refresh failed:", refreshErr?.response?.data || refreshErr?.message);
                 await clearAuthData();
                 return Promise.reject(new Error("Session expired. Please login again."));
             }
         }
 
+        // Handle 403 errors (device, permissions)
         if (error.response?.status === 403) {
             const errorCode = error.response?.data?.code;
+            const errorMsg = error.response?.data?.error || error.response?.data?.detail;
+            
+            console.log("[API] 403 Error:", errorCode, errorMsg);
             
             if (errorCode === 'DEVICE_NOT_BINDED' || errorCode === 'DEVICE_ID_REQUIRED') {
                 await AsyncStorage.removeItem('device_id');
@@ -146,6 +161,14 @@ api.interceptors.response.use(
             if (errorCode === 'PLATFORM_NOT_ALLOWED') {
                 console.warn('This action is only available on desktop/web platform.');
             }
+            
+            // Return the actual error message for 403
+            return Promise.reject(new Error(errorMsg || "Access denied"));
+        }
+
+        // Handle other errors (500, network, etc.)
+        if (error.response?.status >= 500) {
+            console.log("[API] Server error:", error.response?.status, error.response?.data);
         }
 
         return Promise.reject(error);

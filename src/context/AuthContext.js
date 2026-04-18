@@ -85,7 +85,11 @@ export const AuthProvider = ({ children }) => {
 
     const login = useCallback(async (username, password) => {
         try {
+            console.log("[Auth] Attempting login for:", username);
+            
             const response = await api.login(username, password);
+            console.log("[Auth] Login response:", response.status, response.data);
+            
             const data = response.data;
 
             const access = data.access;
@@ -93,8 +97,11 @@ export const AuthProvider = ({ children }) => {
             const userData = data.user;
 
             if (!access || !refresh) {
+                console.log("[Auth] Invalid response - missing tokens");
                 throw new Error('Invalid server response: missing tokens');
             }
+
+            console.log("[Auth] Login success! User:", userData?.username);
 
             await Promise.all([
                 AsyncStorage.setItem(STORAGE_KEYS.ACCESS, access),
@@ -111,7 +118,8 @@ export const AuthProvider = ({ children }) => {
 
             return { success: true, user: userData };
         } catch (error) {
-            console.error('Login error:', error);
+            console.error('[Auth] Login error:', error);
+            console.error('[Auth] Error response:', error.response?.data);
             
             let errorMessage = 'Login failed';
             
@@ -131,6 +139,8 @@ export const AuthProvider = ({ children }) => {
             } else if (error.message) {
                 errorMessage = error.message;
             }
+            
+            console.log('[Auth] Error message:', errorMessage);
             
             return {
                 success: false,
