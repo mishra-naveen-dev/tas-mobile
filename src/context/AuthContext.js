@@ -112,12 +112,29 @@ export const AuthProvider = ({ children }) => {
             return { success: true, user: userData };
         } catch (error) {
             console.error('Login error:', error);
+            
+            let errorMessage = 'Login failed';
+            
+            if (error.response?.data) {
+                const responseData = error.response.data;
+                if (responseData.detail) {
+                    errorMessage = responseData.detail;
+                } else if (responseData.non_field_errors) {
+                    errorMessage = responseData.non_field_errors[0];
+                } else if (responseData.error) {
+                    errorMessage = responseData.error;
+                } else if (responseData.username) {
+                    errorMessage = responseData.username[0];
+                } else if (responseData.password) {
+                    errorMessage = responseData.password[0];
+                }
+            } else if (error.message) {
+                errorMessage = error.message;
+            }
+            
             return {
                 success: false,
-                error: error?.response?.data?.detail || 
-                      error?.response?.data?.non_field_errors?.[0] || 
-                      error?.message || 
-                      'Login failed',
+                error: errorMessage,
             };
         }
     }, []);
