@@ -5,7 +5,7 @@
 
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from './api';
+import api from '../api/api';
 
 const { RNRCTEventSource } = NativeModules;
 
