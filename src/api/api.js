@@ -1,6 +1,7 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform, DeviceInfo } from 'react-native';
+import { Platform } from 'react-native';
+import DeviceInfo from 'react-native-device-info';
 
 const PROD_URL = 'https://tas-backendnew.onrender.com/api/v1';
 
