@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { logger } from '../core/monitoring/Logger';
 
 const GOOGLE_API_KEY = 'AIzaSyDM0WAR3vYxXNqSklb868wEmtDftQvYDkQ';
+export { GOOGLE_API_KEY };
 const GEOCODE_CACHE_PREFIX = '@geocode_cache_';
 const CACHE_DURATION = 24 * 60 * 60 * 1000;
 
@@ -80,6 +81,63 @@ class GeocodingService {
       logger.error('Forward geocode error', { error });
       return null;
     }
+  }
+
+  static async calculateDistance(fromAddress, toAddress) {
+    try {
+      // Geocode both addresses
+      const [fromResult, toResult] = await Promise.all([
+        this.forwardGeocode(fromAddress),
+        this.forwardGeocode(toAddress)
+      ]);
+
+      if (!fromResult?.latitude || !toResult?.latitude) {
+        console.log('[DistanceCalc] Could not geocode addresses');
+        return 0;
+      }
+
+      // Use Google Distance Matrix API
+      const fromLoc = `${fromResult.latitude},${fromResult.longitude}`;
+      const toLoc = `${toResult.latitude},${toResult.longitude}`;
+
+      const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${fromLoc}&destinations=${toLoc}&mode=driving&key=${GOOGLE_API_KEY}`;
+
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.status === 'OK' && data.rows?.length > 0 && data.rows[0].elements?.length > 0) {
+        const element = data.rows[0].elements[0];
+        if (element.status === 'OK') {
+          // Distance in meters, convert to km
+          const distanceKm = element.distance.value / 1000;
+          console.log('[DistanceCalc] Google API:', distanceKm, 'km');
+          return Math.round(distanceKm * 100) / 100;
+        }
+      }
+
+      // Fallback: Haversine formula
+      const haversineDistance = this.calculateHaversine(
+        fromResult.latitude, fromResult.longitude,
+        toResult.latitude, toResult.longitude
+      );
+      console.log('[DistanceCalc] Haversine fallback:', haversineDistance, 'km');
+      return haversineDistance;
+
+    } catch (error) {
+      console.log('[DistanceCalc] Error:', error.message);
+      return 0;
+    }
+  }
+
+  static calculateHaversine(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c * 100) / 100;
   }
 
   static parseGeocodeResult(result, latitude, longitude) {

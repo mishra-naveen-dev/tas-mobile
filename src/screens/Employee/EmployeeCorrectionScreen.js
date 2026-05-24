@@ -24,16 +24,34 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
+    const [error, setError] = useState('');
 
     const fetchCorrections = useCallback(async () => {
         try {
-            const res = await api.getMyCorrectionRequests();
-            const rawData = Array.isArray(res.data) ? res.data : (res.data?.results || res.data || []);
-            const processedData = api.processData.normalizeList(res, { keyField: 'id' });
-            console.log('[Corrections] Raw:', rawData.length, 'Processed:', processedData.length);
-            setCorrections(processedData);
+            console.log('[Correction] Fetching corrections...');
+            setLoading(true);
+            setError('');
+            
+            const res = await api.get('/attendance/correction-requests/');
+            console.log('[Correction] Response status:', res.status);
+            console.log('[Correction] Response data type:', typeof res.data);
+            console.log('[Correction] Response data:', JSON.stringify(res.data, null, 2).substring(0, 1500));
+            
+            if (res.data && typeof res.data === 'object') {
+                if (Array.isArray(res.data)) {
+                    setCorrections(res.data);
+                } else if (Array.isArray(res.data.results)) {
+                    setCorrections(res.data.results);
+                } else {
+                    console.log('[Correction] Unexpected data structure');
+                    setCorrections([]);
+                }
+            } else {
+                setCorrections([]);
+            }
         } catch (err) {
-            console.log('Error fetching corrections:', err);
+            console.log('[Correction] Error:', err);
+            setError('Failed to load corrections');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -51,26 +69,29 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
 
     const handleLogout = () => {
         auth.logout();
-        if (auth.navigationRef?.current) {
-            auth.navigationRef.current.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-            });
-        }
     };
 
     const getStatusColor = (status) => {
-        switch (status?.toUpperCase()) {
-            case 'APPROVED': return colors.success;
-            case 'REJECTED': return colors.danger;
-            case 'PENDING': return colors.warning;
-            default: return colors.textMuted;
-        }
+        if (status?.includes('APPROVED')) return colors.success;
+        if (status?.includes('REJECTED')) return colors.danger;
+        if (status === 'PENDING') return colors.warning;
+        return colors.textMuted;
+    };
+
+    const getStatusLabel = (status) => {
+        if (status === 'PENDING') return '🟡 Pending';
+        if (status === 'ADMIN_APPROVED') return '🟢 Approved by Admin';
+        if (status === 'ADMIN_REJECTED') return '🔴 Rejected by Admin';
+        if (status === 'SUPERADMIN_APPROVED') return '🟢 Approved by Superadmin';
+        if (status === 'SUPERADMIN_REJECTED') return '🔴 Rejected by Superadmin';
+        return status || 'Unknown';
     };
 
     const filteredCorrections = corrections.filter(item => {
         if (selectedFilter === 'ALL') return true;
-        return item.status?.toUpperCase() === selectedFilter;
+        if (selectedFilter === 'APPROVED') return item.status?.includes('APPROVED');
+        if (selectedFilter === 'REJECTED') return item.status?.includes('REJECTED');
+        return item.status === 'PENDING';
     });
 
     const filters = ['ALL', 'PENDING', 'APPROVED', 'REJECTED'];
@@ -98,21 +119,28 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
         <View style={styles.correctionCard}>
             <View style={styles.correctionHeader}>
                 <View style={styles.dateTimeContainer}>
-                    <Text style={styles.correctionDate}>{formatDate(item.requested_at)}</Text>
-                    <Text style={styles.correctionTime}>{formatTime(item.requested_at)}</Text>
+                    <Text style={styles.correctionDate}>{formatDate(item.correction_date || item.requested_at)}</Text>
+                    <Text style={styles.correctionTime}>{formatTime(item.correction_time || item.requested_at)}</Text>
                 </View>
                 <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(item.status)}15` }]}>
                     <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
-                        {item.status || 'PENDING'}
+                        {getStatusLabel(item.status)}
                     </Text>
                 </View>
             </View>
             <View style={styles.correctionBody}>
                 <View style={styles.infoRow}>
-                    <Icon name="clock" size={16} color={colors.textMuted} />
-                    <Text style={styles.infoLabel}>Punch Time:</Text>
-                    <Text style={styles.infoValue}>{item.punch_time || 'N/A'}</Text>
+                    <Icon name="edit-3" size={16} color={colors.textMuted} />
+                    <Text style={styles.infoLabel}>Type:</Text>
+                    <Text style={styles.infoValue}>{item.correction_type || 'N/A'}</Text>
                 </View>
+                {item.calculated_distance > 0 && (
+                    <View style={styles.infoRow}>
+                        <Icon name="navigation" size={16} color={colors.textMuted} />
+                        <Text style={styles.infoLabel}>Distance:</Text>
+                        <Text style={styles.infoValue}>{item.calculated_distance} km</Text>
+                    </View>
+                )}
                 {item.reason && (
                     <View style={styles.infoRow}>
                         <Icon name="message-circle" size={16} color={colors.textMuted} />
@@ -120,11 +148,25 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
                         <Text style={styles.infoValue}>{item.reason}</Text>
                     </View>
                 )}
-                {item.admin_comment && (
+                {item.reviewed_by_name && (
                     <View style={styles.infoRow}>
-                        <Icon name="check-circle" size={16} color={colors.textMuted} />
-                        <Text style={styles.infoLabel}>Admin Comment:</Text>
-                        <Text style={styles.infoValue}>{item.admin_comment}</Text>
+                        <Icon name="user-check" size={16} color={colors.textMuted} />
+                        <Text style={styles.infoLabel}>{item.review_level === 'SUPERADMIN' ? 'Superadmin' : 'Admin'}:</Text>
+                        <Text style={styles.infoValue}>{item.reviewed_by_name}</Text>
+                    </View>
+                )}
+                {item.reviewed_at && (
+                    <View style={styles.infoRow}>
+                        <Icon name="clock" size={16} color={colors.textMuted} />
+                        <Text style={styles.infoLabel}>At:</Text>
+                        <Text style={styles.infoValue}>{formatDate(item.reviewed_at)} {formatTime(item.reviewed_at)}</Text>
+                    </View>
+                )}
+                {item.review_comment && (
+                    <View style={styles.infoRow}>
+                        <Icon name="message-square" size={16} color={colors.textMuted} />
+                        <Text style={styles.infoLabel}>Comment:</Text>
+                        <Text style={styles.infoValue}>{item.review_comment}</Text>
                     </View>
                 )}
             </View>
@@ -168,7 +210,7 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
             <FlatList
                 data={filteredCorrections}
                 renderItem={renderCorrection}
-                keyExtractor={(item, index) => api.processData.generateKey(item, 'correction', index)}
+                keyExtractor={(item, index) => String(item?.id || index)}
                 contentContainerStyle={styles.listContent}
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />

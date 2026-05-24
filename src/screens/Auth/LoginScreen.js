@@ -29,15 +29,6 @@ const LoginScreen = ({ navigation }) => {
     const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    const getHomeRoute = () => {
-        const userData = auth?.user;
-        const role = userData?.role;
-
-        if (role === 'SUPER_ADMIN') return 'SuperAdminTabs';
-        if (role === 'ADMIN') return 'AdminDashboard';
-        return 'EmployeeTabs';
-    };
-
     const handleContactSupport = () => {
         Alert.alert(
             'Contact Support',
@@ -62,13 +53,7 @@ const LoginScreen = ({ navigation }) => {
             const result = await auth.login(username.trim(), password);
 
             if (result.success) {
-                const homeRoute = getHomeRoute();
-                if (auth.navigationRef?.current?.isReady()) {
-                    auth.navigationRef.current.reset({
-                        index: 0,
-                        routes: [{ name: homeRoute }],
-                    });
-                }
+                // Navigation will automatically update based on auth state change
             } else {
                 Alert.alert('Authentication Failed', result.error || 'Login failed. Please check your credentials.');
             }

@@ -594,6 +594,962 @@ After punch action:
 
 ---
 
+# 18. Work Progress & Implementation Log
+
+This section tracks completed work, fixes, and improvements made to the TAS mobile application.
+
+## 18.1 Navigation Reset Error Fix (Completed)
+
+**Issue:** "The action 'RESET' with payload { index: 0, routes: [{ name: 'Login' }] } was not handled by any navigator."
+
+**Root Cause:** Multiple screens were calling `navigationRef.current.reset()` directly on the NavigationContainer ref, which is incorrect for React Navigation v6+.
+
+**Solution:** Removed all manual reset() calls. Navigation now relies on auth state changes in RootNavigator, which conditionally renders based on `isAuthenticated` status.
+
+**Files Modified:**
+- src/screens/Auth/LoginScreen.js
+- src/screens/Employee/EmployeeMoreScreen.js
+- src/screens/Employee/EmployeeHomeScreen.js
+- src/screens/Employee/EmployeeCorrectionScreen.js
+- src/screens/Employee/EmployeeAllowanceScreen.js
+- src/screens/Admin/AdminDashboardScreen.js
+- src/screens/SuperAdmin/SuperAdminHomeScreen.js
+- src/screens/SuperAdmin/SuperAdminDashboardScreen.js
+
+**New Files Added:**
+- src/core/error/AppErrorHandler.js - Enterprise error handling system
+- src/core/api/ApiResponseHandler.js - API response handler
+- docs/punch_feature.md - Correction & Allowance MVP spec
+
+## 18.2 Punch Correction & Allowance MVP
+
+### Backend (Already Implemented)
+- **Models:** CorrectionRequest, AllowanceRequest, AllowanceConfig
+- **APIs:** Full CRUD + review endpoints
+- **Features:** 7-day correction window, Google Geocoding, auto distance calculation, admin review workflow
+
+### Mobile App (Already Implemented)
+- **Screens:** EmployeeCorrectionScreen, PunchCorrectionScreen, EmployeeAllowanceScreen
+- **API Integration:** Ready to use with backend
+
+## 18.3 Build Outputs
+- Debug APK: android/app/build/outputs/apk/debug/app-debug.apk
+- Release APK: android/app-release-v1.2.apk
+
+---
+
+# 19. Punch Correction & Approval System (Enterprise Level)
+
+This section defines a complete enterprise-grade correction and allowance system with strict approval workflow, audit trail, and real-time status visibility.
+
+---
+
+## 19.1 Punch Correction System
+
+### 19.1.1 Edit Punch (Restricted Editing)
+
+Employees can edit existing punches within a controlled time window.
+
+**Rules:**
+
+* Editable only within **0–4 days** from punch date
+* Only specific fields can be edited:
+
+  * loan_id
+  * amount
+  * visit_type
+  * payment_type (cash / UPI / cheque)
+
+**Restrictions:**
+
+* Location, time, and GPS data CANNOT be modified
+* All edits must create a CorrectionRequest (no direct update)
+* Full audit trail required
+
+**Implementation:**
+```python
+# Create CorrectionRequest, do NOT update punch directly
+correction = CorrectionRequest.objects.create(
+    employee=user,
+    correction_type='EDIT',
+    original_punch=punch,
+    requested_changes={'loan_id': 'NEW', 'amount': 5000},
+    status='PENDING'
+)
+```
+
+**Audit Fields Required:**
+* edited_by (FK to User)
+* edited_at (DateTime)
+* old_values (JSON - snapshot before)
+* new_values (JSON - requested changes)
+* reason (Text)
+
+---
+
+### 19.1.2 Delete Punch (Soft Delete Only)
+
+**Rules:**
+
+* Same-day delete → approval required
+* After same day → higher authority approval required
+* NO hard delete allowed
+
+**Required Fields in DB:**
+
+* punch_id (FK)
+* user_id (FK)
+* deleted_by (FK - who requested)
+* approved_by (FK - who approved)
+* deleted_at (DateTime)
+* reason (Text - user's reason for deletion)
+* rejection_reason (Text - if rejected)
+* original_data_snapshot (JSON - full punch data for audit)
+
+**Implementation:**
+```python
+# Soft delete - mark as DELETED, do NOT remove
+punch = AttendancePunch.objects.get(id=punch_id)
+punch.status = 'DELETED'
+punch.deleted_by = user
+punch.deleted_at = now()
+punch.save()
+
+# Store full snapshot for audit
+CorrectionRequest.objects.create(
+    employee=user,
+    correction_type='DELETE',
+    original_punch=punch,
+    original_snapshot=punch.__dict__,  # Full snapshot
+    status='PENDING'
+)
+```
+
+---
+
+### 19.1.3 Add Punch (Missed Punch Entry)
+
+This is a controlled feature for adding missed punches after the fact.
+
+**Input Fields:**
+
+* correction_type: ADD
+* punch_type: PUNCH_IN (only)
+* visit_type: COLLECTION | DISBURSEMENT | null
+* correction_date: DateField
+* correction_time: TimeField
+* from_address: CharField (required)
+* from_pincode: CharField (6 digits)
+* to_address: CharField (optional)
+* to_pincode: CharField (optional)
+* reason: Text (required)
+* travel_with: alone | employee
+* calculated_distance: FloatField (auto-calculated, READ-ONLY)
+
+**Distance Calculation Rules:**
+
+1. **UI:** Distance input field is DISABLED
+2. **Backend:** Uses Google Maps Geocoding API
+3. **Flow:**
+   - User fills addresses → clicks "Calculate Distance"
+   - Backend geocodes addresses
+   - Backend calculates distance
+   - Returns calculated_distance to UI
+   - User reviews → submits request
+
+**Implementation:**
+```python
+# Backend calculates distance - user cannot edit
+from common.services.geocoding import geocode_address, calculate_distance
+
+from_lat, from_lng = geocode_address(from_address)
+to_lat, to_lng = geocode_address(to_address) if to_address else (None, None)
+
+calculated_distance = calculate_distance(from_lat, from_lng, to_lat, to_lng)
+
+# Create request with calculated distance
+correction = CorrectionRequest.objects.create(
+    employee=user,
+    correction_type='ADD',
+    from_address=from_address,
+    from_latitude=from_lat,
+    from_longitude=from_lng,
+    to_address=to_address,
+    to_latitude=to_lat,
+    to_longitude=to_lng,
+    calculated_distance=calculated_distance,
+    status='PENDING'
+)
+```
+
+---
+
+## 19.2 Approval Workflow System
+
+### 19.2.1 Default Flow
+
+```
+User → Admin → Superadmin
+```
+
+**Behavior:**
+
+1. User creates correction request
+2. Request sent to assigned Admin
+3. Admin approves/rejects with reason
+4. If Superadmin override needed → escalated
+
+### 19.2.2 Status Tracking
+
+All requests must track WHO approved/rejected:
+
+**Required Fields:**
+```python
+class CorrectionRequest(models.Model):
+    status = models.CharField(choices=[
+        ('PENDING', 'Pending'),
+        ('ADMIN_APPROVED', 'Approved by Admin'),
+        ('ADMIN_REJECTED', 'Rejected by Admin'),
+        ('SUPERADMIN_APPROVED', 'Approved by Superadmin'),
+        ('SUPERADMIN_REJECTED', 'Rejected by Superadmin'),
+    ])
+
+    # Approval tracking
+    reviewed_by = models.ForeignKey(User, related_name='reviewed_corrections')
+    reviewed_at = models.DateTimeField()
+    review_comment = models.TextField()
+    review_level = models.CharField()  # ADMIN | SUPERADMIN
+
+    # Audit trail
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+```
+
+**Real-Time Status Display:**
+
+Each status change must show:
+- Current status (PENDING/APPROVED/REJECTED)
+- Who made the decision (reviewed_by)
+- When (reviewed_at)
+- Comment/Reason (review_comment)
+- What level (ADMIN/SUPERADMIN)
+
+---
+
+## 19.3 Dynamic Approval Hierarchy
+
+Superadmin has full control over approval routing.
+
+### Capabilities:
+
+1. **Assign Admin to Users:**
+   ```
+   UserA → AdminB
+   UserB → AdminA
+   ```
+
+2. **Multi-Level Chains:**
+   ```
+   UserC → AdminA → Superadmin
+   ```
+
+3. **Dynamic Reassignment:**
+   - Change reflects instantly in approval flow
+   - Only Superadmin can modify
+
+### Implementation:
+```python
+class UserApprovalHierarchy(models.Model):
+    user = models.ForeignKey(User, related_name='approval_chain')
+    admin = models.ForeignKey(User, role='ADMIN')
+    superadmin = models.ForeignKey(User, role='SUPERADMIN')
+    level = models.IntegerField()  # 1, 2, 3
+    is_active = models.BooleanField(default=True)
+
+    # Superadmin sets this per user
+```
+
+---
+
+## 19.4 Approval Window System
+
+Approval windows control when users can submit corrections.
+
+### Default Windows:
+
+| Window | Start | End |
+|--------|-------|-----|
+| First Half | 1st | 15th |
+| Second Half | 16th | End of month |
+
+### Rules:
+
+1. **Active Window:** Users CAN submit requests
+2. **Closed Window:** Users CANNOT submit
+3. **Lock:** After window closes, entries are locked
+
+### Superadmin Controls:
+
+1. Modify date ranges dynamically
+2. Override window for specific users
+3. Extend window if needed
+
+### Implementation:
+```python
+class ApprovalWindow(models.Model):
+    name = models.CharField()  # "First Half Jan 2026"
+    start_date = models.DateField()
+    end_date = models.DateField()
+    is_active = models.BooleanField(default=True)
+
+    # Check if window is active
+    def is_open(self):
+        today = timezone.now().date()
+        return self.is_active and self.start_date <= today <= self.end_date
+```
+
+---
+
+## 19.5 Notification System
+
+### Triggers:
+
+| Trigger | When | Recipients |
+|---------|------|------------|
+| Window Open | 1st / 16th | All users |
+| Window Closing | Day before close | All users |
+| Window Closed | After close | Users with pending requests |
+| Request Approved | Approval happens | User who submitted |
+| Request Rejected | Rejection happens | User who submitted + reason |
+
+### Implementation:
+```python
+class Notification(models.Model):
+    recipient = models.ForeignKey(User)
+    title = models.CharField()
+    message = models.TextField()
+    type = models.CharField()  # WINDOW_OPEN, APPROVED, REJECTED
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField()
+```
+
+---
+
+## 19.6 Enterprise Rules
+
+1. **No Direct Updates:** Every change goes through CorrectionRequest
+2. **Soft Delete Only:** Never hard delete punch records
+3. **Full Audit Trail:** All actions logged with user, timestamp, old/new values
+4. **Backend Distance:** Distance ALWAYS calculated by backend
+5. **Role-Based Access:** Strict enforcement
+6. **Approval Required:** All corrections need approval
+7. **Status Visibility:** Real-time status visible to all roles
+
+---
+
+# 20. Allowance System (Enterprise Logic)
+
+Allowance calculation and application must support both manual and system-driven workflows.
+
+---
+
+## 20.1 Manual Allowance (User Applied)
+
+Based on missed punches or manually added entries by the user.
+
+### Source:
+
+* Added punches (correction_type=ADD)
+* Corrected punch data
+
+### Flow:
+
+```
+User submits Add Punch request
+→ Admin approves
+→ System calculates distance
+→ Allowance = distance × rate_per_km
+→ Added to user's manual allowance
+```
+
+### Rules:
+
+1. User CANNOT edit allowance amount
+2. Amount MUST be system-derived
+3. MUST be linked with punch record
+4. Goes through same approval hierarchy
+
+### Implementation:
+```python
+class AllowanceRequest(models.Model):
+    SOURCE_TYPE = [
+        ('MANUAL', 'Manual - User Applied'),
+        ('SYSTEM', 'System - Auto Calculated'),
+    ]
+
+    employee = models.ForeignKey(User)
+    source_type = models.CharField(choices=SOURCE_TYPE)
+    punch = models.ForeignKey('AttendancePunch', null=True)  # Linked punch
+    correction = models.ForeignKey('CorrectionRequest', null=True)
+
+    total_distance = models.FloatField()
+    amount = models.DecimalField()
+
+    # Linked punch reference
+    punch_id = models.IntegerField(null=True)
+    punch_date = models.DateField(null=True)
+
+    status = models.CharField(choices=STATUS_CHOICES)
+```
+
+---
+
+## 20.2 System-Based Allowance (Auto Calculated)
+
+Based on total travel done by the user in a month.
+
+### Source:
+
+* All valid punches (status=ACTIVE)
+* Total distance traveled
+
+### Calculation:
+
+```
+Monthly Allowance = Sum(valid_punches.distance) × rate_per_km
+                OR
+Monthly Allowance = Apply Slab Rules
+```
+
+### Slab-Based Example:
+
+| Distance (km) | Rate (₹/km) |
+|---------------|------------|
+| 0-100         | 10         |
+| 101-250      | 8          |
+| 251-500      | 6          |
+| 500+         | 5          |
+
+### Rules:
+
+1. Fully backend controlled
+2. No manual intervention
+3. Auto-generated monthly
+4. Locked after cycle completion
+
+### Implementation:
+```python
+class MonthlyAllowance(models.Model):
+    employee = models.ForeignKey(User)
+    month = models.IntegerField()  # 1-12
+    year = models.IntegerField()
+
+    total_distance = models.FloatField()
+    rate_applied = models.DecimalField()
+    total_amount = models.DecimalField()
+
+    punches_count = models.IntegerField()
+    is_locked = models.BooleanField(default=False)
+
+    # Auto-calculate
+    def calculate(self):
+        punches = AttendancePunch.objects.filter(
+            employee=self.employee,
+            punch_date__month=self.month,
+            punch_date__year=self.year,
+            status='ACTIVE'
+        )
+        self.total_distance = punches.aggregate(Sum('distance_from_last'))['distance__sum']
+        self.punches_count = punches.count()
+        # Apply rate rules
+        self.rate_applied = self.get_rate_for_distance(self.total_distance)
+        self.total_amount = self.total_distance * self.rate_applied
+        self.save()
+```
+
+---
+
+## 20.3 Manual + System Allowance Rules
+
+1. **No Conflict:** Both must be tracked separately
+2. **Traceable:** Each entry must show source (punch/distance)
+3. **Approval Required:** Manual entries need approval
+4. **Locked:** Monthly allowance locked after cycle
+
+---
+
+# 21. Approval Status Dashboard (Enterprise Visibility)
+
+A unified approval tracking system must be implemented across User, Admin, and Superadmin interfaces with REAL-TIME status updates showing WHO approved/rejected.
+
+---
+
+## 21.1 Core Status Types
+
+All correction and allowance requests must have standardized statuses:
+
+| Status | Description | Show Approver? |
+|--------|------------|----------------|
+| PENDING | Waiting for review | No |
+| ADMIN_APPROVED | Approved by Admin | YES - name + time |
+| ADMIN_REJECTED | Rejected by Admin | YES - name + reason |
+| SUPERADMIN_APPROVED | Approved by Superadmin | YES - name + time |
+| SUPERADMIN_REJECTED | Rejected by Superadmin | YES - name + reason |
+
+**Required Response Fields:**
+```json
+{
+  "id": 1,
+  "user_id": 123,
+  "correction_type": "ADD",
+  "status": "ADMIN_APPROVED",
+  "created_at": "2026-01-15T09:00:00Z",
+
+  // Real-time approver info
+  "reviewed_by": {
+    "id": 45,
+    "name": "John Admin",
+    "role": "ADMIN"
+  },
+  "reviewed_at": "2026-01-15T14:30:00Z",
+  "review_comment": "Approved - valid proof provided",
+  "review_level": "ADMIN"
+}
+```
+
+---
+
+## 21.2 User View (Employee)
+
+### Home Screen Widget
+
+**Show REAL-TIME counts:**
+```
+┌─────────────────────────────────────┐
+│  My Requests                        │
+│  ───────────────────────────────── │
+│  🟡 Pending:  3                   │
+│  🟢 Approved: 12                   │
+│  🔴 Rejected: 2                     │
+└─────────────────────────────────────┘
+```
+
+### Detailed Screen
+
+**Filters:**
+* Status (Pending / Approved / Rejected)
+* Date range
+* Type (Edit / Delete / Add Punch)
+
+**Each Request Shows:**
+```
+┌────────────────────────────────────────────────────┐
+│ ADD Punch - Jan 15, 2026                           │
+│ Status: 🟢 ADMIN_APPROVED                         │
+│ ────────────────────────────────────────────────── │
+│  Approved by: John Admin (Branch A)              │
+│  At: Jan 15, 2026 at 2:30 PM                    │
+│  Comment: Approved - valid proof               │
+│ ────────────────────────────────────────────────── │
+│  [View Details]  [Delete Request]               │
+└────────────────────────────────────────────────────┘
+```
+
+### Rejected Request (Must Show Reason):
+```
+┌────────────────────────────────────────────────────┐
+│ EDIT Punch - Jan 10, 2026                         │
+│ Status: 🔴 ADMIN_REJECTED                        │
+│ ────────────────────────────────────────────────── │
+│  Rejected by: Jane Admin                         │
+│  At: Jan 12, 2026 at 10:15 AM                  │
+│  Reason: Proof document not attached            │
+│  [Resubmit with Proof]                           │
+└────────────────────────────────────────────────────┘
+```
+
+---
+
+## 21.3 Admin View (Approvals Screen)
+
+### Dashboard with Real-Time Updates
+
+**Request List Shows:**
+```
+┌────────────────────────────────────────────────────────────────┐
+│ Pending Approvals (5)                            [Refresh]    │
+├────────────────────────────────────────────────────────────────┤
+│ [Filter: All | My Branch | All Branches] [Search: _________]   │
+├────────────────────────────────────────────────────────────────┤
+│ Employee      Type      Date      Status    Actions             │
+│ ──────────────────────────────────────────────────────────  │
+│ Raman K      ADD      Jan 15    PENDING  [✓] [✗]             ���
+�� Amit S       EDIT     Jan 14    PENDING  [✓] [✗]             │
+│ Suresh M     DELETE   Jan 13    PENDING  [✓] [✗]             │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Actions:
+
+**Approve Modal:**
+```
+┌─────────────────────────────────┐
+│ Approve Request                 │
+├─────────────────────────────────┤
+│ Employee: Raman K              │
+│ Type: ADD Punch                │
+│ Date: Jan 15, 2026             │
+│ Distance: 12.5 km              │
+│                                 │
+│ Comment (optional): ________   │
+│                                 │
+│       [Cancel]  [Approve]      │
+└─────────────────────────────────┘
+```
+
+**Reject Modal (Mandatory Reason):**
+```
+┌─────────────────────────────────┐
+│ Reject Request                  │
+├─────────────────────────────────┤
+│ Employee: Raman K              │
+│ Type: ADD Punch                │
+│                                 │
+│ Reason *: _____________       │
+│ (This field is required)       │
+│                                 │
+│       [Cancel]  [Reject]      │
+└─────────────────────────────────┘
+```
+
+---
+
+## 21.4 Superadmin View (Full Control)
+
+### Dashboard Overview
+
+**Shows ALL requests with hierarchy info:**
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ Approval Overview                           [Export] [Filter]            │
+├──────────────────────────────────────────────────────────────────────┤
+│ Total: 156   Pending: 12   Approved: 130   Rejected: 14            │
+├──────────────────────────────────────────────────────────────────────┤
+│ By Level:                                                        │
+│ Admin Approvals: 118 | Superadmin Overrides: 14                    │
+├──────────────────────────────────────────────────────────────────────┤
+│ Employee      Type      Date      Status     By       Level       │
+│ ─────────────────────────────────────────────────────────────────  │
+│ Raman K      ADD      Jan 15    APPROVED   John A    ADMIN          │
+│ Suresh M     DELETE  Jan 13    REJECTED  Jane S    SUPERADMIN    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Features:
+
+1. **Override Decision:** Can change any approval
+2. **Reassign:** Move request to different admin
+3. **View Audit Trail:** Complete history of changes
+
+---
+
+## 21.5 Backend Implementation
+
+### APIs Required:
+
+```python
+# Get pending requests for admin
+GET /api/attendance/correction-requests/pending/
+
+# Get user's own requests with status
+GET /api/attendance/correction-requests/my_requests/
+
+# Review (approve/reject) with tracking
+POST /api/attendance/correction-requests/{id}/review/
+{
+    "action": "APPROVE|REJECT",
+    "comment": "Optional comment"
+}
+# Response includes: reviewed_by, reviewed_at, review_level
+```
+
+### Response Model:
+```python
+class CorrectionRequestSerializer(serializers.ModelSerializer):
+    reviewed_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = CorrectionRequest
+        fields = [
+            'id', 'employee', 'correction_type', 'status',
+            'created_at', 'updated_at',
+            'reviewed_by', 'reviewed_at', 'review_comment', 'review_level'
+        ]
+```
+
+---
+
+## 21.6 Real-Time Updates
+
+### Option 1: Polling (Current)
+```javascript
+// Poll every 30 seconds
+setInterval(() => {
+    fetchMyRequests();
+}, 30000);
+```
+
+### Option 2: WebSocket (Future)
+```python
+# When status changes, emit event
+async def review(self, request, pk=None):
+    # ... process approval
+    await self.channel_layer.send(
+        group=f"user_{request.employee_id}",
+        message={"type": "status_update", "data": ...}
+    )
+```
+
+---
+
+## 21.7 UI/UX Guidelines
+
+### Color Coding:
+
+| Status | Color | Badge |
+|--------|-------|-------|
+| PENDING | Yellow (#FFC107) | 🟡 Pending |
+| ADMIN_APPROVED | Green (#4CAF50) | 🟢 Approved |
+| ADMIN_REJECTED | Red (#F44336) | 🔴 Rejected |
+| SUPERADMIN_APPROVED | Green | 🟢 Superadmin Approved |
+| SUPERADMIN_REJECTED | Red | 🔴 Superadmin Rejected |
+
+### Components:
+
+* Status badges with approver name
+* Timeline view for each request
+* Expandable cards with full details
+* "Refresh" button for manual update
+
+---
+
+# 22. Recent Updates & Changes (April 2026)
+
+This section documents all recent implementation updates and fixes.
+
+---
+
+## 22.1 SSE (Server-Sent Events) Implementation
+
+### Backend Changes
+
+**New Files:**
+- `backend/common/services/sse_service.py` - SSE event manager
+
+**Modified Files:**
+- `backend/apps/notifications/views.py` - Added SSE endpoints
+- `backend/apps/notifications/urls.py` - Added SSE URL routes
+- `backend/apps/attendance/models.py` - Added `cumulative_distance` field
+- `backend/apps/attendance/views.py` - Updated distance calculation with cumulative tracking
+
+**SSE Events:**
+- `punch_created` - When new punch is created
+- `correction_created` - When correction request is submitted
+- `correction_approved` - When correction is approved
+- `correction_rejected` - When correction is rejected
+- `allowance_created` - When allowance is applied
+- `allowance_approved` - When allowance is approved
+
+**Backend Endpoint:**
+```
+GET /api/v1/notifications/events/
+```
+
+---
+
+## 22.2 Cumulative Distance Tracking
+
+**Formula:**
+- `distance_from_last` = Segment distance (A→B)
+- `cumulative_distance` = Running total (A→B + A→B→C + ...)
+
+**Example:**
+A → B → C → D → E → return to A
+- A→B: 5km (cumulative: 5)
+- B→C: 6km (cumulative: 11)
+- C→D: 9km (cumulative: 20)
+- D→E: 8km (cumulative: 28)
+- E→A: 15km (cumulative: 43)
+
+**Backend Implementation:**
+```python
+# In AttendancePunch model
+cumulative_distance = models.FloatField(default=0)  # Running total from start
+
+# Recalculate on each punch
+def _recalculate_employee_routes(self, employee):
+    punches = AttendancePunch.objects.filter(employee=employee).order_by('punched_at')
+    running_total = 0
+    for punch in punches:
+        running_total += punch.distance_from_last or 0
+        punch.cumulative_distance = running_total
+        punch.save()
+```
+
+---
+
+## 22.3 Mobile SSE Integration
+
+**New Files:**
+- `src/services/SSEClient.js` - SSE client for mobile (polling-based)
+- `src/hooks/useSkeletonLoader.js` - Skeleton loading hook
+
+**Modified Files:**
+- `src/context/AuthContext.js` - Added SSE connect on login, disconnect on logout
+
+**Implementation:**
+```javascript
+// Connect on login
+import SSEClient from '../services/SSEClient';
+
+const login = useCallback(async (username, password) => {
+    // ... login logic
+    SSEClient.connect();
+}, []);
+
+// Disconnect on logout
+const logout = useCallback(async () => {
+    await api.logout();
+    SSEClient.disconnect();
+    // ... clear tokens
+}, []);
+
+// Event listeners
+SSEClient.onCorrection((data) => {
+    console.log('[Auth] Correction event received:', data);
+});
+```
+
+**Event Types:**
+- `correction_approved`
+- `correction_rejected`
+- `correction_created`
+- `allowance_approved`
+- `allowance_rejected`
+- `punch_created`
+
+---
+
+## 22.4 Backend Fixes
+
+### Correction Review 500 Error Fix
+
+**Issue:** POST to `/correction-requests/{id}/review/` returns 500 Internal Server Error
+
+**Root Cause:**
+1. Missing `select_related` for related fields (`employee`, `reviewed_by`)
+2. No error handling in serialization
+
+**Solution:**
+```python
+# Added select_related to queryset
+class CorrectionRequestViewSet(viewsets.ModelViewSet):
+    queryset = CorrectionRequest.objects.select_related('employee', 'reviewed_by').all()
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.role.name == 'SUPER_ADMIN':
+            return CorrectionRequest.objects.select_related('employee', 'reviewed_by').all()
+        if user.role.name == 'ADMIN':
+            return CorrectionRequest.objects.select_related('employee', 'reviewed_by').filter(
+                employee__branch=user.branch
+            )
+        return CorrectionRequest.objects.select_related('employee', 'reviewed_by').filter(employee=user)
+```
+
+**Branch:** `fix/correction-review-error`
+
+---
+
+## 22.5 Skeleton Loader Feature
+
+**New Hook:**
+```javascript
+// src/hooks/useSkeletonLoader.js
+import { useState, useCallback } from 'react';
+
+export const useSkeletonLoader = (initialLoading = true) => {
+  const [loading, setLoading] = useState(initialLoading);
+  const [data, setData] = useState(null);
+
+  const startLoading = useCallback(() => setLoading(true), []);
+  const stopLoading = useCallback((newData = null) => {
+    setLoading(false);
+    if (newData) setData(newData);
+  }, []);
+
+  return { loading, data, startLoading, stopLoading, setLoading };
+};
+```
+
+**Existing Components:**
+- `src/common/components/SkeletonLoader.js`
+- `src/components/SkeletonActivityList.js`
+- `src/components/SkeletonComponents.js`
+
+---
+
+## 22.6 Git Workflow
+
+**Current Branching Strategy:**
+1. Each fix/task → new branch
+2. Commit changes
+3. Push to remote
+4. Create PR (wait for approval before merging to main)
+
+**Backend Branches:**
+- `main` - Main production branch
+- `fix/correction-review-error` - Fix for correction review 500 error
+
+**Mobile Branches:**
+- `feature/ui-correction-employee` - Employee correction UI
+- `fix/sse-integration` - SSE integration
+
+---
+
+## 22.7 API Endpoints Summary
+
+### Attendance
+```
+GET    /api/v1/attendance/correction-requests/
+POST   /api/v1/attendance/correction-requests/
+GET    /api/v1/attendance/correction-requests/{id}/
+POST   /api/v1/attendance/correction-requests/{id}/review/
+GET    /api/v1/attendance/correction-requests/my_requests/
+```
+
+### Notifications (SSE)
+```
+GET    /api/v1/notifications/events/
+```
+
+### Distance Calculation
+- Mobile calculates using Google Distance Matrix API
+- Sends `calculated_distance` to backend
+- Backend prioritizes mobile-provided distance
+- Falls back to backend calculation if not provided
+
+---
+
+## 22.8 Known Issues (Resolved)
+
+1. **Navigation Reset Error** - Fixed by removing manual reset() calls
+2. **Distance showing 0** - Mobile now calculates and sends to backend
+3. **Correction review 500** - Added select_related and error handling
+4. **SSE import error** - Fixed import path `./api` → `../api/api`
+
+---
+
 # Conclusion
 
 This application must behave like a real enterprise-grade field tracking system. Every feature must be reliable, secure, and scalable. No shortcuts should be taken that compromise data integrity or user trust.

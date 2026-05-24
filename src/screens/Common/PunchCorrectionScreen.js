@@ -16,6 +16,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { colors, typography, spacing } from '../../theme/tokens';
+import GeocodingService from '../../services/GeocodingService';
 
 const CORRECTION_TYPES = [
     { value: 'ADD', label: 'Add Punch', color: colors.success, icon: 'plus-circle' },
@@ -61,6 +62,8 @@ const PunchCorrectionScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [distance, setDistance] = useState(0);
+    const [calculatingDistance, setCalculatingDistance] = useState(false);
 
     const updateForm = (key, value) => {
         setFormData(prev => ({ ...prev, [key]: value }));
@@ -78,6 +81,35 @@ const PunchCorrectionScreen = ({ navigation }) => {
         setShowTimePicker(Platform.OS === 'ios');
         if (selectedTime) {
             updateForm('correction_time', selectedTime);
+        }
+    };
+
+    const handleCalculateDistance = async () => {
+        const fromAddress = formData.from_address;
+        const toAddress = formData.to_address || formData.from_address;
+
+        if (!fromAddress || fromAddress.length < 5) {
+            Alert.alert('Error', 'Please enter from address');
+            return;
+        }
+
+        setCalculatingDistance(true);
+        try {
+            console.log('[PunchCorrection] Calculating distance...');
+            const calculatedDist = await GeocodingService.calculateDistance(fromAddress, toAddress);
+            console.log('[PunchCorrection] Distance result:', calculatedDist);
+            
+            if (calculatedDist > 0) {
+                setDistance(calculatedDist);
+            } else {
+                Alert.alert('Warning', 'Could not calculate distance. Using default 0.5km');
+                setDistance(0.5);
+            }
+        } catch (err) {
+            console.log('[PunchCorrection] Distance error:', err);
+            setDistance(0.5);
+        } finally {
+            setCalculatingDistance(false);
         }
     };
 
@@ -137,6 +169,7 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 payment_method: formData.payment_method,
                 punch_sequence: [],
                 original_punch_id: null,
+                calculated_distance: distance || 0,
             };
 
             await api.createCorrectionRequest(payload);
@@ -341,32 +374,57 @@ const PunchCorrectionScreen = ({ navigation }) => {
 
                 {(formData.visit_type === 'COLLECTION' || formData.visit_type === 'DISBURSEMENT') && (
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Financial Details</Text>
-                        <View style={styles.financialRow}>
-                            <View style={styles.financialItem}>
-                                <FieldLabel>Loan ID</FieldLabel>
-                                <TextInput
-                                    style={styles.input}
-                                    value={formData.loan_id}
-                                    onChangeText={(text) => updateForm('loan_id', text)}
-                                    placeholder="Enter Loan ID"
-                                    placeholderTextColor={colors.textMuted}
-                                />
+                        <FieldLabel>Distance</FieldLabel>
+                        <View style={styles.distanceRow}>
+                            <View style={styles.distanceValue}>
+                                <Text style={styles.distanceText}>
+                                    {distance > 0 ? `${distance} km` : 'Not calculated'}
+                                </Text>
                             </View>
-                            <View style={styles.financialItem}>
-                                <FieldLabel>Amount</FieldLabel>
-                                <TextInput
-                                    style={styles.input}
-                                    value={formData.amount}
-                                    onChangeText={(text) => updateForm('amount', text)}
-                                    placeholder="Enter Amount"
-                                    placeholderTextColor={colors.textMuted}
-                                    keyboardType="numeric"
-                                />
-                            </View>
+                            <TouchableOpacity
+                                style={[styles.calculateBtn, calculatingDistance && styles.calculateBtnDisabled]}
+                                onPress={handleCalculateDistance}
+                                disabled={calculatingDistance}
+                            >
+                                {calculatingDistance ? (
+                                    <ActivityIndicator size="small" color="#FFF" />
+                                ) : (
+                                    <>
+                                        <Icon name="navigation" size={16} color="#FFF" />
+                                        <Text style={styles.calculateBtnText}>Calculate</Text>
+                                    </>
+                                )}
+                            </TouchableOpacity>
                         </View>
                     </View>
                 )}
+
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Financial Details</Text>
+                    <View style={styles.financialRow}>
+                        <View style={styles.financialItem}>
+                            <FieldLabel>Loan ID</FieldLabel>
+                            <TextInput
+                                style={styles.input}
+                                value={formData.loan_id}
+                                onChangeText={(text) => updateForm('loan_id', text)}
+                                placeholder="Enter Loan ID"
+                                placeholderTextColor={colors.textMuted}
+                            />
+                        </View>
+                        <View style={styles.financialItem}>
+                            <FieldLabel>Amount</FieldLabel>
+                            <TextInput
+                                style={styles.input}
+                                value={formData.amount}
+                                onChangeText={(text) => updateForm('amount', text)}
+                                placeholder="Enter Amount"
+                                placeholderTextColor={colors.textMuted}
+                                keyboardType="numeric"
+                            />
+                        </View>
+                    </View>
+                </View>
 
                 <View style={styles.section}>
                     <FieldLabel required>Reason</FieldLabel>
@@ -463,11 +521,43 @@ const styles = StyleSheet.create({
         color: colors.textDark,
         marginBottom: spacing.sm,
     },
-    fieldLabel: {
-        fontSize: typography.sizes.sm,
+fieldLabel: {
+        fontSize: typography.sizes.xs,
+        color: colors.textMuted,
+        marginBottom: spacing.xs,
+    },
+    distanceRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: colors.surface,
+        borderRadius: 8,
+        padding: spacing.md,
+        marginBottom: spacing.md,
+    },
+    distanceValue: {
+        flex: 1,
+    },
+    distanceText: {
+        fontSize: typography.sizes.lg,
         fontWeight: typography.weights.semibold,
-        color: colors.textDark,
-        marginBottom: spacing.sm,
+        color: colors.text,
+    },
+    calculateBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.primary,
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.md,
+        borderRadius: 8,
+    },
+    calculateBtnDisabled: {
+        opacity: 0.6,
+    },
+    calculateBtnText: {
+        color: '#FFF',
+        fontWeight: typography.weights.semibold,
+        marginLeft: spacing.xs,
     },
     required: {
         color: colors.danger,
