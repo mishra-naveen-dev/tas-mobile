@@ -120,7 +120,7 @@ api.interceptors.request.use(async (config) => {
     const deviceInfo = await getDeviceInfo();
     const sessionToken = await AsyncStorage.getItem('session_token');
 
-    if (token) {
+    if (token && !config.url.includes('/auth/token')) {
         config.headers.Authorization = `Bearer ${token}`;
     }
 
