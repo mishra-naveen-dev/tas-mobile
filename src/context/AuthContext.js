@@ -207,6 +207,10 @@ export const AuthProvider = ({ children }) => {
 
     // Handle session expiration - only once
     useEffect(() => {
+        if (typeof setSessionExpiredCallback !== 'function') {
+            console.warn('[Auth] setSessionExpiredCallback not available from api');
+            return;
+        }
         setSessionExpiredCallback(() => {
             if (!sessionExpiredAlertShown) {
                 sessionExpiredAlertShown = true;
