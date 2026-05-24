@@ -2,10 +2,45 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, DeviceInfo } from 'react-native';
 
-const PROD_URL = 'https://tas-backend-8emb.onrender.com/api/v1';
+const PROD_URL = 'https://tas-backendnew.onrender.com/api/v1';
 
-const getBaseURL = () => {
-    return PROD_URL;
+let customBaseURL = null;
+
+export const getBaseURL = () => {
+    return customBaseURL || PROD_URL;
+};
+
+export const loadCustomBaseURL = async () => {
+    try {
+        const stored = await AsyncStorage.getItem('custom_api_url');
+        if (stored) {
+            customBaseURL = stored;
+            api.defaults.baseURL = stored;
+        }
+    } catch (e) {
+        console.log('Error loading custom API URL:', e);
+    }
+};
+
+export const setCustomBaseURL = async (url) => {
+    try {
+        if (url) {
+            let formattedUrl = url.trim().replace(/\/+$/, '');
+            formattedUrl = formattedUrl.replace(/\/api\/v1$/, '');
+            formattedUrl = formattedUrl.replace(/\/api\/v$/, '');
+            formattedUrl = formattedUrl.replace(/\/api$/, '');
+            formattedUrl = formattedUrl + '/api/v1';
+            customBaseURL = formattedUrl;
+            api.defaults.baseURL = formattedUrl;
+            await AsyncStorage.setItem('custom_api_url', formattedUrl);
+        } else {
+            customBaseURL = null;
+            api.defaults.baseURL = PROD_URL;
+            await AsyncStorage.removeItem('custom_api_url');
+        }
+    } catch (e) {
+        console.log('Error setting custom API URL:', e);
+    }
 };
 
 const generateDeviceFingerprint = async () => {
@@ -75,7 +110,7 @@ const clearAuthData = async () => {
 
 const api = axios.create({
     baseURL: getBaseURL(),
-    timeout: 30000, // 30 seconds timeout
+    timeout: 60000,
 });
 
 api.interceptors.request.use(async (config) => {
@@ -96,83 +131,80 @@ api.interceptors.request.use(async (config) => {
     return config;
 });
 
+let sessionExpiredCallback = null;
+let isSessionExpiredHandled = false;
+
+export const setSessionExpiredCallback = (callback) => {
+    sessionExpiredCallback = callback;
+};
+
+export const resetSessionHandler = () => {
+    isSessionExpiredHandled = false;
+};
+
 api.interceptors.response.use(
     (response) => response,
     async (error) => {
         const originalRequest = error.config;
-        const status = error.response?.status;
-        const errorData = error.response?.data;
 
-        console.log('[API] Error:', status, errorData);
-
-        // Handle 502 Bad Gateway - server issue
-        if (status === 502) {
-            console.log('[API] 502 Bad Gateway - backend issue');
-            return Promise.reject(new Error("Server temporarily unavailable. Please try again later."));
-        }
-
-        // Handle 503 Service Unavailable
-        if (status === 503) {
-            return Promise.reject(new Error("Service unavailable. Please try again later."));
-        }
-
-        // Handle 504 Gateway Timeout
-        if (status === 504) {
-            return Promise.reject(new Error("Request timeout. Please check your connection."));
-        }
-
-        // Check for 401 Unauthorized (token expired)
         if (
-            status === 401 &&
+            error.response?.status === 401 &&
             !originalRequest._retry &&
             !originalRequest.url.includes('/auth/token/')
         ) {
             originalRequest._retry = true;
 
+            if (isSessionExpiredHandled) {
+                return Promise.reject(error);
+            }
+
             try {
                 const refresh = await AsyncStorage.getItem('refresh');
 
                 if (!refresh) {
-                    console.log("No refresh token - need to login");
-                    return Promise.reject(new Error("Session expired. Please login again."));
+                    isSessionExpiredHandled = true;
+                    await clearAuthData();
+                    if (sessionExpiredCallback) {
+                        sessionExpiredCallback();
+                    }
+                    return Promise.reject(error);
                 }
 
-                console.log("[API] Refreshing token...");
-                
                 const res = await axios.post(
                     `${getBaseURL()}/auth/token/refresh/`,
-                    { refresh: refresh }
+                    { refresh }
                 );
 
-                console.log("[API] Token refresh response:", res.data);
-
                 const newAccess = res.data.access;
-                const newRefresh = res.data.refresh;
+                const newRefresh = res.data.refresh || refresh;
 
-                // Update both tokens
                 await AsyncStorage.setItem('access', newAccess);
-                if (newRefresh) {
-                    await AsyncStorage.setItem('refresh', newRefresh);
-                }
+                await AsyncStorage.setItem('refresh', newRefresh);
 
                 originalRequest.headers.Authorization = `Bearer ${newAccess}`;
 
-                console.log("[API] Token refreshed, retrying request");
                 return api(originalRequest);
 
-            } catch (refreshErr) {
-                console.log("[API] Token refresh failed:", refreshErr?.response?.data || refreshErr?.message);
+            } catch (err) {
+                isSessionExpiredHandled = true;
                 await clearAuthData();
-                return Promise.reject(new Error("Session expired. Please login again."));
+                if (sessionExpiredCallback) {
+                    sessionExpiredCallback();
+                }
+                return Promise.reject(error);
             }
         }
 
-        // Return proper error message
-        const errorMessage = errorData?.error || 
-                         errorData?.detail || 
-                         error.message || 
-                         'Request failed';
-        return Promise.reject(new Error(errorMessage));
+        if (error.response?.status === 403) {
+            const errorCode = error.response?.data?.code;
+            
+            if (errorCode === 'DEVICE_NOT_BINDED' || errorCode === 'DEVICE_ID_REQUIRED') {
+                await AsyncStorage.removeItem('device_id');
+                await clearAuthData();
+            }
+        }
+
+        return Promise.reject(error);
     }
 );
 
@@ -210,12 +242,16 @@ api.punchOut = (punchId, data = {}) => {
     return api.post('/attendance/punches/', payload);
 };
 
-api.getDailySummary = () => {
-    return api.get('/attendance/punches/daily_summary/');
+api.getDailySummary = (params = {}) => {
+    return api.get('/attendance/punches/daily_summary/', { params });
 };
 
 api.getTodayPunches = () => {
     return api.get('/attendance/punches/today_punches/');
+};
+
+api.getAvailableDates = () => {
+    return api.get('/attendance/punches/available_dates/');
 };
 
 api.getPunchHistory = (params = {}) => {
@@ -246,10 +282,8 @@ api.getCorrectionCounts = async () => {
             rejected: requests.filter(r => r.status?.includes('REJECTED')).length,
             total: requests.length
         };
-        console.log('[API] Correction counts:', counts);
         return counts;
     } catch (err) {
-        console.log('[API] Correction counts error:', err);
         return { pending: 0, approved: 0, rejected: 0, total: 0 };
     }
 };
@@ -304,8 +338,43 @@ api.createAllowanceRequest = (data) => {
     return api.post('/allowance/requests/', data);
 };
 
+api.calculateDistance = async (fromAddress, toAddress) => {
+    try {
+        const res = await api.post('/attendance/address/calculate-distance/', {
+            from_address: fromAddress,
+            to_address: toAddress || fromAddress
+        });
+        
+        if (res.data?.success) {
+            return {
+                success: true,
+                distance: res.data.distance_km,
+                distanceText: res.data.distance_text,
+                duration: res.data.duration,
+                fromCoords: res.data.from_coords,
+                toCoords: res.data.to_coords
+            };
+        }
+        return { success: false, error: res.data?.error || 'Calculation failed' };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+};
+
 api.getAllowanceHistory = (params = {}) => {
     return api.get('/allowance/requests/', { params });
+};
+
+api.getDailyPunchDetail = (date) => {
+    return api.get('/attendance/punches/by-date/', {
+        params: { date }
+    });
+};
+
+api.getMonthlyPunchSummary = (month, year) => {
+    return api.get('/attendance/punches/monthly/', {
+        params: { month, year }
+    });
 };
 
 api.getUserProfile = () => {
@@ -316,9 +385,9 @@ api.updateUserProfile = (data) => {
     return api.patch('/organization/users/me/', data);
 };
 
-api.changePassword = (currentPassword, newPassword) => {
+api.changePassword = async (currentPassword, newPassword) => {
     return api.post('/auth/change-password/', {
-        old_password: currentPassword,
+        current_password: currentPassword,
         new_password: newPassword,
         confirm_password: newPassword,
     });
@@ -359,14 +428,6 @@ api.refreshToken = async (refreshToken) => {
 
 api.logout = async () => {
     return api.post('/auth/logout/');
-};
-
-api.changePassword = async (oldPassword, newPassword) => {
-    return api.post('/auth/change-password/', {
-        old_password: oldPassword,
-        new_password: newPassword,
-        confirm_password: newPassword,
-    });
 };
 
 export default api;
