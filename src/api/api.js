@@ -106,7 +106,7 @@ const getDeviceInfo = async () => {
 };
 
 const clearAuthData = async () => {
-    await AsyncStorage.multiRemove(['access', 'refresh', 'user', 'device_id', 'device_fingerprint', 'device_info']);
+    await AsyncStorage.multiRemove(['access', 'refresh', 'user', 'device_id', 'device_fingerprint', 'device_info', 'session_token']);
 };
 
 const api = axios.create({
@@ -118,9 +118,14 @@ api.interceptors.request.use(async (config) => {
     const token = await AsyncStorage.getItem('access');
     const deviceId = await getDeviceId();
     const deviceInfo = await getDeviceInfo();
+    const sessionToken = await AsyncStorage.getItem('session_token');
 
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    if (sessionToken) {
+        config.headers['X-Session-Token'] = sessionToken;
     }
 
     config.headers['X-DEVICE-ID'] = deviceId;
@@ -178,9 +183,13 @@ api.interceptors.response.use(
 
                 const newAccess = res.data.access;
                 const newRefresh = res.data.refresh || refresh;
+                const newSessionToken = res.data.session_token;
 
                 await AsyncStorage.setItem('access', newAccess);
                 await AsyncStorage.setItem('refresh', newRefresh);
+                if (newSessionToken) {
+                    await AsyncStorage.setItem('session_token', newSessionToken);
+                }
 
                 originalRequest.headers.Authorization = `Bearer ${newAccess}`;
 

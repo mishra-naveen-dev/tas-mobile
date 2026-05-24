@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
-import api from '../api/api';
+import api, { setSessionExpiredCallback, resetSessionHandler, loadCustomBaseURL } from '../api/api';
 import { parseApiError } from '../core/error/AppErrorHandler';
-import SSEClient from '../services/SSEClient';
+import { SSEClient } from '../services/SSEClient';
 
 const AuthContext = createContext(null);
+let sessionExpiredAlertShown = false;
 
 export const ROLES = {
     SUPER_ADMIN: 'SUPER_ADMIN',
@@ -18,6 +19,30 @@ const STORAGE_KEYS = {
     ACCESS: 'access',
     REFRESH: 'refresh',
     USER: 'user',
+    SESSION: 'session_token',
+};
+
+const normalizeUser = (userData) => {
+    if (!userData) return null;
+    return {
+        ...userData,
+        forcePasswordChange: userData.force_password_change || userData.forcePasswordChange || false
+    };
+};
+
+const clearAuthSession = async () => {
+    try {
+        await Promise.all([
+            AsyncStorage.removeItem(STORAGE_KEYS.ACCESS),
+            AsyncStorage.removeItem(STORAGE_KEYS.REFRESH),
+            AsyncStorage.removeItem(STORAGE_KEYS.USER),
+            AsyncStorage.removeItem(STORAGE_KEYS.SESSION),
+            AsyncStorage.removeItem('accessToken'),
+        ]);
+        console.log('[Auth] Stale auth session cleared from AsyncStorage');
+    } catch (e) {
+        console.error('[Auth] Error clearing auth session keys:', e);
+    }
 };
 
 export const AuthProvider = ({ children }) => {
@@ -55,12 +80,15 @@ export const AuthProvider = ({ children }) => {
     }, [isAdmin, isSuperAdmin]);
 
     const initializeAuth = useCallback(async () => {
+        const startTime = Date.now();
         try {
-            const [storedAccess, storedRefresh, storedUser] = await Promise.all([
-                AsyncStorage.getItem(STORAGE_KEYS.ACCESS),
-                AsyncStorage.getItem(STORAGE_KEYS.REFRESH),
-                AsyncStorage.getItem(STORAGE_KEYS.USER),
-            ]);
+            await loadCustomBaseURL();
+            let storedAccess = await AsyncStorage.getItem(STORAGE_KEYS.ACCESS);
+            if (!storedAccess) {
+                storedAccess = await AsyncStorage.getItem('accessToken');
+            }
+            const storedRefresh = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH);
+            const storedUser = await AsyncStorage.getItem(STORAGE_KEYS.USER);
 
             if (storedAccess && storedRefresh) {
                 setAccessToken(storedAccess);
@@ -68,15 +96,30 @@ export const AuthProvider = ({ children }) => {
 
                 if (storedUser) {
                     try {
-                        setUser(JSON.parse(storedUser));
+                        setUser(normalizeUser(JSON.parse(storedUser)));
                     } catch {
                         setUser(null);
                     }
                 }
+            } else {
+                // No valid tokens, ensure clean state
+                await clearAuthSession();
+                setAccessToken(null);
+                setRefreshToken(null);
+                setUser(null);
             }
         } catch (error) {
             console.error('Auth initialization error:', error);
+            await clearAuthSession();
+            setAccessToken(null);
+            setRefreshToken(null);
+            setUser(null);
         } finally {
+            const elapsed = Date.now() - startTime;
+            const remaining = Math.max(0, 1500 - elapsed);
+            if (remaining > 0) {
+                await new Promise(resolve => setTimeout(resolve, remaining));
+            }
             setIsLoading(false);
             setIsInitialized(true);
         }
@@ -106,16 +149,24 @@ export const AuthProvider = ({ children }) => {
 
             console.log('[Auth] Login success! User:', userData?.username);
 
-            await Promise.all([
+            const storageOps = [
                 AsyncStorage.setItem(STORAGE_KEYS.ACCESS, access),
                 AsyncStorage.setItem(STORAGE_KEYS.REFRESH, refresh),
-            ]);
+            ];
 
-            if (userData) {
-                await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(userData));
-                setUser(userData);
+            if (data.session_token) {
+                storageOps.push(AsyncStorage.setItem(STORAGE_KEYS.SESSION, data.session_token));
             }
 
+            await Promise.all(storageOps);
+
+            if (userData) {
+                const normalized = normalizeUser(userData);
+                await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(normalized));
+                setUser(normalized);
+            }
+
+            sessionExpiredAlertShown = false;
             setAccessToken(access);
             setRefreshToken(refresh);
 
@@ -130,9 +181,6 @@ export const AuthProvider = ({ children }) => {
         } catch (error) {
             const parsed = parseApiError(error);
             console.log('[Auth] Login failed:', parsed);
-            
-            // Show user-friendly error message
-            Alert.alert('Login Failed', parsed.message);
             
             return {
                 success: false,
@@ -149,17 +197,44 @@ export const AuthProvider = ({ children }) => {
             console.log('Logout API error:', error?.message);
         } finally {
             SSEClient.disconnect();
-            await AsyncStorage.multiRemove(Object.values(STORAGE_KEYS));
+            await clearAuthSession(); // Clear only auth session keys to preserve custom_api_url and other settings
             setAccessToken(null);
             setRefreshToken(null);
             setUser(null);
+            resetSessionHandler(); // Reset the session handler flag
         }
+    }, []);
+
+    // Handle session expiration - only once
+    useEffect(() => {
+        setSessionExpiredCallback(() => {
+            if (!sessionExpiredAlertShown) {
+                sessionExpiredAlertShown = true;
+                Alert.alert(
+                    'Session Expired',
+                    'Your session has expired. Please login again.'
+                );
+            }
+            // Prevent multiple calls
+            SSEClient.disconnect();
+            clearAuthSession().then(() => {
+                setAccessToken(null);
+                setRefreshToken(null);
+                setUser(null);
+                resetSessionHandler();
+            });
+        });
+
+        return () => {
+            setSessionExpiredCallback(null);
+        };
     }, []);
 
     const updateUser = useCallback((updatedUser) => {
         if (updatedUser) {
-            setUser(updatedUser);
-            AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
+            const normalized = normalizeUser(updatedUser);
+            setUser(normalized);
+            AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(normalized));
         }
     }, []);
 
