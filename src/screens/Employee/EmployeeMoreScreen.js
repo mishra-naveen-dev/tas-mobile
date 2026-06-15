@@ -97,6 +97,22 @@ const EmployeeMoreScreen = ({ navigation }) => {
                     onPress={() => navigation.navigate('DailySummary')}
                 />
 
+                <SectionTitle title="Analytics" />
+                <MenuItem
+                    title="My Performance"
+                    subtitle="Daily, weekly & monthly metrics"
+                    icon="trending-up"
+                    color="#7C3AED"
+                    onPress={() => navigation.navigate('MyPerformance')}
+                />
+                <MenuItem
+                    title="Missed Punches"
+                    subtitle="Track your correction requests"
+                    icon="alert-circle"
+                    color={colors.warning}
+                    onPress={() => navigation.navigate('MissedPunchDashboard')}
+                />
+
                 <SectionTitle title="Settings" />
                 <MenuItem
                     title="Change Password"

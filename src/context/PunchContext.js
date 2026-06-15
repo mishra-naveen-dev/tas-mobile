@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
 import LocationService from '../services/LocationService';
+import BackgroundTrackingService from '../services/BackgroundTrackingService';
 
 const IS_DEV = __DEV__;
 
@@ -121,17 +122,25 @@ export const PunchProvider = ({ children }) => {
       if (IS_DEV) console.log('[Punch] Submitting punch:', JSON.stringify(payload, null, 2));
       
       const res = await api.post('/attendance/punches/', payload);
-      
+
       if (IS_DEV) console.log('[Punch] Success:', JSON.stringify(res.data, null, 2));
-      
+
       setIsActive(true);
       setPunchState(STATES.IDLE);
       setSuccess(true);
       trackingStartTime.current = Date.now();
       routePoints.current = [];
-      
+
+      // Auto-start background route tracking using the session created by the backend
+      const trackingSessionId = res.data?.tracking_session_id;
+      if (trackingSessionId) {
+        BackgroundTrackingService.start(trackingSessionId).catch((e) => {
+          if (IS_DEV) console.warn('[Punch] BTS start error:', e.message);
+        });
+      }
+
       await fetchTodayPunches();
-      
+
       return { success: true, data: res.data };
     } catch (err) {
       if (IS_DEV) console.error('[Punch] Error:', err?.response?.data || err.message);
@@ -149,31 +158,52 @@ export const PunchProvider = ({ children }) => {
     setPunchState(STATES.PUNCHING_OUT);
     setErrorMessage(null);
     setSuccess(false);
-    
+
     try {
+      // Try to get a fresh GPS fix for punch out accuracy
+      let lat = capturedLocation?.latitude || 0;
+      let lng = capturedLocation?.longitude || 0;
+      let address = capturedLocation?.current_address || '';
+
+      try {
+        const currentLocation = await LocationService.getCurrentLocation();
+        if (!currentLocation.error) {
+          lat = currentLocation.latitude;
+          lng = currentLocation.longitude;
+          address = currentLocation.address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        }
+      } catch (locErr) {
+        if (IS_DEV) console.warn('[Punch] GPS unavailable for punch out, using last known location');
+      }
+
       const payload = {
         punch_type: 'PUNCH_OUT',
-        latitude: capturedLocation?.latitude || 0,
-        longitude: capturedLocation?.longitude || 0,
-        current_address: capturedLocation?.current_address || '',
+        latitude: lat,
+        longitude: lng,
+        current_address: address,
         notes: 'Punch Out',
       };
-      
+
       if (IS_DEV) console.log('[Punch] Submitting punch out:', JSON.stringify(payload, null, 2));
-      
+
+      // Flush remaining GPS points to backend before submitting punch-out
+      await BackgroundTrackingService.stop().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] BTS stop error:', e.message);
+      });
+
       await api.post('/attendance/punches/', payload);
-      
+
       if (IS_DEV) console.log('[Punch] Punch out success');
-      
+
       setIsActive(false);
       setPunchState(STATES.IDLE);
       setSuccess(true);
       setCapturedLocation(null);
       trackingStartTime.current = null;
       routePoints.current = [];
-      
+
       await fetchTodayPunches();
-      
+
       return { success: true };
     } catch (err) {
       const errorMsg = err?.response?.data?.detail || err?.message || 'Failed to punch out';

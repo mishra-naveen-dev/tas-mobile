@@ -140,12 +140,12 @@ const EmployeePunchScreen = ({ navigation }) => {
 
   const handlePunchOutPress = () => {
     Alert.alert(
-      'End Punch',
-      'Are you sure you want to end this punch?',
+      'Punch Out',
+      'Are you sure to punch out?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'End Punch',
+          text: 'Punch Out',
           style: 'destructive',
           onPress: async () => {
             const result = await punchOut();
@@ -303,7 +303,24 @@ const EmployeePunchScreen = ({ navigation }) => {
           <Icon name="arrow-left" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.title}>{isActive ? 'Tracking' : 'Punch'}</Text>
-        <View style={{ width: 40 }} />
+        {isActive ? (
+          <TouchableOpacity
+            style={[styles.punchOutHeaderBtn, isPunchingOut && styles.disabled]}
+            onPress={handlePunchOutPress}
+            disabled={isPunchingOut}
+          >
+            {isPunchingOut ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Icon name="log-out" size={14} color="#fff" />
+                <Text style={styles.punchOutHeaderText}>Punch Out</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 80 }} />
+        )}
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
@@ -518,6 +535,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: spacing.md, backgroundColor: colors.surface, elevation: 2 },
   backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: typography.sizes.lg, fontWeight: 'bold', color: colors.text },
+  punchOutHeaderBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E53935', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, gap: 4, elevation: 3 },
+  punchOutHeaderText: { fontSize: typography.sizes.xs, fontWeight: '700', color: '#fff' },
   scroll: { flex: 1 },
   content: { paddingBottom: 120 },
   mapBox: { height: 200, margin: spacing.md, borderRadius: 16, overflow: 'hidden' },

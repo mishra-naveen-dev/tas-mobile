@@ -387,6 +387,14 @@ api.getMonthlyPunchSummary = (month, year) => {
     });
 };
 
+api.getPerformance = (period = 'daily') => {
+    return api.get('/attendance/punches/performance/', { params: { period } });
+};
+
+api.bulkTrackingPoints = (data) => {
+    return api.post('/attendance/tracking-points/bulk_create/', data);
+};
+
 api.getUserProfile = () => {
     return api.get('/organization/users/me/');
 };

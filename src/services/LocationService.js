@@ -15,8 +15,8 @@ const CONFIG = {
     speed: 0,
   },
   gpsTimeout: 20000,
-  trackingInterval: 10000,
-  distanceFilter: 20,
+  trackingInterval: 120000, // 2 minutes — battery efficient per spec
+  distanceFilter: 100,      // 100 metres — triggers update on movement even within interval
   maxAccuracy: 100,
 };
 
@@ -183,6 +183,30 @@ class LocationService {
     if (lat === 0 && lng === 0) return false;
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
     return true;
+  }
+
+  static async requestBackgroundPermission() {
+    if (Platform.OS !== 'android') return true;
+    try {
+      if (parseInt(Platform.Version, 10) >= 29) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+          {
+            title: 'Background Location Required',
+            message:
+              'TAS needs background location access so your route is recorded ' +
+              'even when the screen is off or the app is minimised.',
+            buttonNeutral: 'Ask Later',
+            buttonNegative: 'Deny',
+            buttonPositive: 'Allow',
+          }
+        );
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   static async startTracking() {

@@ -46,6 +46,8 @@ import ApplyAllowanceScreen from '../screens/Common/ApplyAllowanceScreen';
 import DailySummaryScreen from '../screens/Common/DailySummaryScreen';
 import DashboardScreen from '../screens/Common/DashboardScreen';
 import EmployeeListScreen from '../screens/Common/EmployeeListScreen';
+import MyPerformanceScreen from '../screens/Employee/MyPerformanceScreen';
+import MissedPunchDashboardScreen from '../screens/Employee/MissedPunchDashboardScreen';
 
 
 import CustomTabBar from '../components/CustomTabBar';
@@ -102,6 +104,8 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="AllowanceHistory" component={AllowanceHistoryScreen} />
         <EmployeeStack.Screen name="ApplyAllowance" component={ApplyAllowanceScreen} />
         <EmployeeStack.Screen name="DailySummary" component={DailySummaryScreen} />
+        <EmployeeStack.Screen name="MyPerformance" component={MyPerformanceScreen} />
+        <EmployeeStack.Screen name="MissedPunchDashboard" component={MissedPunchDashboardScreen} />
         <EmployeeStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
     </EmployeeStack.Navigator>
 );
