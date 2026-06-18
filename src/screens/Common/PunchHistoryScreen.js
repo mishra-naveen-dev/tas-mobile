@@ -28,11 +28,10 @@ const PunchHistoryScreen = ({ navigation }) => {
             if (!isRefresh) setIsLoading(true);
 
             const response = await api.getPunchHistory();
-            const rawData = Array.isArray(response.data) ? response.data : (response.data?.results || []);
-            const processedData = api.processData.normalizeList(response, { keyField: 'id' });
-            
-            console.log('[PunchHistory] Raw items:', rawData.length, 'Processed:', processedData.length);
-            setPunches(processedData);
+            const rawData = Array.isArray(response.data)
+                ? response.data
+                : (response.data?.results || []);
+            setPunches(rawData);
 
         } catch (err) {
             console.log('Failed to fetch punches:', err);
@@ -177,7 +176,7 @@ const PunchHistoryScreen = ({ navigation }) => {
             ) : (
                 <FlatList
                     data={punches}
-                    keyExtractor={(item, index) => api.processData.generateKey(item, 'punch', index)}
+                    keyExtractor={(item, index) => item?.id ? String(item.id) : String(index)}
                     renderItem={renderItem}
                     ListHeaderComponent={ListHeader}
                     ListEmptyComponent={ListEmpty}

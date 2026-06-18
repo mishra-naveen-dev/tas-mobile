@@ -27,10 +27,10 @@ const EmployeeAllowanceScreen = ({ navigation }) => {
     const fetchAllowances = useCallback(async () => {
         try {
             const res = await api.getAllowanceRequests();
-            const rawData = Array.isArray(res.data) ? res.data : (res.data?.results || res.data || []);
-            const processedData = api.processData.normalizeList(res, { keyField: 'id' });
-            console.log('[Allowances] Raw:', rawData.length, 'Processed:', processedData.length);
-            setAllowances(processedData);
+            const rawData = Array.isArray(res.data)
+                ? res.data
+                : (res.data?.results || []);
+            setAllowances(rawData);
         } catch (err) {
             console.log('Error fetching allowances:', err);
         } finally {
@@ -187,7 +187,7 @@ const EmployeeAllowanceScreen = ({ navigation }) => {
             <FlatList
                 data={filteredAllowances}
                 renderItem={renderAllowance}
-                keyExtractor={(item, index) => api.processData.generateKey(item, 'allowance', index)}
+                keyExtractor={(item, index) => item?.id ? String(item.id) : String(index)}
                 contentContainerStyle={styles.listContent}
                 refreshControl={
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />

@@ -27,11 +27,10 @@ const AllowanceHistoryScreen = ({ navigation }) => {
             if (!isRefresh) setIsLoading(true);
 
             const res = await api.getAllowanceHistory();
-            const rawData = res.data?.results || res.data || [];
-            const processedData = api.processData.normalizeList(res, { keyField: 'id' });
-            
-            console.log('[AllowanceHistory] Raw items:', rawData.length, 'Processed:', processedData.length);
-            setRequests(processedData);
+            const rawData = Array.isArray(res.data)
+                ? res.data
+                : (res.data?.results || []);
+            setRequests(rawData);
 
         } catch (err) {
             console.log("Allowance History Error:", err);
@@ -165,7 +164,7 @@ const AllowanceHistoryScreen = ({ navigation }) => {
             ) : (
                 <FlatList
                     data={requests}
-                    keyExtractor={(item, index) => api.processData.generateKey(item, 'allow', index)}
+                    keyExtractor={(item, index) => item?.id ? String(item.id) : String(index)}
                     renderItem={renderItem}
                     ListHeaderComponent={ListHeader}
                     ListEmptyComponent={ListEmpty}
