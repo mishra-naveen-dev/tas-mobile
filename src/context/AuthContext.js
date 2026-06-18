@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 import api, { setSessionExpiredCallback, resetSessionHandler, loadCustomBaseURL } from '../api/api';
 import { parseApiError } from '../core/error/AppErrorHandler';
 import { SSEClient } from '../services/SSEClient';
+import BackgroundTrackingService from '../services/BackgroundTrackingService';
 
 const AuthContext = createContext(null);
 let sessionExpiredAlertShown = false;
@@ -191,18 +192,18 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const logout = useCallback(async () => {
-        try {
-            await api.logout();
-        } catch (error) {
-            console.log('Logout API error:', error?.message);
-        } finally {
-            SSEClient.disconnect();
-            await clearAuthSession(); // Clear only auth session keys to preserve custom_api_url and other settings
-            setAccessToken(null);
-            setRefreshToken(null);
-            setUser(null);
-            resetSessionHandler(); // Reset the session handler flag
-        }
+        // Stop background GPS tracking if running
+        try { await BackgroundTrackingService.stop(); } catch {}
+        // Notify backend of logout (best-effort)
+        try { await api.logout(); } catch {}
+        // Disconnect SSE polling
+        try { SSEClient.disconnect(); } catch {}
+        // Clear stored tokens and user data
+        await clearAuthSession();
+        setAccessToken(null);
+        setRefreshToken(null);
+        setUser(null);
+        resetSessionHandler();
     }, []);
 
     // Handle session expiration - only once

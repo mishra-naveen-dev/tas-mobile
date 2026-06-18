@@ -4,7 +4,8 @@ import {
     Text,
     StyleSheet,
     ScrollView,
-    TouchableOpacity
+    TouchableOpacity,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -17,7 +18,20 @@ const EmployeeMoreScreen = ({ navigation }) => {
     const user = auth?.user;
 
     const handleLogout = () => {
-        auth.logout();
+        Alert.alert(
+            'Logout',
+            'Are you sure you want to logout?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Logout',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try { await auth.logout(); } catch {}
+                    },
+                },
+            ]
+        );
     };
 
     const MenuItem = ({ title, subtitle, icon, color, onPress }) => (

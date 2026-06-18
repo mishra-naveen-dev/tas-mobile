@@ -223,4 +223,5 @@ class SSEClient {
   }
 }
 
+export { SSEClient };
 export default SSEClient.getInstance();
