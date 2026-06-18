@@ -20,8 +20,8 @@ import PrimaryButton from '../../components/PrimaryButton';
 import GlassCard from '../../components/GlassCard';
 import { colors, typography, spacing } from '../../theme/tokens';
 
-const SUPPORT_EMAIL = 'support@tasenterprise.com';
-const SUPPORT_PHONE = '+91-9876543210';
+const SUPPORT_EMAIL = 'naveen@armanindia.com';
+const SUPPORT_PHONE = '1-800-10-27626';
 const LOCAL_EMULATOR_URL = 'http://10.0.2.2:8000';
 const PROD_URL = 'https://tas-backendnew.onrender.com';
 
