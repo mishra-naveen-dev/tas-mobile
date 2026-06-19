@@ -23,6 +23,7 @@ const EmployeeAllowanceScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
+    const [error, setError] = useState(null);
 
     const fetchAllowances = useCallback(async () => {
         try {
@@ -31,8 +32,9 @@ const EmployeeAllowanceScreen = ({ navigation }) => {
                 ? res.data
                 : (res.data?.results || []);
             setAllowances(rawData);
+            setError(null);
         } catch (err) {
-            console.log('Error fetching allowances:', err);
+            setError('Failed to load allowances. Pull down to retry.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -183,6 +185,16 @@ const EmployeeAllowanceScreen = ({ navigation }) => {
                     ))}
                 </ScrollView>
             </View>
+
+            {error ? (
+                <View style={styles.errorBanner}>
+                    <Icon name="alert-circle" size={15} color={colors.danger} />
+                    <Text style={styles.errorBannerText}>{error}</Text>
+                    <TouchableOpacity onPress={fetchAllowances}>
+                        <Text style={styles.retryLink}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : null}
 
             <FlatList
                 data={filteredAllowances}
@@ -370,6 +382,26 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
         marginTop: spacing.md,
+    },
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF0F0',
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginHorizontal: spacing.md,
+        marginVertical: spacing.xs,
+        gap: 8,
+    },
+    errorBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+    },
+    retryLink: {
+        fontSize: typography.sizes.sm,
+        color: colors.primary,
+        fontWeight: '600',
     },
     createBtn: {
         flexDirection: 'row',

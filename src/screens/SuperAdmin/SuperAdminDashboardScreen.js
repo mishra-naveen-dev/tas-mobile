@@ -21,6 +21,7 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState(null);
 
     const handleLogout = useCallback(() => {
         Alert.alert(
@@ -43,16 +44,19 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
         try {
             const res = await api.get('/organization/users/stats/');
             setStats(res.data);
+            setError(null);
         } catch (err) {
-            console.error('Error fetching stats:', err?.response?.data || err?.message || err);
-            setStats({
-                total_employees: 0,
-                active_employees: 0,
-                total_punches: 0,
-                total_distance: 0,
-                total_collections: 0,
-                total_disbursements: 0,
-            });
+            setError('Could not load statistics. Pull down to retry.');
+            if (!stats) {
+                setStats({
+                    total_employees: 0,
+                    active_employees: 0,
+                    total_punches: 0,
+                    total_distance: 0,
+                    total_collections: 0,
+                    total_disbursements: 0,
+                });
+            }
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -95,6 +99,16 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                 }
             >
+                {error ? (
+                    <View style={styles.errorBanner}>
+                        <Icon name="alert-circle" size={15} color={colors.danger} />
+                        <Text style={styles.errorBannerText}>{error}</Text>
+                        <TouchableOpacity onPress={fetchData}>
+                            <Text style={styles.retryLink}>Retry</Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : null}
+
                 <View style={styles.statsContainer}>
                     <View style={styles.statCard}>
                         <Text style={styles.statValue}>{stats?.total_employees || 0}</Text>
@@ -237,6 +251,26 @@ const styles = StyleSheet.create({
         fontWeight: typography.weights.medium,
         color: colors.textDark,
         marginLeft: spacing.md,
+    },
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF0F0',
+        borderRadius: 10,
+        padding: spacing.sm,
+        margin: spacing.md,
+        marginBottom: 0,
+        gap: 8,
+    },
+    errorBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+    },
+    retryLink: {
+        fontSize: typography.sizes.sm,
+        color: colors.primary,
+        fontWeight: '600',
     },
 });
 

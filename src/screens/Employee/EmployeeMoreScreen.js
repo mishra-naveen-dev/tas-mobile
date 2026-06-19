@@ -65,21 +65,35 @@ const EmployeeMoreScreen = ({ navigation }) => {
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
             >
-                <View style={styles.profileCard}>
+                <TouchableOpacity
+                    style={styles.profileCard}
+                    onPress={() => navigation.navigate('Profile')}
+                    activeOpacity={0.8}
+                >
                     <View style={styles.profileIcon}>
                         <Icon name="user" size={32} color={colors.primary} />
                     </View>
                     <View style={styles.profileContent}>
                         <Text style={styles.profileTitle}>
-                            {user?.first_name && user?.last_name 
+                            {user?.first_name && user?.last_name
                                 ? `${user.first_name} ${user.last_name}`
                                 : user?.username || 'Employee'}
                         </Text>
                         <Text style={styles.profileSubtitle}>
                             {user?.employee_id || 'Employee ID not set'}
                         </Text>
+                        <Text style={styles.profileTap}>Tap to view full profile →</Text>
                     </View>
-                </View>
+                </TouchableOpacity>
+
+                <SectionTitle title="Account" />
+                <MenuItem
+                    title="My Profile"
+                    subtitle="View personal & work details"
+                    icon="user"
+                    color={colors.primary}
+                    onPress={() => navigation.navigate('Profile')}
+                />
 
                 <SectionTitle title="History" />
                 <MenuItem
@@ -198,6 +212,12 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
         marginTop: 2,
+    },
+    profileTap: {
+        fontSize: typography.sizes.xs,
+        color: colors.primary,
+        marginTop: 4,
+        fontWeight: typography.weights.medium,
     },
     sectionTitle: {
         fontSize: typography.sizes.md,

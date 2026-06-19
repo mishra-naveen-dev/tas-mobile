@@ -17,13 +17,15 @@ const EmployeeListScreen = ({ navigation }) => {
     const [employees, setEmployees] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState(null);
 
     const fetchData = useCallback(async () => {
         try {
             const res = await api.get('/organization/users/?role=EMPLOYEE');
             setEmployees(res.data?.results || res.data || []);
+            setError(null);
         } catch (err) {
-            console.error('Error fetching employees:', err);
+            setError('Failed to load employees. Pull down to retry.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -85,10 +87,22 @@ const EmployeeListScreen = ({ navigation }) => {
                 }
                 contentContainerStyle={styles.listContent}
                 ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="users" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>No employees found</Text>
-                    </View>
+                    error ? (
+                        <View style={styles.emptyContainer}>
+                            <Icon name="alert-circle" size={48} color={colors.danger} />
+                            <Text style={[styles.emptyText, { color: colors.danger }]}>{error}</Text>
+                            <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
+                                <Text style={styles.retryBtnText}>Try Again</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ) : (
+                        <View style={styles.emptyContainer}>
+                            <Icon name="users" size={48} color={colors.textLight} />
+                            <Text style={styles.emptyText}>
+                                {loading ? 'Loading...' : 'No employees found'}
+                            </Text>
+                        </View>
+                    )
                 }
             />
         </SafeAreaView>
@@ -161,6 +175,19 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.md,
         color: colors.textMuted,
         marginTop: spacing.md,
+        textAlign: 'center',
+    },
+    retryBtn: {
+        marginTop: spacing.md,
+        backgroundColor: colors.primary,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.sm,
+        borderRadius: 24,
+    },
+    retryBtnText: {
+        color: '#fff',
+        fontSize: typography.sizes.sm,
+        fontWeight: '600',
     },
 });
 

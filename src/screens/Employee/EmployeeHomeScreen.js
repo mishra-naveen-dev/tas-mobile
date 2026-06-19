@@ -206,8 +206,8 @@ const EmployeeHomeScreen = ({ navigation }) => {
             setSummary(liveSummary);
             setPunches(livePunches);
             setCorrectionSummary(correctionCounts);
-        } catch (err) {
-            if (IS_DEV) console.error('[Home] Fetch error:', err);
+        } catch {
+            // Server unavailable or session expired — interceptor already handles 401
         } finally {
             if (isMountedRef.current) {
                 setIsLoading(false);

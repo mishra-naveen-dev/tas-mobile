@@ -18,13 +18,15 @@ const EmployeeTrackingScreen = ({ navigation, route }) => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
+    const [error, setError] = useState(null);
 
     const fetchData = useCallback(async () => {
         try {
             const res = await api.get('/tracking/employees/');
             setEmployees(res.data?.results || res.data || []);
+            setError(null);
         } catch (err) {
-            console.error('Error fetching tracking:', err);
+            setError('Failed to load tracking data. Pull down to retry.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -122,10 +124,22 @@ const EmployeeTrackingScreen = ({ navigation, route }) => {
                 }
                 contentContainerStyle={styles.listContent}
                 ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="map-pin" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>No tracking data available</Text>
-                    </View>
+                    error ? (
+                        <View style={styles.emptyContainer}>
+                            <Icon name="alert-circle" size={48} color={colors.danger} />
+                            <Text style={[styles.emptyText, { color: colors.danger }]}>{error}</Text>
+                            <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
+                                <Text style={styles.retryBtnText}>Try Again</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ) : (
+                        <View style={styles.emptyContainer}>
+                            <Icon name="map-pin" size={48} color={colors.textLight} />
+                            <Text style={styles.emptyText}>
+                                {loading ? 'Loading...' : 'No tracking data available'}
+                            </Text>
+                        </View>
+                    )
                 }
             />
         </SafeAreaView>
@@ -255,6 +269,19 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.md,
         color: colors.textMuted,
         marginTop: spacing.md,
+        textAlign: 'center',
+    },
+    retryBtn: {
+        marginTop: spacing.md,
+        backgroundColor: colors.primary,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.sm,
+        borderRadius: 24,
+    },
+    retryBtnText: {
+        color: '#fff',
+        fontSize: typography.sizes.sm,
+        fontWeight: '600',
     },
 });
 

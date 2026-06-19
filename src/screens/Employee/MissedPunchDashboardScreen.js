@@ -123,6 +123,7 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
     const [loading, setLoading]   = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [activeFilter, setActiveFilter] = useState('ALL');
+    const [error, setError] = useState(null);
 
     const fetchRequests = useCallback(async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true);
@@ -135,8 +136,9 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
                 ? res.data.results
                 : [];
             setRequests(raw);
+            setError(null);
         } catch {
-            setRequests([]);
+            setError('Failed to load requests. Pull down to retry.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -222,6 +224,16 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
                                     iconBg={colors.primaryLight}
                                 />
                             </View>
+
+                            {error ? (
+                                <View style={styles.errorBanner}>
+                                    <Icon name="alert-circle" size={15} color={colors.danger} />
+                                    <Text style={styles.errorBannerText}>{error}</Text>
+                                    <TouchableOpacity onPress={() => fetchRequests()}>
+                                        <Text style={styles.retryLink}>Retry</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : null}
 
                             {/* Filter tabs */}
                             <View style={styles.filterBar}>
@@ -466,6 +478,27 @@ const styles = StyleSheet.create({
     remarkLabel: {
         fontWeight: typography.weights.semibold,
         color: colors.textDark,
+    },
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF0F0',
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginHorizontal: spacing.md,
+        marginTop: spacing.xs,
+        marginBottom: spacing.xs,
+        gap: 8,
+    },
+    errorBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+    },
+    retryLink: {
+        fontSize: typography.sizes.sm,
+        color: colors.primary,
+        fontWeight: '600',
     },
     // Empty state
     emptyTitle: {

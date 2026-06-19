@@ -46,6 +46,7 @@ import ApplyAllowanceScreen from '../screens/Common/ApplyAllowanceScreen';
 import DailySummaryScreen from '../screens/Common/DailySummaryScreen';
 import DashboardScreen from '../screens/Common/DashboardScreen';
 import EmployeeListScreen from '../screens/Common/EmployeeListScreen';
+import ProfileScreen from '../screens/Common/ProfileScreen';
 import MyPerformanceScreen from '../screens/Employee/MyPerformanceScreen';
 import MissedPunchDashboardScreen from '../screens/Employee/MissedPunchDashboardScreen';
 
@@ -107,6 +108,7 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="MyPerformance" component={MyPerformanceScreen} />
         <EmployeeStack.Screen name="MissedPunchDashboard" component={MissedPunchDashboardScreen} />
         <EmployeeStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+        <EmployeeStack.Screen name="Profile" component={ProfileScreen} />
     </EmployeeStack.Navigator>
 );
 
@@ -117,6 +119,7 @@ const AdminStackNavigator = () => (
         <AdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <AdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
         <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+        <AdminStack.Screen name="Profile" component={ProfileScreen} />
     </AdminStack.Navigator>
 );
 
@@ -208,6 +211,7 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="Reports" component={ReportsScreen} />
         <SuperAdminStack.Screen name="CreateUser" component={CreateUserScreen} />
         <SuperAdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+        <SuperAdminStack.Screen name="Profile" component={ProfileScreen} />
     </SuperAdminStack.Navigator>
 );
 

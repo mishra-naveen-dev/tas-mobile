@@ -35,6 +35,7 @@ const MyPerformanceScreen = ({ navigation }) => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState(null);
 
     const fetchData = useCallback(async (selectedPeriod, isRefresh = false) => {
         if (isRefresh) setRefreshing(true);
@@ -42,8 +43,10 @@ const MyPerformanceScreen = ({ navigation }) => {
         try {
             const res = await api.getPerformance(selectedPeriod);
             setData(res.data);
+            setError(null);
         } catch (err) {
             setData(null);
+            setError('Failed to load performance data.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -287,7 +290,19 @@ const MyPerformanceScreen = ({ navigation }) => {
                         />
                     }
                 >
-                    {data ? (
+                    {error ? (
+                        <View style={styles.centered}>
+                            <Icon name="alert-circle" size={48} color={colors.danger} />
+                            <Text style={styles.errorText}>{error}</Text>
+                            <TouchableOpacity
+                                style={styles.retryBtn}
+                                onPress={() => fetchData(period, true)}
+                            >
+                                <Icon name="refresh-cw" size={16} color="#fff" />
+                                <Text style={styles.retryBtnText}>Try Again</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ) : data ? (
                         <>
                             <View style={styles.dateRange}>
                                 <Icon name="calendar" size={13} color={colors.textMuted} />
@@ -379,6 +394,27 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
+    },
+    errorText: {
+        marginTop: spacing.md,
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+        textAlign: 'center',
+    },
+    retryBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: spacing.md,
+        backgroundColor: colors.primary,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.sm,
+        borderRadius: 24,
+        gap: 6,
+    },
+    retryBtnText: {
+        color: '#fff',
+        fontSize: typography.sizes.sm,
+        fontWeight: '600',
     },
     dateRange: {
         flexDirection: 'row',

@@ -29,6 +29,7 @@ export const parseApiError = (error) => {
     let priority = ErrorPriority.MEDIUM;
     let canRetry = false;
     let forField = null;
+    let code = null;
 
     // No response at all (network issue)
     if (!error.response) {
@@ -47,11 +48,12 @@ export const parseApiError = (error) => {
             type = ErrorType.NETWORK;
             canRetry = true;
         }
-        return { message, type, priority, canRetry, forField };
+        return { message, type, priority, canRetry, forField, code };
     }
 
     const status = error.response?.status;
     const data = error.response?.data;
+    code = data?.code || null;
 
     // Handle status codes
     switch (status) {
@@ -186,7 +188,7 @@ export const parseApiError = (error) => {
             canRetry = true;
     }
 
-    return { message, type, priority, canRetry, forField, status };
+    return { message, type, priority, canRetry, forField, status, code };
 };
 
 // Show error alert to user

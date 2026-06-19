@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
 import LocationService from '../services/LocationService';
 import BackgroundTrackingService from '../services/BackgroundTrackingService';
+import { parseApiError } from '../core/error/AppErrorHandler';
 
 const IS_DEV = __DEV__;
 
@@ -50,6 +51,7 @@ export const PunchProvider = ({ children }) => {
         new Date(b.punched_at) - new Date(a.punched_at)
       );
       setPunches(uniquePunches);
+      setError(null);
 
       // Restore isActive from server state — last punch determines current status
       if (uniquePunches.length > 0) {
@@ -61,8 +63,12 @@ export const PunchProvider = ({ children }) => {
         setIsActive(false);
       }
     } catch (err) {
-      if (IS_DEV) console.error('[Punch] Fetch error:', err);
-      setError(err.message);
+      // 401 is already handled by the axios interceptor (session-expired flow)
+      // Logging or setting error for 401 causes duplicate noise in LogBox
+      if (err?.response?.status !== 401) {
+        const { message } = parseApiError(err);
+        setError(message);
+      }
     }
   }, []);
 

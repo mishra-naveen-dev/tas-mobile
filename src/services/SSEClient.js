@@ -31,7 +31,7 @@ class SSEClient {
       const baseURL = await this.getBaseURL();
       const eventSourceUrl = `${baseURL}/notifications/events/`;
       
-      console.log('[SSE] Connecting to:', eventSourceUrl);
+      if (__DEV__) console.log('[SSE] Connecting to:', eventSourceUrl);
       
       // Store connection state
       this.isConnected = true;
@@ -42,7 +42,7 @@ class SSEClient {
       
       return true;
     } catch (error) {
-      console.log('[SSE] Connection error:', error);
+      if (__DEV__) console.error('[SSE] Connection error:', error);
       this.isConnected = false;
       return false;
     }
@@ -54,7 +54,7 @@ class SSEClient {
   static disconnect() {
     this.isConnected = false;
     this.stopPolling();
-    console.log('[SSE] Disconnected');
+    if (__DEV__) console.log('[SSE] Disconnected');
   }
 
   /**
@@ -76,7 +76,7 @@ class SSEClient {
       return;
     }
 
-    console.log('[SSE] Starting polling every', intervalMs / 1000, 'seconds');
+    if (__DEV__) console.log('[SSE] Starting polling every', intervalMs / 1000, 'seconds');
 
     // Poll immediately
     this.pollEvents();
@@ -117,11 +117,9 @@ class SSEClient {
           this.lastEventTime = events[events.length - 1].timestamp;
         }
       }
-    } catch (error) {
-      // Silently handle polling errors
-      if (!error.message?.includes('404')) {
-        console.log('[SSE] Polling error:', error.message);
-      }
+    } catch {
+      // Silently handle all polling errors — server may be temporarily unavailable.
+      // Never log here: network errors repeat every poll interval and flood LogBox.
     }
   }
 
@@ -132,7 +130,7 @@ class SSEClient {
     const eventType = event.type;
     const eventData = event.data;
 
-    console.log('[SSE] Event received:', eventType, eventData);
+    if (__DEV__) console.log('[SSE] Event received:', eventType);
 
     // Notify listeners
     const listeners = this.eventListeners.get(eventType);
@@ -141,7 +139,7 @@ class SSEClient {
         try {
           callback(eventData);
         } catch (err) {
-          console.log('[SSE] Listener error:', err);
+          if (__DEV__) console.error('[SSE] Listener error:', err);
         }
       });
     }
@@ -153,7 +151,7 @@ class SSEClient {
         try {
           callback(eventType, eventData);
         } catch (err) {
-          console.log('[SSE] All listener error:', err);
+          if (__DEV__) console.error('[SSE] All listener error:', err);
         }
       });
     }
@@ -169,7 +167,7 @@ class SSEClient {
    */
   static showLocalNotification(eventType, data) {
     // Can be extended with react-native-push-notification
-    console.log('[SSE] Notification:', eventType, data);
+    if (__DEV__) console.log('[SSE] Notification:', eventType);
   }
 
   /**

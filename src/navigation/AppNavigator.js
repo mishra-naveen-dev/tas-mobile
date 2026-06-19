@@ -17,6 +17,7 @@ import MainTabNavigator from './MainTabNavigator';
 import PunchHistoryScreen from '../screens/Common/PunchHistoryScreen';
 import AllowanceHistoryScreen from '../screens/Common/AllowanceHistoryScreen';
 import DailySummaryScreen from '../screens/Common/DailySummaryScreen';
+import ProfileScreen from '../screens/Common/ProfileScreen';
 
 // ADMIN SCREENS
 import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
@@ -88,6 +89,7 @@ const AppNavigator = () => {
                         <Stack.Screen name="UserManagement" component={UserManagementScreen} />
                         <Stack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
                         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+                        <Stack.Screen name="Profile" component={ProfileScreen} />
                     </>
                 ) : isAdmin() ? (
                     // Admin Navigation
@@ -97,6 +99,7 @@ const AppNavigator = () => {
                         <Stack.Screen name="AdminDevices" component={AdminDevicesScreen} />
                         <Stack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
                         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+                        <Stack.Screen name="Profile" component={ProfileScreen} />
                     </>
                 ) : (
                     // Employee Navigation (default)
@@ -110,6 +113,7 @@ const AppNavigator = () => {
                         <Stack.Screen name="DailySummary" component={DailySummaryScreen} />
                         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
                         <Stack.Screen name="EmployeePunch" component={EmployeePunchScreen} />
+                        <Stack.Screen name="Profile" component={ProfileScreen} />
                     </>
                 )}
             </Stack.Navigator>

@@ -1,6 +1,4 @@
-// src/screens/RouteMapScreen.js
-
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View,
     Text,
@@ -9,395 +7,386 @@ import {
     ActivityIndicator,
     Dimensions,
     ScrollView,
-    Linking,
-    Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
-import LocationService from '../../services/LocationService';
-import GlassCard from '../../components/GlassCard';
 import { colors, typography, spacing } from '../../theme/tokens';
 
-const { width, height } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
+
+const PUNCH_COLORS = {
+    PUNCH_IN: '#22C55E',
+    PUNCH_OUT: '#EF4444',
+    COLLECTION: '#3B82F6',
+    DISBURSEMENT: '#8B5CF6',
+};
+
+const PUNCH_LABELS = {
+    PUNCH_IN: 'Punch In',
+    PUNCH_OUT: 'Punch Out',
+    COLLECTION: 'Collection',
+    DISBURSEMENT: 'Disbursement',
+};
+
+const toDateStr = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+};
+
+const punchColor = (type) => PUNCH_COLORS[type] ?? '#9CA3AF';
+const punchLabel = (type) => PUNCH_LABELS[type] ?? type;
 
 const RouteMapScreen = ({ navigation, route }) => {
     const mapRef = useRef(null);
-    const [loading, setLoading] = useState(true);
-    const [routeData, setRouteData] = useState(null);
-    const [error, setError] = useState(null);
-    const [selectedDate, setSelectedDate] = useState(route?.params?.date || new Date().toISOString().split('T')[0]);
-    const [showDelayed, setShowDelayed] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
+    const employeeId = route?.params?.employeeId ?? null;
+    const employeeName = route?.params?.employeeName ?? null;
 
-    const fetchRoute = async () => {
+    const initialDate = route?.params?.date ? new Date(route.params.date) : new Date();
+    const [activeDate, setActiveDate] = useState(initialDate);
+    const [allPunches, setAllPunches] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const isTodayActive = toDateStr(activeDate) === toDateStr(new Date());
+
+    const fetchPunches = useCallback(async () => {
+        setLoading(true);
+        setError(null);
         try {
-            setError(null);
-            const response = await api.get('/attendance/tracking/delayed-route/', {
-                params: { date: selectedDate }
-            });
-            setRouteData(response.data);
+            const dateStr = toDateStr(activeDate);
+            const params = { date_from: dateStr, date_to: dateStr };
+            if (employeeId) params.employee_id = employeeId;
+
+            const res = await api.get('/attendance/punches/', { params });
+            const raw = Array.isArray(res.data)
+                ? res.data
+                : Array.isArray(res.data?.results)
+                ? res.data.results
+                : [];
+
+            // Oldest first for chronological path
+            const sorted = [...raw].sort(
+                (a, b) => new Date(a.punched_at) - new Date(b.punched_at)
+            );
+            setAllPunches(sorted);
         } catch (err) {
-            console.error('Failed to fetch route:', err);
-            setError('Failed to load route data');
+            setError('Failed to load punch data. Pull down to retry.');
         } finally {
             setLoading(false);
-            setRefreshing(false);
         }
-    };
+    }, [activeDate, employeeId]);
 
     useEffect(() => {
-        fetchRoute();
+        fetchPunches();
+    }, [fetchPunches]);
 
-        const interval = setInterval(() => {
-            if (showDelayed) {
-                fetchRoute();
-            }
-        }, 60000);
+    const mappablePunches = allPunches.filter(
+        (p) =>
+            p.latitude != null &&
+            p.longitude != null &&
+            parseFloat(p.latitude) !== 0 &&
+            parseFloat(p.longitude) !== 0
+    );
 
-        return () => clearInterval(interval);
-    }, [selectedDate, showDelayed]);
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        fetchRoute();
-    };
-
-    const centerOnCurrentLocation = () => {
-        if (coordinates.length === 0) return;
-        
-        const latestPoint = coordinates[coordinates.length - 1];
-        
-        if (mapRef.current) {
-            mapRef.current.animateToRegion({
-                latitude: latestPoint.latitude,
-                longitude: latestPoint.longitude,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01
-            }, 500);
-        }
-    };
-
-    const fitAllCoordinates = () => {
-        if (coordinates.length > 1 && mapRef.current) {
-            mapRef.current.fitToCoordinates(coordinates, {
-                edgePadding: { top: 50, right: 50, bottom: 100, left: 50 },
-                animated: true
-            });
-        }
-    };
-
-    const openInGoogleMaps = () => {
-        if (!latestPoint) return;
-        
-        const { latitude, longitude } = latestPoint;
-        const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
-        
-        Linking.openURL(url).catch(() => {
-            Alert.alert('Error', 'Could not open maps');
-        });
-    };
-
-    const getAllCoordinates = () => {
-        if (!routeData?.routes) return [];
-
-        const allCoords = [];
-        routeData.routes.forEach(route => {
-            if (showDelayed) {
-                route.points.forEach(point => {
-                    allCoords.push({
-                        latitude: point.lat,
-                        longitude: point.lng,
-                        timestamp: point.timestamp
-                    });
-                });
-            } else {
-                const delayThreshold = new Date(Date.now() - 10 * 60 * 1000);
-                route.points.forEach(point => {
-                    const pointTime = new Date(point.timestamp);
-                    if (pointTime <= delayThreshold) {
-                        allCoords.push({
-                            latitude: point.lat,
-                            longitude: point.lng,
-                            timestamp: point.timestamp
-                        });
-                    }
-                });
-            }
-        });
-
-        return allCoords.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-    };
-
-    const coordinates = getAllCoordinates();
-    const latestPoint = coordinates.length > 0 ? coordinates[0] : null;
-    const oldestPoint = coordinates.length > 0 ? coordinates[coordinates.length - 1] : null;
+    const coordinates = mappablePunches.map((p) => ({
+        latitude: parseFloat(p.latitude),
+        longitude: parseFloat(p.longitude),
+    }));
 
     const getMapRegion = () => {
         if (coordinates.length === 0) {
-            return {
-                latitude: 23.0225,
-                longitude: 72.5714,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05
-            };
+            return { latitude: 23.0225, longitude: 72.5714, latitudeDelta: 0.1, longitudeDelta: 0.1 };
         }
-
         if (coordinates.length === 1) {
-            return {
-                latitude: coordinates[0].latitude,
-                longitude: coordinates[0].longitude,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01
-            };
+            return { ...coordinates[0], latitudeDelta: 0.01, longitudeDelta: 0.01 };
         }
-
-        if (latestPoint) {
-            return {
-                latitude: latestPoint.latitude,
-                longitude: latestPoint.longitude,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05
-            };
-        }
-
-        const lats = coordinates.map(c => c.latitude);
-        const lngs = coordinates.map(c => c.longitude);
-
+        const lats = coordinates.map((c) => c.latitude);
+        const lngs = coordinates.map((c) => c.longitude);
         const minLat = Math.min(...lats);
         const maxLat = Math.max(...lats);
         const minLng = Math.min(...lngs);
         const maxLng = Math.max(...lngs);
-
         return {
             latitude: (minLat + maxLat) / 2,
             longitude: (minLng + maxLng) / 2,
-            latitudeDelta: Math.max(0.01, (maxLat - minLat) * 1.5),
-            longitudeDelta: Math.max(0.01, (maxLng - minLng) * 1.5)
+            latitudeDelta: Math.max(0.01, (maxLat - minLat) * 1.6),
+            longitudeDelta: Math.max(0.01, (maxLng - minLng) * 1.6),
         };
     };
 
-    const formatTime = (timestamp) => {
-        if (!timestamp) return '';
-        return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const shiftDate = (delta) => {
+        setActiveDate((d) => {
+            const next = new Date(d);
+            next.setDate(next.getDate() + delta);
+            return next;
+        });
     };
 
-    const formatDate = (dateStr) => {
-        if (!dateStr) return '';
-        const date = new Date(dateStr);
-        return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-    };
+    const formatDate = (d) =>
+        d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
-    if (loading) {
-        return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={styles.loadingText}>Loading route data...</Text>
-            </View>
+    const formatTime = (ts) =>
+        ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+
+    // Latest punch = last item (sorted oldest→newest)
+    const latestMappable = mappablePunches.length > 0
+        ? mappablePunches[mappablePunches.length - 1]
+        : null;
+
+    const goToLatest = () => {
+        if (!latestMappable) return;
+        mapRef.current?.animateToRegion(
+            {
+                latitude: parseFloat(latestMappable.latitude),
+                longitude: parseFloat(latestMappable.longitude),
+                latitudeDelta: 0.005,
+                longitudeDelta: 0.005,
+            },
+            600
         );
-    }
+    };
 
     return (
         <SafeAreaView style={styles.container}>
+            {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Icon name="arrow-left" size={24} color={colors.textDark} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Route Map</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.refreshBtn}>
-                    <Icon name="refresh-cw" size={20} color={colors.primary} />
+                <Text style={styles.headerTitle}>
+                    {employeeName ? employeeName : 'Route Map'}
+                </Text>
+                <TouchableOpacity onPress={fetchPunches} style={styles.refreshBtn}>
+                    <Icon name="refresh-cw" size={20} color={loading ? colors.border : colors.primary} />
                 </TouchableOpacity>
             </View>
 
+            {/* Date Navigator */}
+            <View style={styles.dateNav}>
+                <TouchableOpacity onPress={() => shiftDate(-1)} style={styles.navArrow}>
+                    <Icon name="chevron-left" size={22} color={colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                    onPress={() => setActiveDate(new Date())}
+                    style={styles.datePill}
+                    activeOpacity={0.7}
+                >
+                    <Icon name="calendar" size={13} color={colors.primary} style={{ marginRight: 6 }} />
+                    <Text style={styles.datePillText}>
+                        {isTodayActive ? 'Today' : formatDate(activeDate)}
+                    </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    onPress={() => { if (!isTodayActive) shiftDate(1); }}
+                    style={[styles.navArrow, isTodayActive && styles.disabledArrow]}
+                    disabled={isTodayActive}
+                >
+                    <Icon
+                        name="chevron-right"
+                        size={22}
+                        color={isTodayActive ? colors.border : colors.primary}
+                    />
+                </TouchableOpacity>
+            </View>
+
+            {/* Map */}
             <View style={styles.mapContainer}>
                 <MapView
                     ref={mapRef}
                     style={styles.map}
                     provider={PROVIDER_GOOGLE}
-                    region={getMapRegion()}
+                    initialRegion={getMapRegion()}
                     onMapReady={() => {
                         if (coordinates.length > 1) {
                             mapRef.current?.fitToCoordinates(coordinates, {
-                                edgePadding: { top: 50, right: 50, bottom: 100, left: 50 },
-                                animated: true
+                                edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
+                                animated: true,
                             });
                         }
                     }}
                 >
-                    {latestPoint && (
-                        <Marker
-                            coordinate={{ latitude: latestPoint.latitude, longitude: latestPoint.longitude }}
-                            pinColor="red"
-                            title="Latest Point"
-                            description={`Time: ${formatTime(latestPoint.timestamp)}`}
-                        />
-                    )}
-
-                    {oldestPoint && latestPoint !== oldestPoint && (
-                        <Marker
-                            coordinate={{ latitude: oldestPoint.latitude, longitude: oldestPoint.longitude }}
-                            pinColor="green"
-                            title="Start"
-                            description={`Time: ${formatTime(oldestPoint.timestamp)}`}
-                        />
-                    )}
-
+                    {/* Polyline connecting all punch locations */}
                     {coordinates.length > 1 && (
                         <Polyline
-                            coordinates={[...coordinates].reverse().map(c => ({
-                                latitude: c.latitude,
-                                longitude: c.longitude
-                            }))}
+                            coordinates={coordinates}
                             strokeColor={colors.primary}
-                            strokeWidth={4}
+                            strokeWidth={3}
                         />
                     )}
+
+                    {/* Numbered punch markers */}
+                    {mappablePunches.map((punch, idx) => (
+                        <Marker
+                            key={String(punch.id)}
+                            coordinate={{
+                                latitude: parseFloat(punch.latitude),
+                                longitude: parseFloat(punch.longitude),
+                            }}
+                        >
+                            <View style={[styles.pin, { borderColor: punchColor(punch.punch_type) }]}>
+                                <View
+                                    style={[
+                                        styles.pinCore,
+                                        { backgroundColor: punchColor(punch.punch_type) },
+                                    ]}
+                                >
+                                    <Text style={styles.pinText}>{idx + 1}</Text>
+                                </View>
+                            </View>
+                            <Callout tooltip>
+                                <View style={styles.callout}>
+                                    <Text style={[styles.calloutType, { color: punchColor(punch.punch_type) }]}>
+                                        {punchLabel(punch.punch_type)}
+                                    </Text>
+                                    <Text style={styles.calloutTime}>{formatTime(punch.punched_at)}</Text>
+                                    {punch.customer_name ? (
+                                        <Text style={styles.calloutDetail}>{punch.customer_name}</Text>
+                                    ) : null}
+                                    {punch.current_address ? (
+                                        <Text style={styles.calloutAddr} numberOfLines={2}>
+                                            {punch.current_address}
+                                        </Text>
+                                    ) : null}
+                                </View>
+                            </Callout>
+                        </Marker>
+                    ))}
                 </MapView>
 
-                {/* Map Control Buttons */}
-                <View style={styles.mapControls}>
-                    <TouchableOpacity 
-                        style={styles.mapControlBtn} 
-                        onPress={centerOnCurrentLocation}
-                        activeOpacity={0.8}
-                    >
-                        <Icon name="crosshair" size={22} color={colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                        style={styles.mapControlBtn} 
-                        onPress={fitAllCoordinates}
-                        activeOpacity={0.8}
-                    >
-                        <Icon name="maximize-2" size={22} color={colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                        style={styles.mapControlBtn} 
-                        onPress={openInGoogleMaps}
-                        activeOpacity={0.8}
-                    >
-                        <Icon name="navigation" size={22} color={colors.primary} />
-                    </TouchableOpacity>
-                </View>
+                {loading && (
+                    <View style={styles.mapLoadOverlay}>
+                        <ActivityIndicator color={colors.primary} size="small" />
+                    </View>
+                )}
 
-                <View style={styles.mapOverlay}>
-                    <Text style={styles.mapOverlayText}>
-                        {showDelayed ? 'Showing delayed route (10 min)' : 'Showing real-time route'}
-                    </Text>
-                </View>
+                {coordinates.length > 1 && !loading && (
+                    <TouchableOpacity
+                        style={styles.fitBtn}
+                        onPress={() =>
+                            mapRef.current?.fitToCoordinates(coordinates, {
+                                edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
+                                animated: true,
+                            })
+                        }
+                        activeOpacity={0.8}
+                    >
+                        <Icon name="maximize-2" size={18} color={colors.primary} />
+                    </TouchableOpacity>
+                )}
+
+                {/* Go-to-latest button — like Google Maps location button */}
+                {latestMappable && !loading && (
+                    <TouchableOpacity
+                        style={styles.latestBtn}
+                        onPress={goToLatest}
+                        activeOpacity={0.8}
+                    >
+                        <View style={styles.latestBtnInner}>
+                            <Icon name="navigation" size={20} color="#fff" />
+                        </View>
+                        <Text style={styles.latestBtnLabel}>Latest</Text>
+                    </TouchableOpacity>
+                )}
             </View>
 
-            <ScrollView style={styles.infoContainer} showsVerticalScrollIndicator={false}>
-                <GlassCard style={styles.infoCard}>
-                    <View style={styles.statsRow}>
-                        <View style={styles.statItem}>
-                            <Icon name="navigation" size={20} color={colors.primary} />
-                            <Text style={styles.statValue}>{routeData?.total_sessions || 0}</Text>
-                            <Text style={styles.statLabel}>Sessions</Text>
-                        </View>
-
-                        <View style={styles.statItem}>
-                            <Icon name="map-pin" size={20} color={colors.success} />
-                            <Text style={styles.statValue}>{coordinates.length}</Text>
-                            <Text style={styles.statLabel}>Points</Text>
-                        </View>
-
-                        <View style={styles.statItem}>
-                            <Icon name="activity" size={20} color={colors.warning} />
-                            <Text style={styles.statValue}>{routeData?.total_distance || 0} km</Text>
-                            <Text style={styles.statLabel}>Distance</Text>
-                        </View>
+            {/* Summary + Punch List */}
+            <ScrollView
+                style={styles.list}
+                contentContainerStyle={styles.listContent}
+                showsVerticalScrollIndicator={false}
+            >
+                {/* Stats row */}
+                <View style={styles.statsRow}>
+                    <View style={styles.statItem}>
+                        <Text style={styles.statVal}>{allPunches.length}</Text>
+                        <Text style={styles.statLbl}>Total</Text>
                     </View>
-                </GlassCard>
-
-                <GlassCard style={styles.infoCard}>
-                    <Text style={styles.sectionTitle}>Route Details</Text>
-                    
-                    <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Date</Text>
-                        <Text style={styles.detailValue}>{formatDate(selectedDate)}</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Tracking Status</Text>
-                        <View style={styles.trackingBadge}>
-                            <Icon 
-                                name="activity" 
-                                size={12} 
-                                color={showDelayed ? colors.warning : colors.success} 
-                            />
-                            <Text style={[
-                                styles.trackingBadgeText,
-                                { color: showDelayed ? colors.warning : colors.success }
-                            ]}>
-                                {showDelayed ? 'Delayed' : 'Real-time'}
-                            </Text>
-                        </View>
-                    </View>
-
-                    <TouchableOpacity 
-                        style={styles.delayToggle}
-                        onPress={() => setShowDelayed(!showDelayed)}
-                    >
-                        <Icon 
-                            name={showDelayed ? "eye-off" : "eye"} 
-                            size={16} 
-                            color={colors.primary} 
-                        />
-                        <Text style={styles.delayToggleText}>
-                            {showDelayed ? 'Hide 10-min delayed points' : 'Show all points'}
+                    <View style={[styles.statItem, styles.statDivider]}>
+                        <Text style={[styles.statVal, { color: PUNCH_COLORS.PUNCH_IN }]}>
+                            {allPunches.filter((p) => p.punch_type === 'PUNCH_IN').length}
                         </Text>
-                    </TouchableOpacity>
-                </GlassCard>
+                        <Text style={styles.statLbl}>Punch In</Text>
+                    </View>
+                    <View style={[styles.statItem, styles.statDivider]}>
+                        <Text style={[styles.statVal, { color: PUNCH_COLORS.PUNCH_OUT }]}>
+                            {allPunches.filter((p) => p.punch_type === 'PUNCH_OUT').length}
+                        </Text>
+                        <Text style={styles.statLbl}>Punch Out</Text>
+                    </View>
+                    <View style={[styles.statItem, styles.statDivider]}>
+                        <Text style={[styles.statVal, { color: PUNCH_COLORS.COLLECTION }]}>
+                            {allPunches.filter(
+                                (p) => p.punch_type === 'COLLECTION' || p.punch_type === 'DISBURSEMENT'
+                            ).length}
+                        </Text>
+                        <Text style={styles.statLbl}>Collection</Text>
+                    </View>
+                </View>
 
-                {routeData?.routes?.map((route, index) => (
-                    <GlassCard key={route.session_id} style={styles.routeCard}>
-                        <View style={styles.routeHeader}>
-                            <Icon name="clock" size={16} color={colors.primary} />
-                            <Text style={styles.routeTitle}>Session {index + 1}</Text>
-                            {route.is_active && (
-                                <View style={styles.activeBadge}>
-                                    <Text style={styles.activeBadgeText}>Active</Text>
+                {error ? (
+                    <View style={styles.errorRow}>
+                        <Icon name="alert-circle" size={15} color={colors.danger} />
+                        <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                ) : !loading && allPunches.length === 0 ? (
+                    <View style={styles.emptyBox}>
+                        <Icon name="map-pin" size={36} color={colors.border} />
+                        <Text style={styles.emptyText}>No punches recorded on this date</Text>
+                    </View>
+                ) : (
+                    allPunches.map((punch, idx) => (
+                        <View key={String(punch.id)} style={styles.punchRow}>
+                            {/* Number badge with colour coding */}
+                            <View
+                                style={[
+                                    styles.punchBadge,
+                                    { backgroundColor: punchColor(punch.punch_type) },
+                                ]}
+                            >
+                                <Text style={styles.punchBadgeText}>{idx + 1}</Text>
+                            </View>
+
+                            {/* Punch details */}
+                            <View style={styles.punchInfo}>
+                                <View style={styles.punchTopRow}>
+                                    <Text
+                                        style={[
+                                            styles.punchType,
+                                            { color: punchColor(punch.punch_type) },
+                                        ]}
+                                    >
+                                        {punchLabel(punch.punch_type)}
+                                    </Text>
+                                    <Text style={styles.punchTime}>
+                                        {formatTime(punch.punched_at)}
+                                    </Text>
                                 </View>
+                                {punch.customer_name ? (
+                                    <Text style={styles.punchCustomer}>{punch.customer_name}</Text>
+                                ) : null}
+                                {punch.current_address ? (
+                                    <Text style={styles.punchAddr} numberOfLines={1}>
+                                        {punch.current_address}
+                                    </Text>
+                                ) : null}
+                                {(!punch.latitude || !punch.longitude ||
+                                    parseFloat(punch.latitude) === 0) ? (
+                                    <Text style={styles.noGps}>No GPS recorded</Text>
+                                ) : null}
+                            </View>
+
+                            {/* Connector line between rows */}
+                            {idx < allPunches.length - 1 && (
+                                <View style={styles.connector} />
                             )}
                         </View>
-
-                        <View style={styles.routeDetails}>
-                            <View style={styles.routeDetailItem}>
-                                <Text style={styles.routeDetailLabel}>Start</Text>
-                                <Text style={styles.routeDetailValue}>{formatTime(route.start_time)}</Text>
-                            </View>
-
-                            <View style={styles.routeDetailItem}>
-                                <Text style={styles.routeDetailLabel}>End</Text>
-                                <Text style={styles.routeDetailValue}>
-                                    {route.end_time ? formatTime(route.end_time) : 'In progress'}
-                                </Text>
-                            </View>
-
-                            <View style={styles.routeDetailItem}>
-                                <Text style={styles.routeDetailLabel}>Points</Text>
-                                <Text style={styles.routeDetailValue}>{route.total_points}</Text>
-                            </View>
-
-                            <View style={styles.routeDetailItem}>
-                                <Text style={styles.routeDetailLabel}>Distance</Text>
-                                <Text style={styles.routeDetailValue}>{route.distance} km</Text>
-                            </View>
-                        </View>
-
-                        {route.pending_points > 0 && (
-                            <View style={styles.pendingBadge}>
-                                <Icon name="clock" size={12} color={colors.warning} />
-                                <Text style={styles.pendingText}>
-                                    {route.pending_points} points pending (10 min delay)
-                                </Text>
-                            </View>
-                        )}
-                    </GlassCard>
-                ))}
-
-                <View style={styles.bottomPadding} />
+                    ))
+                )}
+                <View style={{ height: 40 }} />
             </ScrollView>
         </SafeAreaView>
     );
@@ -408,207 +397,299 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: colors.background,
     },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: colors.background,
-    },
-    loadingText: {
-        marginTop: spacing.md,
-        color: colors.textMuted,
-    },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: spacing.md,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
         backgroundColor: colors.surface,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
     },
-    backBtn: {
-        padding: spacing.sm,
-    },
-    refreshBtn: {
-        padding: spacing.sm,
-    },
+    backBtn: { padding: spacing.xs },
+    refreshBtn: { padding: spacing.xs },
     headerTitle: {
         fontSize: typography.sizes.lg,
         fontWeight: typography.weights.bold,
         color: colors.textDark,
     },
+
+    // Date navigator
+    dateNav: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        backgroundColor: colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    navArrow: {
+        padding: spacing.sm,
+    },
+    disabledArrow: {
+        opacity: 0.3,
+    },
+    datePill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: 20,
+        backgroundColor: `${colors.primary}12`,
+        gap: 4,
+    },
+    datePillText: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.semibold,
+        color: colors.primary,
+    },
+
+    // Map
     mapContainer: {
-        height: height * 0.35,
+        height: height * 0.38,
         width: '100%',
+        backgroundColor: '#e8e8e8',
     },
     map: {
         flex: 1,
     },
-    mapOverlay: {
-        position: 'absolute',
-        bottom: spacing.sm,
-        left: spacing.sm,
-        backgroundColor: 'rgba(0,0,0,0.7)',
-        paddingHorizontal: spacing.sm,
-        paddingVertical: spacing.xs,
-        borderRadius: 4,
+    mapLoadOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(255,255,255,0.5)',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    mapOverlayText: {
-        color: '#fff',
-        fontSize: typography.sizes.xs,
-    },
-    mapControls: {
+    fitBtn: {
         position: 'absolute',
         top: spacing.md,
         right: spacing.md,
-        backgroundColor: '#FFFFFF',
-        borderRadius: 12,
+        backgroundColor: '#fff',
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        elevation: 4,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.15,
-        shadowRadius: 8,
-        elevation: 4,
+        shadowRadius: 4,
     },
-    mapControlBtn: {
+    latestBtn: {
+        position: 'absolute',
+        bottom: spacing.md,
+        right: spacing.md,
+        alignItems: 'center',
+    },
+    latestBtnInner: {
         width: 48,
         height: 48,
+        borderRadius: 24,
+        backgroundColor: colors.primary,
         alignItems: 'center',
         justifyContent: 'center',
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
+        elevation: 6,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
     },
-    mapControlBtnLast: {
-        borderBottomWidth: 0,
+    latestBtnLabel: {
+        fontSize: 10,
+        color: colors.primary,
+        fontWeight: '600',
+        marginTop: 3,
     },
-    infoContainer: {
+
+    // Custom map pin
+    pin: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        borderWidth: 2,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    pinCore: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    pinText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+
+    // Callout tooltip
+    callout: {
+        backgroundColor: '#fff',
+        borderRadius: 10,
+        padding: 10,
+        minWidth: 140,
+        maxWidth: 220,
+        elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+    },
+    calloutType: {
+        fontSize: 13,
+        fontWeight: '700',
+        marginBottom: 2,
+    },
+    calloutTime: {
+        fontSize: 12,
+        color: colors.textMuted,
+        marginBottom: 2,
+    },
+    calloutDetail: {
+        fontSize: 11,
+        color: colors.textDark,
+        marginBottom: 2,
+    },
+    calloutAddr: {
+        fontSize: 11,
+        color: colors.textMuted,
+    },
+
+    // Punch list
+    list: {
         flex: 1,
-        padding: spacing.md,
     },
-    infoCard: {
-        marginBottom: spacing.md,
+    listContent: {
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.md,
     },
+
+    // Stats row
     statsRow: {
         flexDirection: 'row',
-        justifyContent: 'space-around',
+        backgroundColor: colors.surface,
+        borderRadius: 14,
+        marginBottom: spacing.md,
+        overflow: 'hidden',
+        elevation: 1,
     },
     statItem: {
+        flex: 1,
         alignItems: 'center',
+        paddingVertical: spacing.md,
     },
-    statValue: {
+    statDivider: {
+        borderLeftWidth: 1,
+        borderLeftColor: colors.border,
+    },
+    statVal: {
         fontSize: typography.sizes.lg,
         fontWeight: typography.weights.bold,
         color: colors.textDark,
-        marginTop: spacing.xs,
     },
-    statLabel: {
+    statLbl: {
         fontSize: typography.sizes.xs,
         color: colors.textMuted,
+        marginTop: 2,
     },
-    sectionTitle: {
+
+    // Error / empty
+    errorRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff0f0',
+        borderRadius: 10,
+        padding: spacing.md,
+        gap: 8,
+    },
+    errorText: {
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+        flex: 1,
+    },
+    emptyBox: {
+        alignItems: 'center',
+        paddingVertical: spacing.xxl,
+        gap: spacing.sm,
+    },
+    emptyText: {
         fontSize: typography.sizes.md,
-        fontWeight: typography.weights.bold,
-        color: colors.textDark,
-        marginBottom: spacing.md,
+        color: colors.textMuted,
     },
-    detailRow: {
+
+    // Punch row
+    punchRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: colors.surface,
+        borderRadius: 12,
+        padding: spacing.md,
+        marginBottom: spacing.xs,
+        elevation: 1,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 2,
+    },
+    punchBadge: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: spacing.md,
+        marginTop: 1,
+    },
+    punchBadgeText: {
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    punchInfo: {
+        flex: 1,
+    },
+    punchTopRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: spacing.sm,
+        marginBottom: 2,
     },
-    detailLabel: {
+    punchType: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.semibold,
+    },
+    punchTime: {
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
     },
-    detailValue: {
+    punchCustomer: {
         fontSize: typography.sizes.sm,
-        fontWeight: typography.weights.bold,
         color: colors.textDark,
+        marginTop: 2,
     },
-    trackingBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#f5f5f5',
-        paddingHorizontal: spacing.sm,
-        paddingVertical: spacing.xs,
-        borderRadius: 12,
-    },
-    trackingBadgeText: {
-        fontSize: typography.sizes.xs,
-        marginLeft: spacing.xs,
-    },
-    delayToggle: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: spacing.sm,
-        padding: spacing.sm,
-        backgroundColor: '#e3f2fd',
-        borderRadius: 8,
-    },
-    delayToggleText: {
-        fontSize: typography.sizes.sm,
-        color: colors.primary,
-        marginLeft: spacing.sm,
-    },
-    routeCard: {
-        marginBottom: spacing.md,
-    },
-    routeHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: spacing.sm,
-    },
-    routeTitle: {
-        fontSize: typography.sizes.md,
-        fontWeight: typography.weights.bold,
-        color: colors.textDark,
-        marginLeft: spacing.sm,
-        flex: 1,
-    },
-    activeBadge: {
-        backgroundColor: colors.success,
-        paddingHorizontal: spacing.sm,
-        paddingVertical: 2,
-        borderRadius: 10,
-    },
-    activeBadgeText: {
-        color: '#fff',
-        fontSize: typography.sizes.xs,
-        fontWeight: 'bold',
-    },
-    routeDetails: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-    },
-    routeDetailItem: {
-        width: '50%',
-        marginBottom: spacing.xs,
-    },
-    routeDetailLabel: {
+    punchAddr: {
         fontSize: typography.sizes.xs,
         color: colors.textMuted,
+        marginTop: 2,
     },
-    routeDetailValue: {
-        fontSize: typography.sizes.sm,
-        fontWeight: 'bold',
-        color: colors.textDark,
-    },
-    pendingBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fff3e0',
-        padding: spacing.sm,
-        borderRadius: 8,
-        marginTop: spacing.sm,
-    },
-    pendingText: {
+    noGps: {
         fontSize: typography.sizes.xs,
-        color: colors.warning,
-        marginLeft: spacing.xs,
+        color: colors.border,
+        marginTop: 2,
+        fontStyle: 'italic',
     },
-    bottomPadding: {
-        height: spacing.xxl,
+    connector: {
+        position: 'absolute',
+        left: spacing.md + 15,
+        bottom: -spacing.xs,
+        width: 1,
+        height: spacing.xs,
+        backgroundColor: colors.border,
     },
 });
 

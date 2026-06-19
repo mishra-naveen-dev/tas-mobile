@@ -80,14 +80,21 @@ const LoginScreen = ({ navigation }) => {
         try {
             const result = await auth.login(username.trim(), password);
 
-            if (result.success) {
-                // Navigation will automatically update based on auth state change
-            } else {
-                Alert.alert('Authentication Failed', result.error || 'Login failed. Please check your credentials.');
+            if (!result.success) {
+                const deviceCodes = {
+                    DEVICE_LIMIT_EXCEEDED: 'Device Already Registered',
+                    DEVICE_PENDING_APPROVAL: 'Device Pending Approval',
+                    DEVICE_BLOCKED: 'Device Blocked',
+                    DEVICE_REJECTED: 'Device Rejected',
+                    DEVICE_OWNED_BY_ANOTHER_USER: 'Device Conflict',
+                    USER_DEVICE_BLOCKED: 'Device Blocked',
+                };
+                const title = deviceCodes[result.code] || 'Authentication Failed';
+                Alert.alert(title, result.error || 'Login failed. Please check your credentials.');
             }
         } catch (error) {
             Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-            console.error('Login error:', error);
+            if (__DEV__) console.error('Login error:', error);
         } finally {
             setIsLoading(false);
         }

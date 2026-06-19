@@ -19,7 +19,7 @@ export const loadCustomBaseURL = async () => {
             api.defaults.baseURL = stored;
         }
     } catch (e) {
-        console.log('Error loading custom API URL:', e);
+        if (__DEV__) console.error('Error loading custom API URL:', e);
     }
 };
 
@@ -40,7 +40,7 @@ export const setCustomBaseURL = async (url) => {
             await AsyncStorage.removeItem('custom_api_url');
         }
     } catch (e) {
-        console.log('Error setting custom API URL:', e);
+        if (__DEV__) console.error('Error setting custom API URL:', e);
     }
 };
 
@@ -63,7 +63,7 @@ const generateDeviceFingerprint = async () => {
         const platform = Platform.OS.toUpperCase();
         return `MOBILE_${platform}_${Math.abs(hash).toString(16)}`;
     } catch (error) {
-        console.log('Device fingerprint error:', error);
+        if (__DEV__) console.error('Device fingerprint error:', error);
         return `MOBILE_${Platform.OS.toUpperCase()}_${Date.now()}`;
     }
 };
@@ -418,6 +418,11 @@ api.getAllEmployees = (params = {}) => {
 api.getDevices = (params = {}) => {
     return api.get('/organization/devices/', { params });
 };
+
+api.approveDevice = (id) => api.post(`/organization/devices/${id}/approve/`);
+api.rejectDevice = (id) => api.post(`/organization/devices/${id}/reject/`);
+api.blockDevice = (id) => api.post(`/organization/devices/${id}/block/`);
+api.resetDevice = (id) => api.post(`/organization/devices/${id}/reset/`);
 
 api.getOrganizationStats = () => {
     return api.get('/organization/users/stats/');

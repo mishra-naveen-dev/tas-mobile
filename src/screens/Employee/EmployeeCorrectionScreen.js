@@ -28,29 +28,23 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
 
     const fetchCorrections = useCallback(async () => {
         try {
-            console.log('[Correction] Fetching corrections...');
             setLoading(true);
             setError('');
-            
+
             const res = await api.get('/attendance/correction-requests/');
-            console.log('[Correction] Response status:', res.status);
-            console.log('[Correction] Response data type:', typeof res.data);
-            console.log('[Correction] Response data:', JSON.stringify(res.data, null, 2).substring(0, 1500));
-            
+
             if (res.data && typeof res.data === 'object') {
                 if (Array.isArray(res.data)) {
                     setCorrections(res.data);
                 } else if (Array.isArray(res.data.results)) {
                     setCorrections(res.data.results);
                 } else {
-                    console.log('[Correction] Unexpected data structure');
                     setCorrections([]);
                 }
             } else {
                 setCorrections([]);
             }
         } catch (err) {
-            console.log('[Correction] Error:', err);
             setError('Failed to load corrections');
         } finally {
             setLoading(false);
@@ -207,6 +201,16 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
                 </ScrollView>
             </View>
 
+            {error ? (
+                <View style={styles.errorBanner}>
+                    <Icon name="alert-circle" size={15} color={colors.danger} />
+                    <Text style={styles.errorBannerText}>{error}</Text>
+                    <TouchableOpacity onPress={fetchCorrections}>
+                        <Text style={styles.retryLink}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : null}
+
             <FlatList
                 data={filteredCorrections}
                 renderItem={renderCorrection}
@@ -332,6 +336,26 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
         marginTop: spacing.md,
+    },
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF0F0',
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginHorizontal: spacing.md,
+        marginBottom: spacing.xs,
+        gap: 8,
+    },
+    errorBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+    },
+    retryLink: {
+        fontSize: typography.sizes.sm,
+        color: colors.primary,
+        fontWeight: '600',
     },
     createBtn: {
         flexDirection: 'row',

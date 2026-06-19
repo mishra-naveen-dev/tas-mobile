@@ -19,6 +19,7 @@ const AdminDashboardScreen = ({ navigation }) => {
     const auth = useAuth();
     const user = auth?.user;
     const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState(null);
     const [stats, setStats] = useState({
         totalEmployees: 0,
         activeEmployees: 0,
@@ -52,6 +53,14 @@ const AdminDashboardScreen = ({ navigation }) => {
                 api.get('/tracking/employees/'),
             ]);
 
+            const bothFailed =
+                statsRes.status === 'rejected' && trackingRes.status === 'rejected';
+            if (bothFailed) {
+                setError('Could not load dashboard data. Pull down to retry.');
+            } else {
+                setError(null);
+            }
+
             if (statsRes.status === 'fulfilled') {
                 const statsData = statsRes.value.data;
                 setStats({
@@ -68,7 +77,7 @@ const AdminDashboardScreen = ({ navigation }) => {
                 setEmployees(trackingData);
             }
         } catch (err) {
-            console.error('Error fetching admin data:', err);
+            setError('Could not load dashboard data. Pull down to retry.');
         }
     }, []);
 
@@ -130,6 +139,16 @@ const AdminDashboardScreen = ({ navigation }) => {
                         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                     }
                 >
+                    {error ? (
+                        <View style={styles.errorBanner}>
+                            <Icon name="alert-circle" size={15} color={colors.danger} />
+                            <Text style={styles.errorBannerText}>{error}</Text>
+                            <TouchableOpacity onPress={fetchData}>
+                                <Text style={styles.retryLink}>Retry</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ) : null}
+
                     <View style={styles.kpiSection}>
                         <View style={styles.kpiRow}>
                             <StatCard title="Total Employees" value={stats.totalEmployees} icon="users" color={colors.primary} />
@@ -143,6 +162,13 @@ const AdminDashboardScreen = ({ navigation }) => {
 
                     <View style={styles.menuSection}>
                         <Text style={styles.sectionTitle}>Quick Actions</Text>
+                        <MenuItem
+                            title="My Profile"
+                            subtitle="View personal & work details"
+                            icon="user"
+                            color={colors.primary}
+                            onPress={() => navigation.navigate('Profile')}
+                        />
                         <MenuItem
                             title="Pending Approvals"
                             subtitle="Review approval requests"
@@ -356,6 +382,26 @@ const styles = StyleSheet.create({
         padding: spacing.xl,
         backgroundColor: colors.surface,
         borderRadius: 14,
+    },
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF0F0',
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginTop: spacing.md,
+        marginBottom: spacing.xs,
+        gap: 8,
+    },
+    errorBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+    },
+    retryLink: {
+        fontSize: typography.sizes.sm,
+        color: colors.primary,
+        fontWeight: '600',
     },
 });
 

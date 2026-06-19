@@ -44,6 +44,11 @@ const ChangePasswordScreen = ({ navigation }) => {
             return false;
         }
 
+        if (newPassword === currentPassword) {
+            Alert.alert('Validation Error', 'New password cannot be the same as your current password.');
+            return false;
+        }
+
         if (newPassword !== confirmPassword) {
             Alert.alert('Validation Error', 'New password and confirm password do not match.');
             return false;
@@ -147,7 +152,7 @@ const ChangePasswordScreen = ({ navigation }) => {
                         </View>
 
                         <Text style={styles.hint}>
-                            Password must be at least 8 characters long
+                            Min. 8 characters · Must differ from current password
                         </Text>
 
                         <PrimaryButton
