@@ -81,16 +81,30 @@ const LoginScreen = ({ navigation }) => {
             const result = await auth.login(username.trim(), password);
 
             if (!result.success) {
-                const deviceCodes = {
+                const deviceErrorCodes = {
                     DEVICE_LIMIT_EXCEEDED: 'Device Already Registered',
+                    NEW_DEVICE_NOT_ALLOWED_FOR_EMPLOYEE: 'New Device Not Allowed',
                     DEVICE_PENDING_APPROVAL: 'Device Pending Approval',
                     DEVICE_BLOCKED: 'Device Blocked',
                     DEVICE_REJECTED: 'Device Rejected',
                     DEVICE_OWNED_BY_ANOTHER_USER: 'Device Conflict',
                     USER_DEVICE_BLOCKED: 'Device Blocked',
                 };
-                const title = deviceCodes[result.code] || 'Authentication Failed';
-                Alert.alert(title, result.error || 'Login failed. Please check your credentials.');
+                const isDeviceError = !!deviceErrorCodes[result.code];
+                const title = deviceErrorCodes[result.code] || 'Authentication Failed';
+                const message = result.error || 'Login failed. Please check your credentials.';
+
+                if (isDeviceError) {
+                    Alert.alert(title, message, [
+                        {
+                            text: 'Contact Admin',
+                            onPress: handleContactSupport,
+                        },
+                        { text: 'OK', style: 'cancel' },
+                    ]);
+                } else {
+                    Alert.alert(title, message);
+                }
             }
         } catch (error) {
             Alert.alert('Error', 'An unexpected error occurred. Please try again.');

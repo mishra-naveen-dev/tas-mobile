@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
+import { parseApiError } from '../../core/error/AppErrorHandler';
 import { colors, typography, spacing } from '../../theme/tokens';
 
 const PERIODS = [
@@ -45,8 +46,10 @@ const MyPerformanceScreen = ({ navigation }) => {
             setData(res.data);
             setError(null);
         } catch (err) {
-            setData(null);
-            setError('Failed to load performance data.');
+            if (err?.response?.status !== 401) {
+                const { message } = parseApiError(err);
+                setError(message);
+            }
         } finally {
             setLoading(false);
             setRefreshing(false);
