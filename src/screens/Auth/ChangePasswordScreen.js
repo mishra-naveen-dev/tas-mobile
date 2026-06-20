@@ -65,17 +65,25 @@ const ChangePasswordScreen = ({ navigation }) => {
         setIsLoading(true);
 
         try {
-            await changePassword(newPassword, token);
-            Alert.alert('Success', 'Password updated successfully. Please login again.', [
-                {
-                    text: 'OK',
-                    onPress: () => {
-                        auth.logout();
-                    }
-                }
-            ]);
+            await changePassword(currentPassword, newPassword);
+            Alert.alert(
+                'Password Updated',
+                'Your password has been changed successfully. Please login with your new password.',
+                [
+                    {
+                        text: 'Login Now',
+                        onPress: async () => {
+                            await auth.logout();
+                        },
+                    },
+                ],
+                { cancelable: false }
+            );
         } catch (error) {
-            const errorMessage = error?.response?.data?.detail || 'Failed to change password. Please try again.';
+            const data = error?.response?.data;
+            const errorMessage =
+                data?.error || data?.detail || data?.message ||
+                'Failed to change password. Please try again.';
             Alert.alert('Error', errorMessage);
         } finally {
             setIsLoading(false);
