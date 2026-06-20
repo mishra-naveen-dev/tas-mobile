@@ -168,6 +168,13 @@ api.interceptors.response.use(
                 const refresh = await AsyncStorage.getItem('refresh');
 
                 if (!refresh) {
+                    // No refresh token — check whether user was ever authenticated.
+                    // On a fresh install both access and refresh are absent; firing
+                    // "Session Expired" in that state is wrong — silently reject.
+                    const access = await AsyncStorage.getItem('access');
+                    if (!access) {
+                        return Promise.reject(error);
+                    }
                     isSessionExpiredHandled = true;
                     await clearAuthData();
                     if (sessionExpiredCallback) {
