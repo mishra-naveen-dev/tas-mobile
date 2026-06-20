@@ -155,55 +155,59 @@ const LoginScreen = ({ navigation }) => {
                             style={{ marginTop: spacing.md }}
                         />
 
-                        {/* Server URL config — collapsed by default */}
-                        <TouchableOpacity
-                            style={styles.serverToggle}
-                            onPress={() => setShowServerConfig(v => !v)}
-                            activeOpacity={0.7}
-                        >
-                            <Icon name="server" size={13} color={colors.textMuted} />
-                            <Text style={styles.serverToggleText}>
-                                {showServerConfig ? 'Hide Server Config' : 'Server Config'}
-                            </Text>
-                            <Icon
-                                name={showServerConfig ? 'chevron-up' : 'chevron-down'}
-                                size={13}
-                                color={colors.textMuted}
-                            />
-                        </TouchableOpacity>
-
-                        {showServerConfig && (
-                            <View style={styles.serverPanel}>
-                                <InputField
-                                    icon="link"
-                                    placeholder="http://10.0.2.2:8000"
-                                    value={serverUrl}
-                                    onChangeText={setServerUrl}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                    keyboardType="url"
-                                />
-                                <View style={styles.serverQuickRow}>
-                                    <TouchableOpacity
-                                        style={styles.quickBtn}
-                                        onPress={handleUseLocal}
-                                    >
-                                        <Text style={styles.quickBtnText}>Local (Emulator)</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        style={styles.quickBtn}
-                                        onPress={handleUseProd}
-                                    >
-                                        <Text style={styles.quickBtnText}>Production</Text>
-                                    </TouchableOpacity>
-                                </View>
+                        {/* Server URL config — dev builds only, never shown to end users */}
+                        {__DEV__ && (
+                            <>
                                 <TouchableOpacity
-                                    style={styles.saveServerBtn}
-                                    onPress={handleSaveServerUrl}
+                                    style={styles.serverToggle}
+                                    onPress={() => setShowServerConfig(v => !v)}
+                                    activeOpacity={0.7}
                                 >
-                                    <Text style={styles.saveServerBtnText}>Save & Apply</Text>
+                                    <Icon name="server" size={13} color={colors.textMuted} />
+                                    <Text style={styles.serverToggleText}>
+                                        {showServerConfig ? 'Hide Server Config' : 'Server Config'}
+                                    </Text>
+                                    <Icon
+                                        name={showServerConfig ? 'chevron-up' : 'chevron-down'}
+                                        size={13}
+                                        color={colors.textMuted}
+                                    />
                                 </TouchableOpacity>
-                            </View>
+
+                                {showServerConfig && (
+                                    <View style={styles.serverPanel}>
+                                        <InputField
+                                            icon="link"
+                                            placeholder="http://10.0.2.2:8000"
+                                            value={serverUrl}
+                                            onChangeText={setServerUrl}
+                                            autoCapitalize="none"
+                                            autoCorrect={false}
+                                            keyboardType="url"
+                                        />
+                                        <View style={styles.serverQuickRow}>
+                                            <TouchableOpacity
+                                                style={styles.quickBtn}
+                                                onPress={handleUseLocal}
+                                            >
+                                                <Text style={styles.quickBtnText}>Local (Emulator)</Text>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                style={styles.quickBtn}
+                                                onPress={handleUseProd}
+                                            >
+                                                <Text style={styles.quickBtnText}>Production</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={styles.saveServerBtn}
+                                            onPress={handleSaveServerUrl}
+                                        >
+                                            <Text style={styles.saveServerBtnText}>Save & Apply</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                            </>
                         )}
                     </GlassCard>
 
