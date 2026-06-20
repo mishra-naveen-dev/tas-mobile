@@ -340,35 +340,38 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 <View style={styles.section}>
                     <FieldLabel>From Address</FieldLabel>
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, submitting && styles.inputDisabled]}
                         value={formData.from_address}
                         onChangeText={(text) => updateForm('from_address', text)}
                         placeholder="Enter address or location"
                         placeholderTextColor={colors.textMuted}
+                        editable={!submitting}
                     />
                 </View>
 
                 <View style={styles.section}>
                     <FieldLabel>Pincode (Optional)</FieldLabel>
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, submitting && styles.inputDisabled]}
                         value={formData.pincode}
                         onChangeText={(text) => updateForm('pincode', text.replace(/[^0-9]/g, '').slice(0, 6))}
                         placeholder="6-digit pincode"
                         placeholderTextColor={colors.textMuted}
                         keyboardType="numeric"
                         maxLength={6}
+                        editable={!submitting}
                     />
                 </View>
 
                 <View style={styles.section}>
                     <FieldLabel>To Address (Optional)</FieldLabel>
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, submitting && styles.inputDisabled]}
                         value={formData.to_address}
                         onChangeText={(text) => updateForm('to_address', text)}
                         placeholder="Enter destination address"
                         placeholderTextColor={colors.textMuted}
+                        editable={!submitting}
                     />
                 </View>
 
@@ -655,6 +658,9 @@ fieldLabel: {
         padding: spacing.md,
         fontSize: typography.sizes.md,
         color: colors.textDark,
+    },
+    inputDisabled: {
+        opacity: 0.5,
     },
     textArea: {
         height: 100,

@@ -6,7 +6,9 @@ import {
     Alert,
     ScrollView,
     TouchableOpacity,
-    RefreshControl
+    RefreshControl,
+    KeyboardAvoidingView,
+    Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -83,6 +85,10 @@ const ApplyAllowanceScreen = ({ navigation, route }) => {
                 <View style={{ width: 40 }} />
             </View>
 
+            <KeyboardAvoidingView
+                style={styles.flex}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            >
             <ScrollView
                 contentContainerStyle={styles.scrollContent}
                 keyboardShouldPersistTaps="handled"
@@ -151,6 +157,7 @@ const ApplyAllowanceScreen = ({ navigation, route }) => {
                     />
                 )}
             </ScrollView>
+            </KeyboardAvoidingView>
 
             <LoadingOverlay visible={isLoading} message="Submitting claim..." />
         </SafeAreaView>
@@ -159,6 +166,7 @@ const ApplyAllowanceScreen = ({ navigation, route }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
+    flex: { flex: 1 },
     header: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         padding: spacing.md, backgroundColor: colors.surface,

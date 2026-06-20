@@ -109,7 +109,7 @@ const ChangePasswordScreen = ({ navigation }) => {
                             Enter your current password and choose a new password.
                         </Text>
 
-                        <View style={styles.inputContainer}>
+                        <View style={[styles.inputContainer, isLoading && styles.inputDisabled]}>
                             <Icon name="lock" size={20} color={colors.textMuted} />
                             <TextInput
                                 style={styles.input}
@@ -119,6 +119,7 @@ const ChangePasswordScreen = ({ navigation }) => {
                                 onChangeText={setCurrentPassword}
                                 secureTextEntry={!showPasswords}
                                 autoCapitalize="none"
+                                editable={!isLoading}
                             />
                             <TouchableOpacity onPress={() => setShowPasswords(!showPasswords)}>
                                 <Icon
@@ -129,7 +130,7 @@ const ChangePasswordScreen = ({ navigation }) => {
                             </TouchableOpacity>
                         </View>
 
-                        <View style={styles.inputContainer}>
+                        <View style={[styles.inputContainer, isLoading && styles.inputDisabled]}>
                             <Icon name="lock" size={20} color={colors.textMuted} />
                             <TextInput
                                 style={styles.input}
@@ -139,10 +140,11 @@ const ChangePasswordScreen = ({ navigation }) => {
                                 onChangeText={setNewPassword}
                                 secureTextEntry={!showPasswords}
                                 autoCapitalize="none"
+                                editable={!isLoading}
                             />
                         </View>
 
-                        <View style={styles.inputContainer}>
+                        <View style={[styles.inputContainer, isLoading && styles.inputDisabled]}>
                             <Icon name="lock" size={20} color={colors.textMuted} />
                             <TextInput
                                 style={styles.input}
@@ -152,6 +154,7 @@ const ChangePasswordScreen = ({ navigation }) => {
                                 onChangeText={setConfirmPassword}
                                 secureTextEntry={!showPasswords}
                                 autoCapitalize="none"
+                                editable={!isLoading}
                             />
                         </View>
 
@@ -223,6 +226,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.sm,
         fontSize: typography.sizes.md,
         color: colors.textDark,
+    },
+    inputDisabled: {
+        opacity: 0.5,
     },
     hint: {
         fontSize: typography.sizes.sm,

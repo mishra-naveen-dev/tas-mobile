@@ -4,6 +4,9 @@ import {
     Text,
     StyleSheet,
     Alert,
+    TouchableOpacity,
+    ActivityIndicator,
+    ScrollView,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -93,7 +96,7 @@ const DailySummaryScreen = ({ navigation }) => {
             ) : summary ? (
 
                 /* RESULTS */
-                <View style={styles.resultsPanel}>
+                <ScrollView style={styles.resultsPanel} showsVerticalScrollIndicator={false}>
 
                     <GlassCard style={styles.heroCard}>
                         <View style={styles.heroMetric}>
@@ -142,7 +145,7 @@ const DailySummaryScreen = ({ navigation }) => {
                         </View>
                     </GlassCard>
 
-                </View>
+                </ScrollView>
 
             ) : null}
 
