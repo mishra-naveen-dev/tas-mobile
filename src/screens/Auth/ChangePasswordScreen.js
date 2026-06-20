@@ -66,19 +66,15 @@ const ChangePasswordScreen = ({ navigation }) => {
 
         try {
             await changePassword(currentPassword, newPassword);
-            Alert.alert(
-                'Password Updated',
-                'Your password has been changed successfully. Please login with your new password.',
-                [
-                    {
-                        text: 'Login Now',
-                        onPress: async () => {
-                            await auth.logout();
-                        },
-                    },
-                ],
-                { cancelable: false }
-            );
+
+            // Clear force_password_change in local auth state.
+            // RootNavigator watches this flag — setting it false makes it
+            // immediately route the user to their home screen without logout.
+            auth.updateUser({
+                ...auth.user,
+                force_password_change: false,
+                forcePasswordChange: false,
+            });
         } catch (error) {
             const data = error?.response?.data;
             const errorMessage =
