@@ -89,6 +89,7 @@ const LoginScreen = ({ navigation }) => {
                     DEVICE_REJECTED: 'Device Rejected',
                     DEVICE_OWNED_BY_ANOTHER_USER: 'Device Conflict',
                     USER_DEVICE_BLOCKED: 'Device Blocked',
+                    ACCOUNT_BLOCKED_MULTI_DEVICE: 'Account Locked',
                 };
                 const isDeviceError = !!deviceErrorCodes[result.code];
                 const title = deviceErrorCodes[result.code] || 'Authentication Failed';
