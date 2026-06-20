@@ -93,7 +93,9 @@ const LoginScreen = ({ navigation }) => {
                 };
                 const isDeviceError = !!deviceErrorCodes[result.code];
                 const title = deviceErrorCodes[result.code] || 'Authentication Failed';
-                const message = result.error || 'Login failed. Please check your credentials.';
+                // Guard against arrays — Alert.alert crashes on Android if message is not a string
+                const raw = result.error || 'Login failed. Please check your credentials.';
+                const message = typeof raw === 'string' ? raw : (Array.isArray(raw) ? raw[0] || '' : String(raw));
 
                 if (isDeviceError) {
                     Alert.alert(title, message, [

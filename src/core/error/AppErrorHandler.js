@@ -22,6 +22,18 @@ export const ErrorPriority = {
     CRITICAL: 'critical',
 };
 
+// DRF can return strings OR arrays for any error field (e.g. {"error": ["msg"]} or
+// {"detail": ["msg"]}). Passing an array to Alert.alert() crashes on Android with
+// "Value for message cannot be cast from ReadableNativeArray to String".
+// Always extract a plain string before using any value from the response.
+const safeString = (val, fallback = '') => {
+    if (!val && val !== 0) return fallback;
+    if (typeof val === 'string') return val;
+    if (Array.isArray(val)) return val.length > 0 ? safeString(val[0], fallback) : fallback;
+    if (typeof val === 'object') return fallback;
+    return String(val);
+};
+
 // Parse error from API response
 export const parseApiError = (error) => {
     let message = 'An unexpected error occurred';
@@ -53,7 +65,8 @@ export const parseApiError = (error) => {
 
     const status = error.response?.status;
     const data = error.response?.data;
-    code = data?.code || null;
+    // data.code can itself be an ErrorDetail (DRF) — always extract as string
+    code = safeString(data?.code) || null;
 
     // Handle status codes
     switch (status) {
@@ -61,17 +74,17 @@ export const parseApiError = (error) => {
             // Bad Request - validation errors
             if (data) {
                 if (data.detail) {
-                    message = data.detail;
+                    message = safeString(data.detail);
                 } else if (data.non_field_errors?.length) {
-                    message = data.non_field_errors[0];
+                    message = safeString(data.non_field_errors[0]);
                 } else if (data.error) {
-                    message = data.error;
+                    message = safeString(data.error);
                 } else {
                     // Field-specific errors
                     const fieldErrors = [];
                     for (const [key, value] of Object.entries(data)) {
                         if (Array.isArray(value)) {
-                            fieldErrors.push(`${key}: ${value[0]}`);
+                            fieldErrors.push(`${key}: ${safeString(value[0])}`);
                         }
                     }
                     message = fieldErrors.length > 0 ? fieldErrors.join(', ') : 'Invalid request data';
@@ -87,11 +100,11 @@ export const parseApiError = (error) => {
         case 401:
             // Unauthorized - session/token issues
             if (data?.detail) {
-                message = data.detail;
+                message = safeString(data.detail);
             } else if (data?.non_field_errors) {
-                message = data.non_field_errors[0];
+                message = safeString(data.non_field_errors[0]);
             } else if (data?.error) {
-                message = data.error;
+                message = safeString(data.error);
             } else {
                 message = 'Your session has expired. Please login again.';
             }
@@ -103,15 +116,15 @@ export const parseApiError = (error) => {
         case 403:
             // Forbidden - device, permissions
             if (data?.code === 'DEVICE_BLOCKED') {
-                message = data.error || 'Your device has been blocked. Contact administrator.';
+                message = safeString(data.error, 'Your device has been blocked. Contact administrator.');
             } else if (data?.code === 'DEVICE_PENDING_APPROVAL') {
-                message = data.error || 'Device pending approval. Please wait for admin approval.';
+                message = safeString(data.error, 'Device pending approval. Please wait for admin approval.');
             } else if (data?.code === 'NEW_DEVICE_NOT_ALLOWED_FOR_EMPLOYEE') {
-                message = data.error || 'Login from new device not allowed.';
+                message = safeString(data.error, 'Login from new device not allowed.');
             } else if (data?.code === 'USER_BLOCKED') {
-                message = data.error || 'Your account has been blocked.';
+                message = safeString(data.error, 'Your account has been blocked.');
             } else if (data?.error) {
-                message = data.error;
+                message = safeString(data.error);
             } else {
                 message = 'You do not have permission for this action.';
             }
@@ -121,8 +134,7 @@ export const parseApiError = (error) => {
             break;
 
         case 404:
-            // Not Found
-            message = data?.detail || data?.error || 'The requested resource was not found.';
+            message = safeString(data?.detail) || safeString(data?.error) || 'The requested resource was not found.';
             type = ErrorType.SERVER;
             priority = ErrorPriority.LOW;
             canRetry = false;
@@ -132,12 +144,12 @@ export const parseApiError = (error) => {
             // Validation Error
             if (data) {
                 if (data.detail) {
-                    message = data.detail;
+                    message = safeString(data.detail);
                 } else {
                     const fieldErrors = [];
                     for (const [key, value] of Object.entries(data)) {
                         if (Array.isArray(value)) {
-                            fieldErrors.push(`${key}: ${value[0]}`);
+                            fieldErrors.push(`${key}: ${safeString(value[0])}`);
                             if (!forField) forField = key;
                         }
                     }
@@ -152,8 +164,7 @@ export const parseApiError = (error) => {
             break;
 
         case 429:
-            // Rate Limited
-            message = data?.error || 'Too many requests. Please wait a moment and try again.';
+            message = safeString(data?.error, 'Too many requests. Please wait a moment and try again.');
             type = ErrorType.SERVER;
             priority = ErrorPriority.MEDIUM;
             canRetry = true;
@@ -162,24 +173,19 @@ export const parseApiError = (error) => {
         case 500:
         case 502:
         case 503:
-            // Server Error
-            message = 'Server error. Please try again later.';
-            if (data?.detail) {
-                message = data.detail;
-            }
+            message = data?.detail ? safeString(data.detail) : 'Server error. Please try again later.';
             type = ErrorType.SERVER;
             priority = ErrorPriority.CRITICAL;
             canRetry = true;
             break;
 
         default:
-            // Unknown error
             if (data?.detail) {
-                message = data.detail;
+                message = safeString(data.detail);
             } else if (data?.error) {
-                message = data.error;
+                message = safeString(data.error);
             } else if (data?.message) {
-                message = data.message;
+                message = safeString(data.message);
             } else {
                 message = error.message || 'An unexpected error occurred.';
             }
