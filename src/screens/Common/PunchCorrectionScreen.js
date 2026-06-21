@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -85,33 +85,54 @@ const PunchCorrectionScreen = ({ navigation }) => {
         }
     };
 
-    const handleCalculateDistance = async () => {
-        const fromAddress = formData.from_address;
-        const toAddress = formData.to_address || formData.from_address;
+    const debounceRef = useRef(null);
 
-        if (!fromAddress || fromAddress.length < 5) {
-            Alert.alert('Error', 'Please enter from address');
-            return;
-        }
-
+    const runDistanceCalc = async (fromAddr, fromPin, toAddr, toPin) => {
         setCalculatingDistance(true);
         try {
-            console.log('[PunchCorrection] Calculating distance...');
-            const calculatedDist = await GeocodingService.calculateDistance(fromAddress, toAddress);
-            console.log('[PunchCorrection] Distance result:', calculatedDist);
-            
-            if (calculatedDist > 0) {
-                setDistance(calculatedDist);
+            const fromQuery = `${fromAddr}, ${fromPin}, India`;
+            const toQuery = toAddr ? `${toAddr}, ${toPin}, India` : fromQuery;
+            const dist = await GeocodingService.calculateDrivingDistance(fromQuery, toQuery);
+            if (dist > 0) {
+                setDistance(dist);
             } else {
-                Alert.alert('Warning', 'Could not calculate distance. Using default 0.5km');
-                setDistance(0.5);
+                setDistance(0);
+                setError('Could not calculate distance. Please verify the addresses and pincodes.');
             }
         } catch (err) {
-            console.log('[PunchCorrection] Distance error:', err);
-            setDistance(0.5);
+            setDistance(0);
         } finally {
             setCalculatingDistance(false);
         }
+    };
+
+    useEffect(() => {
+        const { from_address, pincode, to_address, to_pincode } = formData;
+        const canCalc =
+            from_address.length >= 3 &&
+            pincode.length === 6 &&
+            to_address.length >= 3 &&
+            to_pincode.length === 6;
+
+        if (!canCalc) return;
+
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            runDistanceCalc(from_address, pincode, to_address, to_pincode);
+        }, 800);
+
+        return () => {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+        };
+    }, [formData.from_address, formData.pincode, formData.to_address, formData.to_pincode]);
+
+    const handleCalculateDistance = async () => {
+        const { from_address, pincode, to_address, to_pincode } = formData;
+        if (!from_address || from_address.length < 3) {
+            Alert.alert('Error', 'Please enter from address');
+            return;
+        }
+        await runDistanceCalc(from_address, pincode, to_address, to_pincode);
     };
 
     const formatDate = (date) => {
@@ -401,28 +422,31 @@ const PunchCorrectionScreen = ({ navigation }) => {
                     />
                 </View>
 
-                {(formData.visit_type === 'COLLECTION' || formData.visit_type === 'DISBURSEMENT') && (
+                {!!formData.from_address && (
                     <View style={styles.section}>
                         <FieldLabel>Distance</FieldLabel>
                         <View style={styles.distanceRow}>
                             <View style={styles.distanceValue}>
-                                <Text style={styles.distanceText}>
-                                    {distance > 0 ? `${distance} km` : 'Not calculated'}
-                                </Text>
+                                {calculatingDistance ? (
+                                    <View style={styles.distanceCalcRow}>
+                                        <ActivityIndicator size="small" color={colors.primary} />
+                                        <Text style={[styles.distanceText, { marginLeft: 8, color: colors.textMuted }]}>
+                                            Calculating...
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <Text style={styles.distanceText}>
+                                        {distance > 0 ? `${distance} km` : 'Fill addresses to auto-calculate'}
+                                    </Text>
+                                )}
                             </View>
                             <TouchableOpacity
                                 style={[styles.calculateBtn, calculatingDistance && styles.calculateBtnDisabled]}
                                 onPress={handleCalculateDistance}
                                 disabled={calculatingDistance}
                             >
-                                {calculatingDistance ? (
-                                    <ActivityIndicator size="small" color="#FFF" />
-                                ) : (
-                                    <>
-                                        <Icon name="navigation" size={16} color="#FFF" />
-                                        <Text style={styles.calculateBtnText}>Calculate</Text>
-                                    </>
-                                )}
+                                <Icon name="navigation" size={16} color="#FFF" />
+                                <Text style={styles.calculateBtnText}>Calculate</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -566,6 +590,10 @@ fieldLabel: {
     },
     distanceValue: {
         flex: 1,
+    },
+    distanceCalcRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     distanceText: {
         fontSize: typography.sizes.lg,
