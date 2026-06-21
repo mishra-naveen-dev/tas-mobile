@@ -39,23 +39,63 @@ const VISIT_TYPES = [
     { value: 'OTHER', label: 'Other' },
 ];
 
-const PunchCorrectionScreen = ({ navigation }) => {
+const PunchCorrectionScreen = ({ navigation, route }) => {
     const auth = useAuth();
 
-    const [formData, setFormData] = useState({
-        correction_type: 'ADD',
-        correction_date: new Date(),
-        correction_time: new Date(),
-        punch_type: 'PUNCH_IN',
-        visit_type: 'OTHER',
-        from_address: '',
-        pincode: '',
-        to_address: '',
-        to_pincode: '',
-        reason: '',
-        loan_id: '',
-        amount: '',
-        payment_method: 'CASH',
+    // Edit mode params passed from EmployeeCorrectionScreen
+    const editMode = route?.params?.editMode || false;
+    const correctionId = route?.params?.correctionId || null;
+    const existingData = route?.params?.existingData || null;
+    const editsLeft = route?.params?.editsLeft ?? 3;
+
+    const parseExistingDate = (dateStr) => {
+        if (!dateStr) return new Date();
+        const d = new Date(dateStr);
+        return isNaN(d.getTime()) ? new Date() : d;
+    };
+
+    const parseExistingTime = (timeStr) => {
+        if (!timeStr) return new Date();
+        if (timeStr.includes('T')) return new Date(timeStr);
+        const [h, m] = timeStr.split(':');
+        const d = new Date();
+        d.setHours(+h || 0, +m || 0, 0, 0);
+        return d;
+    };
+
+    const [formData, setFormData] = useState(() => {
+        if (editMode && existingData) {
+            return {
+                correction_type: existingData.correction_type || 'ADD',
+                correction_date: parseExistingDate(existingData.correction_date),
+                correction_time: parseExistingTime(existingData.correction_time),
+                punch_type: existingData.punch_type || 'PUNCH_IN',
+                visit_type: existingData.visit_type || 'OTHER',
+                from_address: existingData.from_address || '',
+                pincode: existingData.pincode || '',
+                to_address: existingData.to_address || '',
+                to_pincode: existingData.to_pincode || '',
+                reason: existingData.reason || '',
+                loan_id: existingData.loan_id || '',
+                amount: existingData.amount ? String(existingData.amount) : '',
+                payment_method: existingData.payment_method || 'CASH',
+            };
+        }
+        return {
+            correction_type: 'ADD',
+            correction_date: new Date(),
+            correction_time: new Date(),
+            punch_type: 'PUNCH_IN',
+            visit_type: 'OTHER',
+            from_address: '',
+            pincode: '',
+            to_address: '',
+            to_pincode: '',
+            reason: '',
+            loan_id: '',
+            amount: '',
+            payment_method: 'CASH',
+        };
     });
 
     const [showDatePicker, setShowDatePicker] = useState(false);
@@ -63,7 +103,7 @@ const PunchCorrectionScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
-    const [distance, setDistance] = useState(0);
+    const [distance, setDistance] = useState(editMode && existingData ? (existingData.calculated_distance || 0) : 0);
     const [calculatingDistance, setCalculatingDistance] = useState(false);
 
     const updateForm = (key, value) => {
@@ -205,11 +245,17 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 calculated_distance: distance || 0,
             };
 
-            await api.createCorrectionRequest(payload);
-
-            Alert.alert('Success', 'Correction request submitted successfully!', [
-                { text: 'OK', onPress: () => navigation.goBack() }
-            ]);
+            if (editMode && correctionId) {
+                await api.updateCorrectionRequest(correctionId, payload);
+                Alert.alert('Success', 'Correction request updated successfully!', [
+                    { text: 'OK', onPress: () => navigation.goBack() }
+                ]);
+            } else {
+                await api.createCorrectionRequest(payload);
+                Alert.alert('Success', 'Correction request submitted successfully!', [
+                    { text: 'OK', onPress: () => navigation.goBack() }
+                ]);
+            }
         } catch (err) {
             const errMsg = err?.response?.data?.error || err?.response?.data?.detail || 'Failed to submit request';
             setError(Array.isArray(errMsg) ? errMsg.join(', ') : errMsg);
@@ -230,9 +276,20 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Icon name="arrow-left" size={24} color={colors.textDark} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Punch Correction</Text>
+                <Text style={styles.headerTitle}>
+                    {editMode ? 'Edit Correction' : 'Punch Correction'}
+                </Text>
                 <View style={{ width: 40 }} />
             </View>
+
+            {editMode && (
+                <View style={styles.editModeBanner}>
+                    <Icon name="edit" size={14} color={colors.warning} />
+                    <Text style={styles.editModeBannerText}>
+                        Edit mode — {editsLeft} edit{editsLeft !== 1 ? 's' : ''} remaining
+                    </Text>
+                </View>
+            )}
 
             {error ? (
                 <View style={styles.errorBanner}>
@@ -506,8 +563,10 @@ const PunchCorrectionScreen = ({ navigation }) => {
                         <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
                         <>
-                            <Icon name="send" size={20} color="#FFFFFF" />
-                            <Text style={styles.submitBtnText}>Submit Request</Text>
+                            <Icon name={editMode ? 'save' : 'send'} size={20} color="#FFFFFF" />
+                            <Text style={styles.submitBtnText}>
+                                {editMode ? 'Save Changes' : 'Submit Request'}
+                            </Text>
                         </>
                     )}
                 </TouchableOpacity>
@@ -529,6 +588,21 @@ const styles = StyleSheet.create({
         backgroundColor: colors.surface,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
+    },
+    editModeBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#FFF8E1',
+        borderBottomWidth: 1,
+        borderBottomColor: '#FFE082',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+    },
+    editModeBannerText: {
+        fontSize: typography.sizes.sm,
+        color: '#F57F17',
+        fontWeight: '600',
     },
     backBtn: {
         width: 40,

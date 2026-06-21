@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -7,7 +7,8 @@ import {
     TouchableOpacity,
     Alert,
     FlatList,
-    RefreshControl
+    RefreshControl,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -17,6 +18,8 @@ import { useAuth } from '../../context/AuthContext';
 import HeroHeader from '../../components/HeroHeader';
 import { colors, typography, spacing } from '../../theme/tokens';
 
+const MAX_EDITS = 3;
+
 const EmployeeCorrectionScreen = ({ navigation }) => {
     const auth = useAuth();
     const user = auth?.user;
@@ -25,22 +28,17 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
     const [refreshing, setRefreshing] = useState(false);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
     const [error, setError] = useState('');
+    const [deletingId, setDeletingId] = useState(null);
 
     const fetchCorrections = useCallback(async () => {
         try {
             setLoading(true);
             setError('');
-
             const res = await api.get('/attendance/correction-requests/');
-
-            if (res.data && typeof res.data === 'object') {
-                if (Array.isArray(res.data)) {
-                    setCorrections(res.data);
-                } else if (Array.isArray(res.data.results)) {
-                    setCorrections(res.data.results);
-                } else {
-                    setCorrections([]);
-                }
+            if (Array.isArray(res.data)) {
+                setCorrections(res.data);
+            } else if (Array.isArray(res.data?.results)) {
+                setCorrections(res.data.results);
             } else {
                 setCorrections([]);
             }
@@ -61,8 +59,41 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
         fetchCorrections();
     };
 
-    const handleLogout = () => {
-        auth.logout();
+    const handleEdit = (item) => {
+        navigation.navigate('PunchCorrection', {
+            editMode: true,
+            correctionId: item.id,
+            existingData: item,
+            editsLeft: MAX_EDITS - (item.edit_count || 0),
+        });
+    };
+
+    const handleDelete = (item) => {
+        Alert.alert(
+            'Delete Request',
+            'Are you sure you want to delete this correction request? This action cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () => confirmDelete(item.id),
+                },
+            ]
+        );
+    };
+
+    const confirmDelete = async (id) => {
+        setDeletingId(id);
+        try {
+            await api.deleteCorrectionRequest(id);
+            setCorrections(prev => prev.filter(c => c.id !== id));
+        } catch (err) {
+            const msg = err?.response?.data?.error || 'Failed to delete request.';
+            Alert.alert('Error', msg);
+        } finally {
+            setDeletingId(null);
+        }
     };
 
     const getStatusColor = (status) => {
@@ -73,11 +104,13 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
     };
 
     const getStatusLabel = (status) => {
-        if (status === 'PENDING') return '🟡 Pending';
-        if (status === 'ADMIN_APPROVED') return '🟢 Approved by Admin';
-        if (status === 'ADMIN_REJECTED') return '🔴 Rejected by Admin';
-        if (status === 'SUPERADMIN_APPROVED') return '🟢 Approved by Superadmin';
-        if (status === 'SUPERADMIN_REJECTED') return '🔴 Rejected by Superadmin';
+        if (status === 'PENDING') return 'Pending';
+        if (status === 'APPROVED') return 'Approved';
+        if (status === 'REJECTED') return 'Rejected';
+        if (status === 'ADMIN_APPROVED') return 'Approved by Admin';
+        if (status === 'ADMIN_REJECTED') return 'Rejected by Admin';
+        if (status === 'SUPERADMIN_APPROVED') return 'Approved';
+        if (status === 'SUPERADMIN_REJECTED') return 'Rejected';
         return status || 'Unknown';
     };
 
@@ -92,80 +125,144 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
 
     const formatDate = (dateString) => {
         if (!dateString) return '';
-        const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', {
+        return new Date(dateString).toLocaleDateString('en-IN', {
+            day: '2-digit',
             month: 'short',
-            day: 'numeric',
-            year: 'numeric'
+            year: 'numeric',
         });
     };
 
-    const formatTime = (dateString) => {
-        if (!dateString) return '';
-        const date = new Date(dateString);
-        return date.toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+    const formatTime = (timeString) => {
+        if (!timeString) return '';
+        // Handle both "HH:MM:SS" and ISO strings
+        if (timeString.includes('T')) {
+            return new Date(timeString).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+        }
+        const [h, m] = timeString.split(':');
+        const d = new Date();
+        d.setHours(+h, +m);
+        return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
     };
 
-    const renderCorrection = ({ item }) => (
-        <View style={styles.correctionCard}>
-            <View style={styles.correctionHeader}>
-                <View style={styles.dateTimeContainer}>
-                    <Text style={styles.correctionDate}>{formatDate(item.correction_date || item.requested_at)}</Text>
-                    <Text style={styles.correctionTime}>{formatTime(item.correction_time || item.requested_at)}</Text>
+    const renderCorrection = ({ item }) => {
+        const isPending = item.status === 'PENDING';
+        const editCount = item.edit_count || 0;
+        const canEdit = isPending && editCount < MAX_EDITS;
+        const canDelete = isPending;
+        const isDeleting = deletingId === item.id;
+
+        return (
+            <View style={styles.correctionCard}>
+                {/* Header row */}
+                <View style={styles.correctionHeader}>
+                    <View style={styles.dateTimeContainer}>
+                        <Text style={styles.correctionDate}>{formatDate(item.correction_date)}</Text>
+                        <Text style={styles.correctionTime}>{formatTime(item.correction_time)}</Text>
+                    </View>
+                    <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(item.status)}20` }]}>
+                        <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
+                            {getStatusLabel(item.status)}
+                        </Text>
+                    </View>
                 </View>
-                <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(item.status)}15` }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
-                        {getStatusLabel(item.status)}
-                    </Text>
+
+                {/* Body */}
+                <View style={styles.correctionBody}>
+                    <View style={styles.infoRow}>
+                        <Icon name="edit-3" size={14} color={colors.textMuted} />
+                        <Text style={styles.infoLabel}>Type:</Text>
+                        <Text style={styles.infoValue}>{item.correction_type || 'N/A'}</Text>
+                    </View>
+                    {item.from_address ? (
+                        <View style={styles.infoRow}>
+                            <Icon name="map-pin" size={14} color={colors.textMuted} />
+                            <Text style={styles.infoLabel}>From:</Text>
+                            <Text style={styles.infoValue} numberOfLines={1}>{item.from_address}</Text>
+                        </View>
+                    ) : null}
+                    {item.to_address ? (
+                        <View style={styles.infoRow}>
+                            <Icon name="map-pin" size={14} color={colors.primary} />
+                            <Text style={styles.infoLabel}>To:</Text>
+                            <Text style={styles.infoValue} numberOfLines={1}>{item.to_address}</Text>
+                        </View>
+                    ) : null}
+                    {item.calculated_distance > 0 && (
+                        <View style={styles.infoRow}>
+                            <Icon name="navigation" size={14} color={colors.textMuted} />
+                            <Text style={styles.infoLabel}>Distance:</Text>
+                            <Text style={styles.infoValue}>{item.calculated_distance} km</Text>
+                        </View>
+                    )}
+                    {item.reason ? (
+                        <View style={styles.infoRow}>
+                            <Icon name="message-circle" size={14} color={colors.textMuted} />
+                            <Text style={styles.infoLabel}>Reason:</Text>
+                            <Text style={styles.infoValue} numberOfLines={2}>{item.reason}</Text>
+                        </View>
+                    ) : null}
+                    {item.reviewed_by_name ? (
+                        <View style={styles.infoRow}>
+                            <Icon name="user-check" size={14} color={colors.textMuted} />
+                            <Text style={styles.infoLabel}>Reviewed by:</Text>
+                            <Text style={styles.infoValue}>{item.reviewed_by_name}</Text>
+                        </View>
+                    ) : null}
+                    {item.review_comment ? (
+                        <View style={styles.infoRow}>
+                            <Icon name="message-square" size={14} color={colors.textMuted} />
+                            <Text style={styles.infoLabel}>Comment:</Text>
+                            <Text style={styles.infoValue}>{item.review_comment}</Text>
+                        </View>
+                    ) : null}
+
+                    {/* Edit count badge for pending items */}
+                    {isPending && (
+                        <View style={styles.editCountRow}>
+                            <Icon name="edit" size={12} color={editCount >= MAX_EDITS ? colors.danger : colors.textMuted} />
+                            <Text style={[styles.editCountText, editCount >= MAX_EDITS && styles.editCountExhausted]}>
+                                Edits used: {editCount}/{MAX_EDITS}
+                            </Text>
+                        </View>
+                    )}
                 </View>
+
+                {/* Action buttons — only for PENDING */}
+                {(canEdit || canDelete) && (
+                    <View style={styles.actionRow}>
+                        {canEdit && (
+                            <TouchableOpacity
+                                style={styles.editBtn}
+                                onPress={() => handleEdit(item)}
+                                disabled={isDeleting}
+                            >
+                                <Icon name="edit-2" size={14} color={colors.primary} />
+                                <Text style={styles.editBtnText}>
+                                    Edit ({MAX_EDITS - editCount} left)
+                                </Text>
+                            </TouchableOpacity>
+                        )}
+                        {canDelete && (
+                            <TouchableOpacity
+                                style={styles.deleteBtn}
+                                onPress={() => handleDelete(item)}
+                                disabled={isDeleting}
+                            >
+                                {isDeleting ? (
+                                    <ActivityIndicator size="small" color={colors.danger} />
+                                ) : (
+                                    <>
+                                        <Icon name="trash-2" size={14} color={colors.danger} />
+                                        <Text style={styles.deleteBtnText}>Delete</Text>
+                                    </>
+                                )}
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                )}
             </View>
-            <View style={styles.correctionBody}>
-                <View style={styles.infoRow}>
-                    <Icon name="edit-3" size={16} color={colors.textMuted} />
-                    <Text style={styles.infoLabel}>Type:</Text>
-                    <Text style={styles.infoValue}>{item.correction_type || 'N/A'}</Text>
-                </View>
-                {item.calculated_distance > 0 && (
-                    <View style={styles.infoRow}>
-                        <Icon name="navigation" size={16} color={colors.textMuted} />
-                        <Text style={styles.infoLabel}>Distance:</Text>
-                        <Text style={styles.infoValue}>{item.calculated_distance} km</Text>
-                    </View>
-                )}
-                {item.reason && (
-                    <View style={styles.infoRow}>
-                        <Icon name="message-circle" size={16} color={colors.textMuted} />
-                        <Text style={styles.infoLabel}>Reason:</Text>
-                        <Text style={styles.infoValue}>{item.reason}</Text>
-                    </View>
-                )}
-                {item.reviewed_by_name && (
-                    <View style={styles.infoRow}>
-                        <Icon name="user-check" size={16} color={colors.textMuted} />
-                        <Text style={styles.infoLabel}>{item.review_level === 'SUPERADMIN' ? 'Superadmin' : 'Admin'}:</Text>
-                        <Text style={styles.infoValue}>{item.reviewed_by_name}</Text>
-                    </View>
-                )}
-                {item.reviewed_at && (
-                    <View style={styles.infoRow}>
-                        <Icon name="clock" size={16} color={colors.textMuted} />
-                        <Text style={styles.infoLabel}>At:</Text>
-                        <Text style={styles.infoValue}>{formatDate(item.reviewed_at)} {formatTime(item.reviewed_at)}</Text>
-                    </View>
-                )}
-                {item.review_comment && (
-                    <View style={styles.infoRow}>
-                        <Icon name="message-square" size={16} color={colors.textMuted} />
-                        <Text style={styles.infoLabel}>Comment:</Text>
-                        <Text style={styles.infoValue}>{item.review_comment}</Text>
-                    </View>
-                )}
-            </View>
-        </View>
-    );
+        );
+    };
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
@@ -173,10 +270,10 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
                 user={user}
                 role="Employee"
                 showStatus={false}
-                onLogout={handleLogout}
+                onLogout={auth?.logout}
             />
 
-            <TouchableOpacity 
+            <TouchableOpacity
                 style={styles.createBtn}
                 onPress={() => navigation.navigate('PunchCorrection')}
                 activeOpacity={0.8}
@@ -287,12 +384,12 @@ const styles = StyleSheet.create({
     dateTimeContainer: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: spacing.xs,
     },
     correctionDate: {
         fontSize: typography.sizes.md,
         fontWeight: typography.weights.semibold,
         color: colors.textDark,
-        marginRight: spacing.sm,
     },
     correctionTime: {
         fontSize: typography.sizes.sm,
@@ -316,17 +413,73 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: spacing.xs,
+        gap: 4,
     },
     infoLabel: {
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
-        marginLeft: spacing.xs,
-        marginRight: spacing.xs,
+        marginRight: 2,
     },
     infoValue: {
         fontSize: typography.sizes.sm,
         color: colors.textDark,
         flex: 1,
+    },
+    editCountRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: spacing.xs,
+    },
+    editCountText: {
+        fontSize: typography.sizes.xs,
+        color: colors.textMuted,
+    },
+    editCountExhausted: {
+        color: colors.danger,
+        fontWeight: '600',
+    },
+    actionRow: {
+        flexDirection: 'row',
+        gap: spacing.sm,
+        marginTop: spacing.md,
+        paddingTop: spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    editBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: spacing.sm,
+        borderRadius: 8,
+        borderWidth: 1.5,
+        borderColor: colors.primary,
+        backgroundColor: `${colors.primary}10`,
+    },
+    editBtnText: {
+        fontSize: typography.sizes.sm,
+        fontWeight: '600',
+        color: colors.primary,
+    },
+    deleteBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: spacing.sm,
+        borderRadius: 8,
+        borderWidth: 1.5,
+        borderColor: colors.danger,
+        backgroundColor: `${colors.danger}10`,
+    },
+    deleteBtnText: {
+        fontSize: typography.sizes.sm,
+        fontWeight: '600',
+        color: colors.danger,
     },
     emptyContainer: {
         alignItems: 'center',

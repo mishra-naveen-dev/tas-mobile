@@ -355,6 +355,12 @@ api.createAllowanceRequest = (data) => {
     return api.post('/allowance/requests/', data);
 };
 
+api.updateCorrectionRequest = (id, data) =>
+    api.patch(`/attendance/correction-requests/${id}/`, data);
+
+api.deleteCorrectionRequest = (id) =>
+    api.delete(`/attendance/correction-requests/${id}/`);
+
 api.calculateDistance = async (fromAddress, toAddress) => {
     try {
         const res = await api.post('/attendance/address/calculate-distance/', {
