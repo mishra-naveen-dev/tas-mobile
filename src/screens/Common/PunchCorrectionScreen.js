@@ -143,6 +143,16 @@ const PunchCorrectionScreen = ({ navigation }) => {
             return false;
         }
 
+        if (!formData.pincode || formData.pincode.length !== 6) {
+            setError('Pincode must be exactly 6 digits');
+            return false;
+        }
+
+        if (!formData.to_pincode || formData.to_pincode.length !== 6) {
+            setError('To Pincode must be exactly 6 digits');
+            return false;
+        }
+
         return true;
     };
 
@@ -352,7 +362,7 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 </View>
 
                 <View style={styles.section}>
-                    <FieldLabel>Pincode (Optional)</FieldLabel>
+                    <FieldLabel required>Pincode</FieldLabel>
                     <TextInput
                         style={[styles.input, submitting && styles.inputDisabled]}
                         value={formData.pincode}
@@ -377,21 +387,19 @@ const PunchCorrectionScreen = ({ navigation }) => {
                     />
                 </View>
 
-                {!!formData.to_address && (
-                    <View style={styles.section}>
-                        <FieldLabel>To Pincode</FieldLabel>
-                        <TextInput
-                            style={[styles.input, submitting && styles.inputDisabled]}
-                            value={formData.to_pincode}
-                            onChangeText={(text) => updateForm('to_pincode', text.replace(/[^0-9]/g, '').slice(0, 6))}
-                            placeholder="6-digit destination pincode"
-                            placeholderTextColor={colors.textMuted}
-                            keyboardType="numeric"
-                            maxLength={6}
-                            editable={!submitting}
-                        />
-                    </View>
-                )}
+                <View style={styles.section}>
+                    <FieldLabel required>To Pincode</FieldLabel>
+                    <TextInput
+                        style={[styles.input, submitting && styles.inputDisabled]}
+                        value={formData.to_pincode}
+                        onChangeText={(text) => updateForm('to_pincode', text.replace(/[^0-9]/g, '').slice(0, 6))}
+                        placeholder="6-digit destination pincode"
+                        placeholderTextColor={colors.textMuted}
+                        keyboardType="numeric"
+                        maxLength={6}
+                        editable={!submitting}
+                    />
+                </View>
 
                 {(formData.visit_type === 'COLLECTION' || formData.visit_type === 'DISBURSEMENT') && (
                     <View style={styles.section}>
