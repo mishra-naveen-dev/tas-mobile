@@ -51,6 +51,7 @@ const PunchCorrectionScreen = ({ navigation }) => {
         from_address: '',
         pincode: '',
         to_address: '',
+        to_pincode: '',
         reason: '',
         loan_id: '',
         amount: '',
@@ -163,6 +164,7 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 from_address: formData.from_address,
                 pincode: formData.pincode,
                 to_address: formData.to_address,
+                to_pincode: formData.to_pincode,
                 reason: formData.reason,
                 loan_id: formData.loan_id || null,
                 amount: formData.amount ? parseFloat(formData.amount) : null,
@@ -374,6 +376,22 @@ const PunchCorrectionScreen = ({ navigation }) => {
                         editable={!submitting}
                     />
                 </View>
+
+                {!!formData.to_address && (
+                    <View style={styles.section}>
+                        <FieldLabel>To Pincode</FieldLabel>
+                        <TextInput
+                            style={[styles.input, submitting && styles.inputDisabled]}
+                            value={formData.to_pincode}
+                            onChangeText={(text) => updateForm('to_pincode', text.replace(/[^0-9]/g, '').slice(0, 6))}
+                            placeholder="6-digit destination pincode"
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="numeric"
+                            maxLength={6}
+                            editable={!submitting}
+                        />
+                    </View>
+                )}
 
                 {(formData.visit_type === 'COLLECTION' || formData.visit_type === 'DISBURSEMENT') && (
                     <View style={styles.section}>
