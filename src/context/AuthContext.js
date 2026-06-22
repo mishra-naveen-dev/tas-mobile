@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 import api, { setSessionExpiredCallback, resetSessionHandler, loadCustomBaseURL } from '../api/api';
 import { parseApiError } from '../core/error/AppErrorHandler';
 import { SSEClient } from '../services/SSEClient';
+import BackgroundTrackingService from '../services/BackgroundTrackingService';
 
 const AuthContext = createContext(null);
 let sessionExpiredAlertShown = false;
@@ -39,9 +40,8 @@ const clearAuthSession = async () => {
             AsyncStorage.removeItem(STORAGE_KEYS.SESSION),
             AsyncStorage.removeItem('accessToken'),
         ]);
-        console.log('[Auth] Stale auth session cleared from AsyncStorage');
     } catch (e) {
-        console.error('[Auth] Error clearing auth session keys:', e);
+        if (__DEV__) console.error('[Auth] Error clearing auth session keys:', e);
     }
 };
 
@@ -109,7 +109,7 @@ export const AuthProvider = ({ children }) => {
                 setUser(null);
             }
         } catch (error) {
-            console.error('Auth initialization error:', error);
+            if (__DEV__) console.error('Auth initialization error:', error);
             await clearAuthSession();
             setAccessToken(null);
             setRefreshToken(null);
@@ -131,23 +131,17 @@ export const AuthProvider = ({ children }) => {
 
     const login = useCallback(async (username, password) => {
         try {
-            console.log('[Auth] Attempting login for:', username);
-            
             const response = await api.login(username, password);
-            console.log('[Auth] Login response:', response.status);
-            
+
             const data = response.data;
             const access = data.access;
             const refresh = data.refresh;
             const userData = data.user;
 
             if (!access || !refresh) {
-                console.log('[Auth] Invalid response - missing tokens');
                 Alert.alert('Login Error', 'Invalid server response. Please try again.');
                 return { success: false, error: 'Invalid server response' };
             }
-
-            console.log('[Auth] Login success! User:', userData?.username);
 
             const storageOps = [
                 AsyncStorage.setItem(STORAGE_KEYS.ACCESS, access),
@@ -172,43 +166,42 @@ export const AuthProvider = ({ children }) => {
 
             try {
                 SSEClient.connect();
-                console.log('[Auth] SSE connected after login');
             } catch (e) {
-                console.log('[Auth] SSE connection error:', e.message);
+                if (__DEV__) console.error('[Auth] SSE connection error:', e.message);
             }
 
             return { success: true, user: userData };
         } catch (error) {
             const parsed = parseApiError(error);
-            console.log('[Auth] Login failed:', parsed);
-            
+
             return {
                 success: false,
                 error: parsed.message,
                 type: parsed.type,
+                code: parsed.code,
             };
         }
     }, []);
 
     const logout = useCallback(async () => {
-        try {
-            await api.logout();
-        } catch (error) {
-            console.log('Logout API error:', error?.message);
-        } finally {
-            SSEClient.disconnect();
-            await clearAuthSession(); // Clear only auth session keys to preserve custom_api_url and other settings
-            setAccessToken(null);
-            setRefreshToken(null);
-            setUser(null);
-            resetSessionHandler(); // Reset the session handler flag
-        }
+        // Stop background GPS tracking if running
+        try { await BackgroundTrackingService.stop(); } catch {}
+        // Notify backend of logout (best-effort)
+        try { await api.logout(); } catch {}
+        // Disconnect SSE polling
+        try { SSEClient.disconnect(); } catch {}
+        // Clear stored tokens and user data
+        await clearAuthSession();
+        setAccessToken(null);
+        setRefreshToken(null);
+        setUser(null);
+        resetSessionHandler();
     }, []);
 
     // Handle session expiration - only once
     useEffect(() => {
         if (typeof setSessionExpiredCallback !== 'function') {
-            console.warn('[Auth] setSessionExpiredCallback not available from api');
+            if (__DEV__) console.warn('[Auth] setSessionExpiredCallback not available from api');
             return;
         }
         setSessionExpiredCallback(() => {
@@ -289,7 +282,7 @@ export const useAuth = () => {
     const context = useContext(AuthContext);
 
     if (context === null) {
-        console.warn('useAuth must be used within an AuthProvider');
+        if (__DEV__) console.warn('useAuth must be used within an AuthProvider');
         return {
             user: null,
             role: null,

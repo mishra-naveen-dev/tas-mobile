@@ -7,12 +7,15 @@ import {
     TouchableOpacity,
     ActivityIndicator,
     RefreshControl,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import { useFocusEffect } from '@react-navigation/native';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
+
+const MAX_EDITS = 3;
 
 const FILTERS = ['ALL', 'PENDING', 'APPROVED', 'REJECTED'];
 
@@ -44,14 +47,27 @@ const SummaryCard = ({ label, count, iconName, iconColor, iconBg }) => (
     </View>
 );
 
-// ─── Request row ─────────────────────────────────────────────────────────────
-const RequestCard = ({ item }) => {
+const DetailRow = ({ icon, label, value }) => (
+    <View style={styles.detailRow}>
+        <Icon name={icon} size={13} color={colors.textMuted} style={styles.detailIcon} />
+        <Text style={styles.detailLabel}>{label}</Text>
+        <Text style={styles.detailValue} numberOfLines={1}>{value}</Text>
+    </View>
+);
+
+// ─── Request card ─────────────────────────────────────────────────────────────
+const RequestCard = ({ item, onEdit, onDelete, isDeleting }) => {
     const cfg = STATUS_CONFIG[item.status] || STATUS_CONFIG.PENDING;
     const date = item.correction_date
         ? new Date(item.correction_date).toLocaleDateString('en-IN', {
               day: '2-digit', month: 'short', year: 'numeric',
           })
         : '—';
+
+    const isPending  = item.status === 'PENDING';
+    const editCount  = item.edit_count || 0;
+    const canEdit    = isPending && editCount < MAX_EDITS;
+    const canDelete  = isPending;
 
     return (
         <View style={styles.card}>
@@ -72,7 +88,7 @@ const RequestCard = ({ item }) => {
                 </View>
             </View>
 
-            {/* Details grid */}
+            {/* Details */}
             <View style={styles.cardBody}>
                 <DetailRow
                     icon="tag"
@@ -88,11 +104,27 @@ const RequestCard = ({ item }) => {
                     <DetailRow icon="hash" label="Loan No." value={item.loan_id} />
                 ) : null}
                 {item.from_address ? (
-                    <DetailRow icon="map-pin" label="Address" value={item.from_address} />
+                    <DetailRow icon="map-pin" label="From" value={item.from_address} />
+                ) : null}
+                {item.to_address ? (
+                    <DetailRow icon="map-pin" label="To" value={item.to_address} />
+                ) : null}
+                {item.calculated_distance > 0 ? (
+                    <DetailRow icon="navigation" label="Distance" value={`${item.calculated_distance} km`} />
                 ) : null}
                 {item.reason ? (
                     <DetailRow icon="file-text" label="Reason" value={item.reason} />
                 ) : null}
+
+                {/* Edit count indicator */}
+                {isPending && (
+                    <View style={styles.editCountRow}>
+                        <Icon name="edit" size={11} color={editCount >= MAX_EDITS ? colors.danger : colors.textMuted} />
+                        <Text style={[styles.editCountText, editCount >= MAX_EDITS && styles.editCountExhausted]}>
+                            Edits used: {editCount}/{MAX_EDITS}
+                        </Text>
+                    </View>
+                )}
             </View>
 
             {/* Manager remarks */}
@@ -105,24 +137,52 @@ const RequestCard = ({ item }) => {
                     </Text>
                 </View>
             ) : null}
+
+            {/* Action buttons — only for PENDING */}
+            {(canEdit || canDelete) && (
+                <View style={styles.actionRow}>
+                    {canEdit && (
+                        <TouchableOpacity
+                            style={styles.editBtn}
+                            onPress={() => onEdit(item)}
+                            disabled={isDeleting}
+                        >
+                            <Icon name="edit-2" size={13} color={colors.primary} />
+                            <Text style={styles.editBtnText}>
+                                Edit ({MAX_EDITS - editCount} left)
+                            </Text>
+                        </TouchableOpacity>
+                    )}
+                    {canDelete && (
+                        <TouchableOpacity
+                            style={styles.deleteBtn}
+                            onPress={() => onDelete(item)}
+                            disabled={isDeleting}
+                        >
+                            {isDeleting ? (
+                                <ActivityIndicator size="small" color={colors.danger} />
+                            ) : (
+                                <>
+                                    <Icon name="trash-2" size={13} color={colors.danger} />
+                                    <Text style={styles.deleteBtnText}>Delete</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+                    )}
+                </View>
+            )}
         </View>
     );
 };
 
-const DetailRow = ({ icon, label, value }) => (
-    <View style={styles.detailRow}>
-        <Icon name={icon} size={13} color={colors.textMuted} style={styles.detailIcon} />
-        <Text style={styles.detailLabel}>{label}</Text>
-        <Text style={styles.detailValue} numberOfLines={1}>{value}</Text>
-    </View>
-);
-
 // ─── Main screen ─────────────────────────────────────────────────────────────
 const MissedPunchDashboardScreen = ({ navigation }) => {
-    const [requests, setRequests] = useState([]);
-    const [loading, setLoading]   = useState(true);
+    const [requests, setRequests]     = useState([]);
+    const [loading, setLoading]       = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [activeFilter, setActiveFilter] = useState('ALL');
+    const [error, setError]           = useState(null);
+    const [deletingId, setDeletingId] = useState(null);
 
     const fetchRequests = useCallback(async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true);
@@ -135,8 +195,9 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
                 ? res.data.results
                 : [];
             setRequests(raw);
+            setError(null);
         } catch {
-            setRequests([]);
+            setError('Failed to load requests. Pull down to retry.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -146,6 +207,43 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
     useFocusEffect(
         useCallback(() => { fetchRequests(); }, [fetchRequests])
     );
+
+    const handleEdit = (item) => {
+        navigation.navigate('PunchCorrection', {
+            editMode: true,
+            correctionId: item.id,
+            existingData: item,
+            editsLeft: MAX_EDITS - (item.edit_count || 0),
+        });
+    };
+
+    const handleDelete = (item) => {
+        Alert.alert(
+            'Delete Request',
+            'Are you sure you want to delete this correction request? This action cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () => confirmDelete(item.id),
+                },
+            ]
+        );
+    };
+
+    const confirmDelete = async (id) => {
+        setDeletingId(id);
+        try {
+            await api.deleteCorrectionRequest(id);
+            setRequests(prev => prev.filter(r => r.id !== id));
+        } catch (err) {
+            const msg = err?.response?.data?.error || 'Failed to delete request.';
+            Alert.alert('Error', msg);
+        } finally {
+            setDeletingId(null);
+        }
+    };
 
     // ── Derived counts ──
     const total    = requests.length;
@@ -223,6 +321,16 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
                                 />
                             </View>
 
+                            {error ? (
+                                <View style={styles.errorBanner}>
+                                    <Icon name="alert-circle" size={15} color={colors.danger} />
+                                    <Text style={styles.errorBannerText}>{error}</Text>
+                                    <TouchableOpacity onPress={() => fetchRequests()}>
+                                        <Text style={styles.retryLink}>Retry</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : null}
+
                             {/* Filter tabs */}
                             <View style={styles.filterBar}>
                                 {FILTERS.map(f => (
@@ -233,9 +341,9 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
                                         activeOpacity={0.7}
                                     >
                                         <Text style={[styles.filterText, activeFilter === f && styles.filterTextActive]}>
-                                            {f === 'ALL' ? `All (${total})` :
-                                             f === 'PENDING' ? `Pending (${pending})` :
-                                             f === 'APPROVED' ? `Approved (${approved})` :
+                                            {f === 'ALL'      ? `All (${total})`          :
+                                             f === 'PENDING'  ? `Pending (${pending})`    :
+                                             f === 'APPROVED' ? `Approved (${approved})`  :
                                              `Rejected (${rejected})`}
                                         </Text>
                                     </TouchableOpacity>
@@ -243,7 +351,14 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
                             </View>
                         </>
                     }
-                    renderItem={({ item }) => <RequestCard item={item} />}
+                    renderItem={({ item }) => (
+                        <RequestCard
+                            item={item}
+                            onEdit={handleEdit}
+                            onDelete={handleDelete}
+                            isDeleting={deletingId === item.id}
+                        />
+                    )}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
                     ListEmptyComponent={
@@ -311,7 +426,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingVertical: spacing.xxxl,
     },
-    // Summary grid
     summaryGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -350,7 +464,6 @@ const styles = StyleSheet.create({
         marginTop: 2,
         textAlign: 'center',
     },
-    // Filter bar
     filterBar: {
         flexDirection: 'row',
         paddingHorizontal: spacing.md,
@@ -378,11 +491,9 @@ const styles = StyleSheet.create({
     filterTextActive: {
         color: '#fff',
     },
-    // List
     listContent: {
         paddingBottom: 100,
     },
-    // Cards
     card: {
         backgroundColor: colors.surface,
         borderRadius: 14,
@@ -448,6 +559,20 @@ const styles = StyleSheet.create({
         color: colors.textDark,
         fontWeight: typography.weights.medium,
     },
+    editCountRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: 4,
+    },
+    editCountText: {
+        fontSize: typography.sizes.xs,
+        color: colors.textMuted,
+    },
+    editCountExhausted: {
+        color: colors.danger,
+        fontWeight: '600',
+    },
     remarkBox: {
         flexDirection: 'row',
         alignItems: 'flex-start',
@@ -467,7 +592,69 @@ const styles = StyleSheet.create({
         fontWeight: typography.weights.semibold,
         color: colors.textDark,
     },
-    // Empty state
+    actionRow: {
+        flexDirection: 'row',
+        gap: spacing.sm,
+        marginTop: spacing.sm,
+        paddingTop: spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    editBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+        paddingVertical: 8,
+        borderRadius: 8,
+        borderWidth: 1.5,
+        borderColor: colors.primary,
+        backgroundColor: `${colors.primary}10`,
+    },
+    editBtnText: {
+        fontSize: typography.sizes.xs,
+        fontWeight: '600',
+        color: colors.primary,
+    },
+    deleteBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+        paddingVertical: 8,
+        borderRadius: 8,
+        borderWidth: 1.5,
+        borderColor: colors.danger,
+        backgroundColor: `${colors.danger}10`,
+    },
+    deleteBtnText: {
+        fontSize: typography.sizes.xs,
+        fontWeight: '600',
+        color: colors.danger,
+    },
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF0F0',
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginHorizontal: spacing.md,
+        marginTop: spacing.xs,
+        marginBottom: spacing.xs,
+        gap: 8,
+    },
+    errorBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+    },
+    retryLink: {
+        fontSize: typography.sizes.sm,
+        color: colors.primary,
+        fontWeight: '600',
+    },
     emptyTitle: {
         marginTop: spacing.md,
         fontSize: typography.sizes.md,

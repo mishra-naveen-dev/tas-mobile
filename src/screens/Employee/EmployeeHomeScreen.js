@@ -11,6 +11,7 @@ import {
     Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Circle } from 'react-native-svg';
 import Icon from 'react-native-vector-icons/Feather';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
@@ -24,6 +25,127 @@ import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
+
+// ─── Static monthly target (swap for API value when backend exposes it) ───────
+const MONTHLY_AMOUNT_TARGET = 100000; // ₹1,00,000
+
+// ─── Radial ring (SVG arc, starts from top, fills clockwise) ─────────────────
+const RadialRing = ({ size, strokeWidth, progress, max, color, trackColor }) => {
+    const radius = (size - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const pct = max > 0 ? Math.min(Math.max(progress / max, 0), 1) : 0;
+    const offset = circumference * (1 - pct);
+    return (
+        <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
+            <Circle cx={size / 2} cy={size / 2} r={radius} stroke={trackColor} strokeWidth={strokeWidth} fill="none" />
+            <Circle
+                cx={size / 2} cy={size / 2} r={radius}
+                stroke={color} strokeWidth={strokeWidth} fill="none"
+                strokeDasharray={`${circumference} ${circumference}`}
+                strokeDashoffset={offset}
+                strokeLinecap="round"
+                transform={`rotate(-90, ${size / 2}, ${size / 2})`}
+            />
+        </Svg>
+    );
+};
+
+// ─── Monthly collection ring card ─────────────────────────────────────────────
+const MonthlyCollectionCard = ({ collected, target }) => {
+    const RING = 112;
+    const STROKE = 11;
+    const pct = target > 0 ? Math.min(collected / target, 1) : 0;
+    const pctLabel = Math.round(pct * 100);
+    const remaining = Math.max(target - collected, 0);
+
+    const fmtCompact = (n) => {
+        if (n >= 100000) return `₹${(n / 100000).toFixed(2)}L`;
+        if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
+        return `₹${n}`;
+    };
+    const fmtFull = (n) => `₹${Number(n).toLocaleString('en-IN')}`;
+
+    const ringColor = pct >= 1 ? colors.success : pct >= 0.5 ? colors.warning : colors.primary;
+    const trackColor = pct >= 1 ? colors.successLight : pct >= 0.5 ? colors.warningLight : colors.primaryLight;
+
+    const now = new Date();
+    const monthName = now.toLocaleString('en-IN', { month: 'long' });
+
+    return (
+        <View style={homeStyles.mcCard}>
+            {/* Card header */}
+            <View style={homeStyles.mcHeader}>
+                <View style={homeStyles.mcHeaderLeft}>
+                    <View style={[homeStyles.mcIconBox, { backgroundColor: ringColor + '18' }]}>
+                        <Icon name="target" size={14} color={ringColor} />
+                    </View>
+                    <View>
+                        <Text style={homeStyles.mcTitle}>Monthly Collection</Text>
+                        <Text style={homeStyles.mcMonth}>{monthName} target</Text>
+                    </View>
+                </View>
+                <View style={[homeStyles.mcBadge, { backgroundColor: ringColor + '18' }]}>
+                    <Text style={[homeStyles.mcBadgeText, { color: ringColor }]}>{pctLabel}%</Text>
+                </View>
+            </View>
+
+            {/* Body: ring + stats side by side */}
+            <View style={homeStyles.mcBody}>
+                {/* Ring */}
+                <View style={{ width: RING, height: RING, alignItems: 'center', justifyContent: 'center' }}>
+                    <RadialRing
+                        size={RING} strokeWidth={STROKE}
+                        progress={collected} max={target}
+                        color={ringColor} trackColor={trackColor}
+                    />
+                    {/* Center label */}
+                    <View style={homeStyles.mcRingCenter}>
+                        <Text style={[homeStyles.mcRingValue, { color: ringColor }]}>
+                            {fmtCompact(collected)}
+                        </Text>
+                        <Text style={homeStyles.mcRingSub}>collected</Text>
+                    </View>
+                </View>
+
+                {/* Stats column */}
+                <View style={homeStyles.mcStats}>
+                    <View style={homeStyles.mcStatRow}>
+                        <View style={[homeStyles.mcDot, { backgroundColor: trackColor, borderColor: ringColor }]} />
+                        <View>
+                            <Text style={homeStyles.mcStatLabel}>Target</Text>
+                            <Text style={homeStyles.mcStatVal}>{fmtFull(target)}</Text>
+                        </View>
+                    </View>
+                    <View style={homeStyles.mcDivider} />
+                    <View style={homeStyles.mcStatRow}>
+                        <View style={[homeStyles.mcDot, { backgroundColor: ringColor }]} />
+                        <View>
+                            <Text style={homeStyles.mcStatLabel}>Collected</Text>
+                            <Text style={[homeStyles.mcStatVal, { color: ringColor }]}>{fmtFull(collected)}</Text>
+                        </View>
+                    </View>
+                    <View style={homeStyles.mcDivider} />
+                    <View style={homeStyles.mcStatRow}>
+                        <View style={[homeStyles.mcDot, { backgroundColor: colors.textLight }]} />
+                        <View>
+                            <Text style={homeStyles.mcStatLabel}>Remaining</Text>
+                            <Text style={homeStyles.mcStatVal}>{fmtFull(remaining)}</Text>
+                        </View>
+                    </View>
+                </View>
+            </View>
+
+            {/* Progress bar strip */}
+            <View style={homeStyles.mcStrip}>
+                <View style={[homeStyles.mcStripFill, { width: `${pctLabel}%`, backgroundColor: ringColor }]} />
+            </View>
+            <View style={homeStyles.mcStripLabels}>
+                <Text style={homeStyles.mcStripLabel}>₹0</Text>
+                <Text style={homeStyles.mcStripLabel}>{fmtCompact(target)}</Text>
+            </View>
+        </View>
+    );
+};
 
 const IS_DEV = __DEV__;
 
@@ -149,6 +271,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const [correctionSummary, setCorrectionSummary] = useState({});
     const [punches, setPunches] = useState([]);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
+    const [monthlyCollection, setMonthlyCollection] = useState(0);
 
     useEffect(() => {
         isMountedRef.current = true;
@@ -191,11 +314,12 @@ const EmployeeHomeScreen = ({ navigation }) => {
         try {
             if (!isRefresh) setIsLoading(true);
 
-            const [summaryRes, punchRes, correctionRes] = await Promise.all([
+            const [summaryRes, punchRes, correctionRes, monthlyRes] = await Promise.all([
                 api.get('/attendance/punches/daily_summary/'),
                 api.get('/attendance/punches/today_punches/'),
                 api.getCorrectionCounts(),
-            ]).catch(() => [null, null, null]);
+                api.getPerformance('monthly').catch(() => null),
+            ]).catch(() => [null, null, null, null]);
 
             if (!isMountedRef.current) return;
 
@@ -206,8 +330,9 @@ const EmployeeHomeScreen = ({ navigation }) => {
             setSummary(liveSummary);
             setPunches(livePunches);
             setCorrectionSummary(correctionCounts);
-        } catch (err) {
-            if (IS_DEV) console.error('[Home] Fetch error:', err);
+            setMonthlyCollection(Number(monthlyRes?.data?.total_collection_amount) || 0);
+        } catch {
+            // Server unavailable or session expired — interceptor already handles 401
         } finally {
             if (isMountedRef.current) {
                 setIsLoading(false);
@@ -435,6 +560,11 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         ))}
                     </View>
                 </View>
+
+                <MonthlyCollectionCard
+                    collected={monthlyCollection}
+                    target={MONTHLY_AMOUNT_TARGET}
+                />
 
                 {routePoints.length > 0 && (
                     <MapPreview points={routePoints} mapRef={mapRef} />
@@ -677,6 +807,130 @@ const styles = StyleSheet.create({
     correctionLabel: {
         fontSize: typography.sizes.xs,
         marginTop: 2,
+    },
+});
+
+// ─── Monthly collection card styles ──────────────────────────────────────────
+const homeStyles = StyleSheet.create({
+    mcCard: {
+        backgroundColor: colors.surface,
+        borderRadius: 20,
+        padding: spacing.md,
+        marginTop: spacing.md,
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+    },
+    mcHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: spacing.md,
+    },
+    mcHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    mcIconBox: {
+        width: 30,
+        height: 30,
+        borderRadius: 9,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    mcTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: colors.textDark,
+    },
+    mcMonth: {
+        fontSize: 11,
+        color: colors.textMuted,
+        marginTop: 1,
+    },
+    mcBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 20,
+    },
+    mcBadgeText: {
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    mcBody: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+    },
+    mcRingCenter: {
+        position: 'absolute',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    mcRingValue: {
+        fontSize: 18,
+        fontWeight: '800',
+        letterSpacing: -0.5,
+    },
+    mcRingSub: {
+        fontSize: 10,
+        color: colors.textMuted,
+        marginTop: 1,
+    },
+    mcStats: {
+        flex: 1,
+        gap: 6,
+    },
+    mcStatRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    mcDot: {
+        width: 9,
+        height: 9,
+        borderRadius: 5,
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+    },
+    mcStatLabel: {
+        fontSize: 11,
+        color: colors.textMuted,
+    },
+    mcStatVal: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: colors.textDark,
+        marginTop: 1,
+    },
+    mcDivider: {
+        height: 1,
+        backgroundColor: colors.border,
+        marginLeft: spacing.md + 2,
+    },
+    mcStrip: {
+        height: 5,
+        backgroundColor: colors.border,
+        borderRadius: 4,
+        marginTop: spacing.md,
+        overflow: 'hidden',
+    },
+    mcStripFill: {
+        height: '100%',
+        borderRadius: 4,
+        minWidth: 4,
+    },
+    mcStripLabels: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 4,
+    },
+    mcStripLabel: {
+        fontSize: 10,
+        color: colors.textMuted,
     },
 });
 

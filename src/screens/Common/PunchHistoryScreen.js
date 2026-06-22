@@ -13,6 +13,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import GlassCard from '../../components/GlassCard';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { parseApiError } from '../../core/error/AppErrorHandler';
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 const fmt = (d) => {
@@ -114,6 +115,7 @@ const PunchHistoryScreen = ({ navigation }) => {
     const [isLoading, setIsLoading]       = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [hasError, setHasError]         = useState(false);
+    const [errorMsg, setErrorMsg]         = useState('');
 
     // Mode: 'date' (single day) or a quick-filter key
     const [mode, setMode]         = useState('date');
@@ -131,16 +133,24 @@ const PunchHistoryScreen = ({ navigation }) => {
     const fetchData = useCallback(async (params, isRefresh = false) => {
         try {
             setHasError(false);
-            if (isRefresh) setIsRefreshing(true);
-            else setIsLoading(true);
+            setErrorMsg('');
+            if (isRefresh) {
+                setIsRefreshing(true);
+            } else {
+                setIsLoading(true);
+                setPunches([]); // clear only for fresh (non-refresh) loads
+            }
 
             const response = await api.getPunchHistory(params);
             const data = Array.isArray(response.data)
                 ? response.data
                 : (response.data?.results || []);
             setPunches(data);
-        } catch {
+        } catch (err) {
             setHasError(true);
+            const { message } = parseApiError(err);
+            setErrorMsg(message);
+            // punches preserved on error so stale data stays visible on refresh
         } finally {
             setIsLoading(false);
             setIsRefreshing(false);
@@ -157,7 +167,6 @@ const PunchHistoryScreen = ({ navigation }) => {
         if (next > today()) return; // can't go into future
         setMode('date');
         setQuickFilter(null);
-        setPunches([]);
         setActiveDate(next);
     };
 
@@ -165,14 +174,12 @@ const PunchHistoryScreen = ({ navigation }) => {
         setMode('quick');
         setQuickFilter(key);
         setActiveDate(today());
-        setPunches([]);
     };
 
     const goToday = () => {
         setMode('date');
         setQuickFilter(null);
         setActiveDate(today());
-        setPunches([]);
     };
 
     const isToday = fmt(activeDate) === fmt(today());
@@ -237,10 +244,11 @@ const PunchHistoryScreen = ({ navigation }) => {
                 <View style={styles.centered}>
                     <ActivityIndicator size="large" color={colors.primary} />
                 </View>
-            ) : hasError ? (
+            ) : hasError && punches.length === 0 ? (
+                /* Full-page error — no stale data to fall back on */
                 <View style={styles.centered}>
-                    <Icon name="alert-circle" size={44} color={colors.danger} />
-                    <Text style={styles.errorText}>Something went wrong</Text>
+                    <Icon name="wifi-off" size={44} color={colors.danger} />
+                    <Text style={styles.errorText}>{errorMsg || 'Could not load data'}</Text>
                     <TouchableOpacity style={styles.retryBtn} onPress={() => fetchData(getParams())}>
                         <Icon name="refresh-cw" size={14} color="#fff" />
                         <Text style={styles.retryText}>Try Again</Text>
@@ -262,11 +270,24 @@ const PunchHistoryScreen = ({ navigation }) => {
                         />
                     }
                     ListHeaderComponent={
-                        punches.length > 0 ? (
-                            <Text style={styles.countLabel}>
-                                {punches.length} record{punches.length !== 1 ? 's' : ''}
-                            </Text>
-                        ) : null
+                        <>
+                            {hasError && (
+                                <View style={styles.errorBanner}>
+                                    <Icon name="wifi-off" size={14} color={colors.warning} />
+                                    <Text style={styles.errorBannerText}>
+                                        {errorMsg || 'Could not refresh'} — showing last loaded data
+                                    </Text>
+                                    <TouchableOpacity onPress={() => fetchData(getParams(), true)}>
+                                        <Text style={styles.retryLink}>Retry</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+                            {punches.length > 0 && (
+                                <Text style={styles.countLabel}>
+                                    {punches.length} record{punches.length !== 1 ? 's' : ''}
+                                </Text>
+                            )}
+                        </>
                     }
                     ListEmptyComponent={
                         <View style={styles.centered}>
@@ -375,11 +396,34 @@ const styles = StyleSheet.create({
 
     // States
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
-    errorText: { fontSize: typography.sizes.md, color: colors.textMuted, marginTop: spacing.md },
+    errorText: { fontSize: typography.sizes.md, color: colors.danger, marginTop: spacing.md, textAlign: 'center', paddingHorizontal: spacing.lg },
     retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, backgroundColor: colors.primary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 20 },
     retryText: { color: '#fff', fontSize: typography.sizes.sm, fontWeight: typography.weights.semibold },
     emptyTitle: { fontSize: typography.sizes.md, fontWeight: typography.weights.semibold, color: colors.textDark, marginTop: spacing.md },
     emptySubtitle: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4 },
+
+    // Error banner (shown over stale data)
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFBEB',
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginBottom: spacing.sm,
+        gap: 8,
+        borderWidth: 1,
+        borderColor: '#FCD34D',
+    },
+    errorBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.xs,
+        color: '#92400E',
+    },
+    retryLink: {
+        fontSize: typography.sizes.sm,
+        color: colors.primary,
+        fontWeight: '600',
+    },
 });
 
 export default PunchHistoryScreen;

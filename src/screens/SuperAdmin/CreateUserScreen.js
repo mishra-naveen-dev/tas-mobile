@@ -7,13 +7,14 @@ import {
     TouchableOpacity,
     TextInput,
     Alert,
-    SafeAreaView
+    SafeAreaView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import ScreenHeader from '../../components/ScreenHeader';
 import PrimaryButton from '../../components/PrimaryButton';
+import MasterSearchInput from '../../components/MasterSearchInput';
 
 const CreateUserScreen = ({ navigation }) => {
     const [formData, setFormData] = useState({
@@ -23,15 +24,20 @@ const CreateUserScreen = ({ navigation }) => {
         last_name: '',
         phone: '',
         employee_id: '',
-        password: '',
         role: 'EMPLOYEE',
+        grade_name: '',
+        department_name: '',
+        designation: '',
+        territory: '',
+        reporting_group: '',
+        travel_mode: '',
     });
     const [loading, setLoading] = useState(false);
 
     const roles = [
         { id: 'EMPLOYEE', label: 'Employee', color: colors.success },
         { id: 'ADMIN', label: 'Admin', color: colors.primary },
-        { id: 'MANAGER', label: 'Manager', color: colors.warning },
+        { id: 'SUPER_ADMIN', label: 'Super Admin', color: colors.warning },
     ];
 
     const handleChange = (field, value) => {
@@ -60,12 +66,11 @@ const CreateUserScreen = ({ navigation }) => {
 
     const handleSubmit = async () => {
         if (!validateForm()) return;
-
         setLoading(true);
         try {
             await api.createUser(formData);
-            Alert.alert('Success', 'User created successfully', [
-                { text: 'OK', onPress: () => navigation.goBack() }
+            Alert.alert('Success', 'User created successfully. Default password: Temp@123', [
+                { text: 'OK', onPress: () => navigation.goBack() },
             ]);
         } catch (err) {
             const errorMsg = err.response?.data?.message || err.response?.data?.error || 'Failed to create user';
@@ -83,7 +88,9 @@ const CreateUserScreen = ({ navigation }) => {
                 navigation={navigation}
             />
 
-            <ScrollView contentContainerStyle={styles.content}>
+            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+
+                {/* Basic Info */}
                 <View style={styles.formCard}>
                     <Text style={styles.sectionTitle}>User Information</Text>
 
@@ -153,6 +160,7 @@ const CreateUserScreen = ({ navigation }) => {
                     </View>
                 </View>
 
+                {/* Role Selection */}
                 <View style={styles.formCard}>
                     <Text style={styles.sectionTitle}>Role Selection</Text>
                     <View style={styles.roleContainer}>
@@ -162,14 +170,14 @@ const CreateUserScreen = ({ navigation }) => {
                                 style={[
                                     styles.roleCard,
                                     formData.role === role.id && styles.roleCardActive,
-                                    { borderColor: formData.role === role.id ? role.color : colors.border }
+                                    { borderColor: formData.role === role.id ? role.color : colors.border },
                                 ]}
                                 onPress={() => handleChange('role', role.id)}
                             >
                                 <View style={[styles.roleDot, { backgroundColor: role.color }]} />
                                 <Text style={[
                                     styles.roleLabel,
-                                    formData.role === role.id && { color: role.color }
+                                    formData.role === role.id && { color: role.color },
                                 ]}>
                                     {role.label}
                                 </Text>
@@ -178,6 +186,56 @@ const CreateUserScreen = ({ navigation }) => {
                     </View>
                 </View>
 
+                {/* Role & Designation */}
+                <View style={styles.formCard}>
+                    <Text style={styles.sectionTitle}>Role & Designation</Text>
+
+                    <MasterSearchInput
+                        categoryKey="grade"
+                        label="Grade"
+                        value={formData.grade_name}
+                        onChange={(v) => handleChange('grade_name', v)}
+                        userRole="SUPER_ADMIN"
+                    />
+                    <MasterSearchInput
+                        categoryKey="department"
+                        label="Department"
+                        value={formData.department_name}
+                        onChange={(v) => handleChange('department_name', v)}
+                        userRole="SUPER_ADMIN"
+                    />
+                    <MasterSearchInput
+                        categoryKey="designation"
+                        label="Designation"
+                        value={formData.designation}
+                        onChange={(v) => handleChange('designation', v)}
+                        userRole="SUPER_ADMIN"
+                    />
+                    <MasterSearchInput
+                        categoryKey="reporting_group"
+                        label="Reporting Group"
+                        value={formData.reporting_group}
+                        onChange={(v) => handleChange('reporting_group', v)}
+                        userRole="SUPER_ADMIN"
+                    />
+                    <MasterSearchInput
+                        categoryKey="travel_mode"
+                        label="Travel Mode"
+                        value={formData.travel_mode}
+                        onChange={(v) => handleChange('travel_mode', v)}
+                        userRole="SUPER_ADMIN"
+                    />
+                    <MasterSearchInput
+                        categoryKey="territory"
+                        label="Territory"
+                        value={formData.territory}
+                        onChange={(v) => handleChange('territory', v)}
+                        userRole="SUPER_ADMIN"
+                        style={{ marginBottom: 0 }}
+                    />
+                </View>
+
+                {/* Password info */}
                 <View style={styles.formCard}>
                     <Text style={styles.sectionTitle}>Temporary Password</Text>
                     <View style={styles.passwordInfo}>
@@ -245,9 +303,12 @@ const styles = StyleSheet.create({
     roleContainer: {
         flexDirection: 'row',
         justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: spacing.sm,
     },
     roleCard: {
         flex: 1,
+        minWidth: 90,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
@@ -255,7 +316,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.sm,
         borderWidth: 2,
         borderRadius: 8,
-        marginHorizontal: spacing.xs,
         backgroundColor: colors.background,
     },
     roleCardActive: {

@@ -20,10 +20,10 @@ import PrimaryButton from '../../components/PrimaryButton';
 import GlassCard from '../../components/GlassCard';
 import { colors, typography, spacing } from '../../theme/tokens';
 
-const SUPPORT_EMAIL = 'support@tasenterprise.com';
-const SUPPORT_PHONE = '+91-9876543210';
+const SUPPORT_EMAIL = 'naveen@armanindia.com';
+const SUPPORT_PHONE = '1-800-10-27626';
 const LOCAL_EMULATOR_URL = 'http://10.0.2.2:8000';
-const PROD_URL = 'https://tas-backendnew.onrender.com';
+const PROD_URL = 'https://tsbackendtest.onrender.com';
 
 const LoginScreen = ({ navigation }) => {
     const auth = useAuth();
@@ -80,14 +80,38 @@ const LoginScreen = ({ navigation }) => {
         try {
             const result = await auth.login(username.trim(), password);
 
-            if (result.success) {
-                // Navigation will automatically update based on auth state change
-            } else {
-                Alert.alert('Authentication Failed', result.error || 'Login failed. Please check your credentials.');
+            if (!result.success) {
+                const deviceErrorCodes = {
+                    DEVICE_LIMIT_EXCEEDED: 'Device Already Registered',
+                    NEW_DEVICE_NOT_ALLOWED_FOR_EMPLOYEE: 'New Device Not Allowed',
+                    DEVICE_PENDING_APPROVAL: 'Device Pending Approval',
+                    DEVICE_BLOCKED: 'Device Blocked',
+                    DEVICE_REJECTED: 'Device Rejected',
+                    DEVICE_OWNED_BY_ANOTHER_USER: 'Device Conflict',
+                    USER_DEVICE_BLOCKED: 'Device Blocked',
+                    ACCOUNT_BLOCKED_MULTI_DEVICE: 'Account Locked',
+                };
+                const isDeviceError = !!deviceErrorCodes[result.code];
+                const title = deviceErrorCodes[result.code] || 'Authentication Failed';
+                // Guard against arrays — Alert.alert crashes on Android if message is not a string
+                const raw = result.error || 'Login failed. Please check your credentials.';
+                const message = typeof raw === 'string' ? raw : (Array.isArray(raw) ? raw[0] || '' : String(raw));
+
+                if (isDeviceError) {
+                    Alert.alert(title, message, [
+                        {
+                            text: 'Contact Admin',
+                            onPress: handleContactSupport,
+                        },
+                        { text: 'OK', style: 'cancel' },
+                    ]);
+                } else {
+                    Alert.alert(title, message);
+                }
             }
         } catch (error) {
             Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-            console.error('Login error:', error);
+            if (__DEV__) console.error('Login error:', error);
         } finally {
             setIsLoading(false);
         }
@@ -133,55 +157,59 @@ const LoginScreen = ({ navigation }) => {
                             style={{ marginTop: spacing.md }}
                         />
 
-                        {/* Server URL config — collapsed by default */}
-                        <TouchableOpacity
-                            style={styles.serverToggle}
-                            onPress={() => setShowServerConfig(v => !v)}
-                            activeOpacity={0.7}
-                        >
-                            <Icon name="server" size={13} color={colors.textMuted} />
-                            <Text style={styles.serverToggleText}>
-                                {showServerConfig ? 'Hide Server Config' : 'Server Config'}
-                            </Text>
-                            <Icon
-                                name={showServerConfig ? 'chevron-up' : 'chevron-down'}
-                                size={13}
-                                color={colors.textMuted}
-                            />
-                        </TouchableOpacity>
-
-                        {showServerConfig && (
-                            <View style={styles.serverPanel}>
-                                <InputField
-                                    icon="link"
-                                    placeholder="http://10.0.2.2:8000"
-                                    value={serverUrl}
-                                    onChangeText={setServerUrl}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                    keyboardType="url"
-                                />
-                                <View style={styles.serverQuickRow}>
-                                    <TouchableOpacity
-                                        style={styles.quickBtn}
-                                        onPress={handleUseLocal}
-                                    >
-                                        <Text style={styles.quickBtnText}>Local (Emulator)</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        style={styles.quickBtn}
-                                        onPress={handleUseProd}
-                                    >
-                                        <Text style={styles.quickBtnText}>Production</Text>
-                                    </TouchableOpacity>
-                                </View>
+                        {/* Server URL config — dev builds only, never shown to end users */}
+                        {__DEV__ && (
+                            <>
                                 <TouchableOpacity
-                                    style={styles.saveServerBtn}
-                                    onPress={handleSaveServerUrl}
+                                    style={styles.serverToggle}
+                                    onPress={() => setShowServerConfig(v => !v)}
+                                    activeOpacity={0.7}
                                 >
-                                    <Text style={styles.saveServerBtnText}>Save & Apply</Text>
+                                    <Icon name="server" size={13} color={colors.textMuted} />
+                                    <Text style={styles.serverToggleText}>
+                                        {showServerConfig ? 'Hide Server Config' : 'Server Config'}
+                                    </Text>
+                                    <Icon
+                                        name={showServerConfig ? 'chevron-up' : 'chevron-down'}
+                                        size={13}
+                                        color={colors.textMuted}
+                                    />
                                 </TouchableOpacity>
-                            </View>
+
+                                {showServerConfig && (
+                                    <View style={styles.serverPanel}>
+                                        <InputField
+                                            icon="link"
+                                            placeholder="http://10.0.2.2:8000"
+                                            value={serverUrl}
+                                            onChangeText={setServerUrl}
+                                            autoCapitalize="none"
+                                            autoCorrect={false}
+                                            keyboardType="url"
+                                        />
+                                        <View style={styles.serverQuickRow}>
+                                            <TouchableOpacity
+                                                style={styles.quickBtn}
+                                                onPress={handleUseLocal}
+                                            >
+                                                <Text style={styles.quickBtnText}>Local (Emulator)</Text>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                style={styles.quickBtn}
+                                                onPress={handleUseProd}
+                                            >
+                                                <Text style={styles.quickBtnText}>Production</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={styles.saveServerBtn}
+                                            onPress={handleSaveServerUrl}
+                                        >
+                                            <Text style={styles.saveServerBtnText}>Save & Apply</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                            </>
                         )}
                     </GlassCard>
 

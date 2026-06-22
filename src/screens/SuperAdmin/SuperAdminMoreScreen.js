@@ -5,20 +5,22 @@ import {
     StyleSheet,
     ScrollView,
     TouchableOpacity,
-    SafeAreaView
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import HeroHeader from '../../components/HeroHeader';
+import { useAuth } from '../../context/AuthContext';
 import { colors, typography, spacing } from '../../theme/tokens';
 
 const SuperAdminMoreScreen = ({ navigation }) => {
+    const { user } = useAuth();
     const [userData, setUserData] = useState(null);
 
     useEffect(() => {
         api.get('/organization/profile-update/')
             .then(res => setUserData(res.data))
-            .catch(err => console.log('Error fetching user:', err.message));
+            .catch(() => {});
     }, []);
 
     const MenuItem = ({ title, subtitle, icon, color, badge, onPress }) => (
@@ -58,15 +60,35 @@ const SuperAdminMoreScreen = ({ navigation }) => {
                     contentContainerStyle={styles.scrollContent}
                     showsVerticalScrollIndicator={false}
                 >
-                    <View style={styles.profileCard}>
+                    <TouchableOpacity
+                        style={styles.profileCard}
+                        onPress={() => navigation.navigate('Profile')}
+                        activeOpacity={0.8}
+                    >
                         <View style={styles.profileIcon}>
-                            <Icon name="settings" size={32} color={colors.primary} />
+                            <Icon name="user" size={32} color={colors.primary} />
                         </View>
                         <View style={styles.profileContent}>
-                            <Text style={styles.profileTitle}>Admin Panel</Text>
-                            <Text style={styles.profileSubtitle}>Manage organization settings</Text>
+                            <Text style={styles.profileTitle}>
+                                {user?.first_name && user?.last_name
+                                    ? `${user.first_name} ${user.last_name}`
+                                    : user?.username || 'Admin'}
+                            </Text>
+                            <Text style={styles.profileSubtitle}>
+                                {user?.employee_id || 'Super Admin'}
+                            </Text>
+                            <Text style={styles.profileTap}>Tap to view full profile →</Text>
                         </View>
-                    </View>
+                    </TouchableOpacity>
+
+                    <SectionTitle title="Account" />
+                    <MenuItem
+                        title="My Profile"
+                        subtitle="View personal & work details"
+                        icon="user"
+                        color={colors.primary}
+                        onPress={() => navigation.navigate('Profile')}
+                    />
 
                     <SectionTitle title="Management" />
                     <MenuItem
@@ -198,6 +220,12 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
         marginTop: 2,
+    },
+    profileTap: {
+        fontSize: typography.sizes.xs,
+        color: colors.primary,
+        marginTop: 4,
+        fontWeight: typography.weights.medium,
     },
     sectionTitle: {
         fontSize: typography.sizes.sm,

@@ -83,7 +83,7 @@ class GeocodingService {
     }
   }
 
-  static async calculateDistance(fromAddress, toAddress) {
+  static async calculateDrivingDistance(fromAddress, toAddress) {
     try {
       // Geocode both addresses
       const [fromResult, toResult] = await Promise.all([

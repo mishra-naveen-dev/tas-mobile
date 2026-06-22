@@ -33,12 +33,19 @@ const AppContent = () => {
         return <SplashView />;
     }
 
+    // PunchProvider must only mount when authenticated — its useEffect fires
+    // fetchTodayPunches immediately on mount, which would trigger a 401 on
+    // a fresh install (no token) and incorrectly show "Session Expired".
     return (
-        <PunchProvider>
-            <NavigationContainer ref={navigationRef}>
+        <NavigationContainer ref={navigationRef}>
+            {auth.isAuthenticated ? (
+                <PunchProvider>
+                    <RootNavigator />
+                </PunchProvider>
+            ) : (
                 <RootNavigator />
-            </NavigationContainer>
-        </PunchProvider>
+            )}
+        </NavigationContainer>
     );
 };
 

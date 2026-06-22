@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -39,22 +39,63 @@ const VISIT_TYPES = [
     { value: 'OTHER', label: 'Other' },
 ];
 
-const PunchCorrectionScreen = ({ navigation }) => {
+const PunchCorrectionScreen = ({ navigation, route }) => {
     const auth = useAuth();
 
-    const [formData, setFormData] = useState({
-        correction_type: 'ADD',
-        correction_date: new Date(),
-        correction_time: new Date(),
-        punch_type: 'PUNCH_IN',
-        visit_type: 'OTHER',
-        from_address: '',
-        pincode: '',
-        to_address: '',
-        reason: '',
-        loan_id: '',
-        amount: '',
-        payment_method: 'CASH',
+    // Edit mode params passed from EmployeeCorrectionScreen
+    const editMode = route?.params?.editMode || false;
+    const correctionId = route?.params?.correctionId || null;
+    const existingData = route?.params?.existingData || null;
+    const editsLeft = route?.params?.editsLeft ?? 3;
+
+    const parseExistingDate = (dateStr) => {
+        if (!dateStr) return new Date();
+        const d = new Date(dateStr);
+        return isNaN(d.getTime()) ? new Date() : d;
+    };
+
+    const parseExistingTime = (timeStr) => {
+        if (!timeStr) return new Date();
+        if (timeStr.includes('T')) return new Date(timeStr);
+        const [h, m] = timeStr.split(':');
+        const d = new Date();
+        d.setHours(+h || 0, +m || 0, 0, 0);
+        return d;
+    };
+
+    const [formData, setFormData] = useState(() => {
+        if (editMode && existingData) {
+            return {
+                correction_type: existingData.correction_type || 'ADD',
+                correction_date: parseExistingDate(existingData.correction_date),
+                correction_time: parseExistingTime(existingData.correction_time),
+                punch_type: existingData.punch_type || 'PUNCH_IN',
+                visit_type: existingData.visit_type || 'OTHER',
+                from_address: existingData.from_address || '',
+                pincode: existingData.pincode || '',
+                to_address: existingData.to_address || '',
+                to_pincode: existingData.to_pincode || '',
+                reason: existingData.reason || '',
+                loan_id: existingData.loan_id || '',
+                amount: existingData.amount ? String(existingData.amount) : '',
+                payment_method: existingData.payment_method || 'CASH',
+            };
+        }
+        return {
+            correction_type: 'ADD',
+            correction_date: new Date(),
+            correction_time: new Date(),
+            punch_type: 'PUNCH_IN',
+            visit_type: 'OTHER',
+            from_address: '',
+            pincode: '',
+            to_address: '',
+            to_pincode: '',
+            reason: '',
+            loan_id: '',
+            amount: '',
+            payment_method: 'CASH',
+        };
     });
 
     const [showDatePicker, setShowDatePicker] = useState(false);
@@ -62,7 +103,7 @@ const PunchCorrectionScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
-    const [distance, setDistance] = useState(0);
+    const [distance, setDistance] = useState(editMode && existingData ? (existingData.calculated_distance || 0) : 0);
     const [calculatingDistance, setCalculatingDistance] = useState(false);
 
     const updateForm = (key, value) => {
@@ -84,33 +125,54 @@ const PunchCorrectionScreen = ({ navigation }) => {
         }
     };
 
-    const handleCalculateDistance = async () => {
-        const fromAddress = formData.from_address;
-        const toAddress = formData.to_address || formData.from_address;
+    const debounceRef = useRef(null);
 
-        if (!fromAddress || fromAddress.length < 5) {
-            Alert.alert('Error', 'Please enter from address');
-            return;
-        }
-
+    const runDistanceCalc = async (fromAddr, fromPin, toAddr, toPin) => {
         setCalculatingDistance(true);
         try {
-            console.log('[PunchCorrection] Calculating distance...');
-            const calculatedDist = await GeocodingService.calculateDistance(fromAddress, toAddress);
-            console.log('[PunchCorrection] Distance result:', calculatedDist);
-            
-            if (calculatedDist > 0) {
-                setDistance(calculatedDist);
+            const fromQuery = `${fromAddr}, ${fromPin}, India`;
+            const toQuery = toAddr ? `${toAddr}, ${toPin}, India` : fromQuery;
+            const dist = await GeocodingService.calculateDrivingDistance(fromQuery, toQuery);
+            if (dist > 0) {
+                setDistance(dist);
             } else {
-                Alert.alert('Warning', 'Could not calculate distance. Using default 0.5km');
-                setDistance(0.5);
+                setDistance(0);
+                setError('Could not calculate distance. Please verify the addresses and pincodes.');
             }
         } catch (err) {
-            console.log('[PunchCorrection] Distance error:', err);
-            setDistance(0.5);
+            setDistance(0);
         } finally {
             setCalculatingDistance(false);
         }
+    };
+
+    useEffect(() => {
+        const { from_address, pincode, to_address, to_pincode } = formData;
+        const canCalc =
+            from_address.length >= 3 &&
+            pincode.length === 6 &&
+            to_address.length >= 3 &&
+            to_pincode.length === 6;
+
+        if (!canCalc) return;
+
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            runDistanceCalc(from_address, pincode, to_address, to_pincode);
+        }, 800);
+
+        return () => {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+        };
+    }, [formData.from_address, formData.pincode, formData.to_address, formData.to_pincode]);
+
+    const handleCalculateDistance = async () => {
+        const { from_address, pincode, to_address, to_pincode } = formData;
+        if (!from_address || from_address.length < 3) {
+            Alert.alert('Error', 'Please enter from address');
+            return;
+        }
+        await runDistanceCalc(from_address, pincode, to_address, to_pincode);
     };
 
     const formatDate = (date) => {
@@ -142,6 +204,16 @@ const PunchCorrectionScreen = ({ navigation }) => {
             return false;
         }
 
+        if (!formData.pincode || formData.pincode.length !== 6) {
+            setError('Pincode must be exactly 6 digits');
+            return false;
+        }
+
+        if (!formData.to_pincode || formData.to_pincode.length !== 6) {
+            setError('To Pincode must be exactly 6 digits');
+            return false;
+        }
+
         return true;
     };
 
@@ -163,6 +235,7 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 from_address: formData.from_address,
                 pincode: formData.pincode,
                 to_address: formData.to_address,
+                to_pincode: formData.to_pincode,
                 reason: formData.reason,
                 loan_id: formData.loan_id || null,
                 amount: formData.amount ? parseFloat(formData.amount) : null,
@@ -172,11 +245,17 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 calculated_distance: distance || 0,
             };
 
-            await api.createCorrectionRequest(payload);
-
-            Alert.alert('Success', 'Correction request submitted successfully!', [
-                { text: 'OK', onPress: () => navigation.goBack() }
-            ]);
+            if (editMode && correctionId) {
+                await api.updateCorrectionRequest(correctionId, payload);
+                Alert.alert('Success', 'Correction request updated successfully!', [
+                    { text: 'OK', onPress: () => navigation.goBack() }
+                ]);
+            } else {
+                await api.createCorrectionRequest(payload);
+                Alert.alert('Success', 'Correction request submitted successfully!', [
+                    { text: 'OK', onPress: () => navigation.goBack() }
+                ]);
+            }
         } catch (err) {
             const errMsg = err?.response?.data?.error || err?.response?.data?.detail || 'Failed to submit request';
             setError(Array.isArray(errMsg) ? errMsg.join(', ') : errMsg);
@@ -197,9 +276,20 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                     <Icon name="arrow-left" size={24} color={colors.textDark} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Punch Correction</Text>
+                <Text style={styles.headerTitle}>
+                    {editMode ? 'Edit Correction' : 'Punch Correction'}
+                </Text>
                 <View style={{ width: 40 }} />
             </View>
+
+            {editMode && (
+                <View style={styles.editModeBanner}>
+                    <Icon name="edit" size={14} color={colors.warning} />
+                    <Text style={styles.editModeBannerText}>
+                        Edit mode — {editsLeft} edit{editsLeft !== 1 ? 's' : ''} remaining
+                    </Text>
+                </View>
+            )}
 
             {error ? (
                 <View style={styles.errorBanner}>
@@ -340,60 +430,80 @@ const PunchCorrectionScreen = ({ navigation }) => {
                 <View style={styles.section}>
                     <FieldLabel>From Address</FieldLabel>
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, submitting && styles.inputDisabled]}
                         value={formData.from_address}
                         onChangeText={(text) => updateForm('from_address', text)}
                         placeholder="Enter address or location"
                         placeholderTextColor={colors.textMuted}
+                        editable={!submitting}
                     />
                 </View>
 
                 <View style={styles.section}>
-                    <FieldLabel>Pincode (Optional)</FieldLabel>
+                    <FieldLabel required>Pincode</FieldLabel>
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, submitting && styles.inputDisabled]}
                         value={formData.pincode}
                         onChangeText={(text) => updateForm('pincode', text.replace(/[^0-9]/g, '').slice(0, 6))}
                         placeholder="6-digit pincode"
                         placeholderTextColor={colors.textMuted}
                         keyboardType="numeric"
                         maxLength={6}
+                        editable={!submitting}
                     />
                 </View>
 
                 <View style={styles.section}>
                     <FieldLabel>To Address (Optional)</FieldLabel>
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, submitting && styles.inputDisabled]}
                         value={formData.to_address}
                         onChangeText={(text) => updateForm('to_address', text)}
                         placeholder="Enter destination address"
                         placeholderTextColor={colors.textMuted}
+                        editable={!submitting}
                     />
                 </View>
 
-                {(formData.visit_type === 'COLLECTION' || formData.visit_type === 'DISBURSEMENT') && (
+                <View style={styles.section}>
+                    <FieldLabel required>To Pincode</FieldLabel>
+                    <TextInput
+                        style={[styles.input, submitting && styles.inputDisabled]}
+                        value={formData.to_pincode}
+                        onChangeText={(text) => updateForm('to_pincode', text.replace(/[^0-9]/g, '').slice(0, 6))}
+                        placeholder="6-digit destination pincode"
+                        placeholderTextColor={colors.textMuted}
+                        keyboardType="numeric"
+                        maxLength={6}
+                        editable={!submitting}
+                    />
+                </View>
+
+                {!!formData.from_address && (
                     <View style={styles.section}>
                         <FieldLabel>Distance</FieldLabel>
                         <View style={styles.distanceRow}>
                             <View style={styles.distanceValue}>
-                                <Text style={styles.distanceText}>
-                                    {distance > 0 ? `${distance} km` : 'Not calculated'}
-                                </Text>
+                                {calculatingDistance ? (
+                                    <View style={styles.distanceCalcRow}>
+                                        <ActivityIndicator size="small" color={colors.primary} />
+                                        <Text style={[styles.distanceText, { marginLeft: 8, color: colors.textMuted }]}>
+                                            Calculating...
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <Text style={styles.distanceText}>
+                                        {distance > 0 ? `${distance} km` : 'Fill addresses to auto-calculate'}
+                                    </Text>
+                                )}
                             </View>
                             <TouchableOpacity
                                 style={[styles.calculateBtn, calculatingDistance && styles.calculateBtnDisabled]}
                                 onPress={handleCalculateDistance}
                                 disabled={calculatingDistance}
                             >
-                                {calculatingDistance ? (
-                                    <ActivityIndicator size="small" color="#FFF" />
-                                ) : (
-                                    <>
-                                        <Icon name="navigation" size={16} color="#FFF" />
-                                        <Text style={styles.calculateBtnText}>Calculate</Text>
-                                    </>
-                                )}
+                                <Icon name="navigation" size={16} color="#FFF" />
+                                <Text style={styles.calculateBtnText}>Calculate</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -453,8 +563,10 @@ const PunchCorrectionScreen = ({ navigation }) => {
                         <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
                         <>
-                            <Icon name="send" size={20} color="#FFFFFF" />
-                            <Text style={styles.submitBtnText}>Submit Request</Text>
+                            <Icon name={editMode ? 'save' : 'send'} size={20} color="#FFFFFF" />
+                            <Text style={styles.submitBtnText}>
+                                {editMode ? 'Save Changes' : 'Submit Request'}
+                            </Text>
                         </>
                     )}
                 </TouchableOpacity>
@@ -476,6 +588,21 @@ const styles = StyleSheet.create({
         backgroundColor: colors.surface,
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
+    },
+    editModeBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#FFF8E1',
+        borderBottomWidth: 1,
+        borderBottomColor: '#FFE082',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+    },
+    editModeBannerText: {
+        fontSize: typography.sizes.sm,
+        color: '#F57F17',
+        fontWeight: '600',
     },
     backBtn: {
         width: 40,
@@ -537,6 +664,10 @@ fieldLabel: {
     },
     distanceValue: {
         flex: 1,
+    },
+    distanceCalcRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     distanceText: {
         fontSize: typography.sizes.lg,
@@ -655,6 +786,9 @@ fieldLabel: {
         padding: spacing.md,
         fontSize: typography.sizes.md,
         color: colors.textDark,
+    },
+    inputDisabled: {
+        opacity: 0.5,
     },
     textArea: {
         height: 100,

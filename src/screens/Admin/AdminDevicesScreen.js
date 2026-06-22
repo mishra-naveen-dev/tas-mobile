@@ -7,8 +7,8 @@ import {
     TouchableOpacity,
     RefreshControl,
     Alert,
-    SafeAreaView
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
@@ -18,6 +18,7 @@ const AdminDevicesScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState(0);
+    const [error, setError] = useState(null);
 
     const handleBack = () => {
         if (navigation.canGoBack()) {
@@ -29,10 +30,11 @@ const AdminDevicesScreen = ({ navigation }) => {
 
     const fetchData = useCallback(async () => {
         try {
+            setError(null);
             const res = await api.getDevices();
             setDevices(res.data?.results || res.data || []);
         } catch (err) {
-            console.log('Error fetching devices:', err);
+            setError('Failed to load devices. Pull down to retry.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -50,7 +52,7 @@ const AdminDevicesScreen = ({ navigation }) => {
 
     const handleApprove = async (id) => {
         try {
-            await api.approveDevice(id, 'APPROVED');
+            await api.approveDevice(id);
             Alert.alert('Success', 'Device approved');
             fetchData();
         } catch (err) {
@@ -61,7 +63,7 @@ const AdminDevicesScreen = ({ navigation }) => {
     const handleReject = async (id) => {
         Alert.alert(
             'Confirm Reject',
-            'Are you sure?',
+            'Are you sure you want to reject this device?',
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -69,11 +71,11 @@ const AdminDevicesScreen = ({ navigation }) => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await api.approveDevice(id, 'REJECTED');
+                            await api.rejectDevice(id);
                             Alert.alert('Success', 'Device rejected');
                             fetchData();
                         } catch (err) {
-                            Alert.alert('Error', 'Failed to reject');
+                            Alert.alert('Error', 'Failed to reject device');
                         }
                     }
                 }
@@ -84,7 +86,7 @@ const AdminDevicesScreen = ({ navigation }) => {
     const handleBlock = async (id) => {
         Alert.alert(
             'Confirm Block',
-            'Block this device? User will not be able to login from this device.',
+            'Block this device? The user will not be able to login from this device.',
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -104,21 +106,46 @@ const AdminDevicesScreen = ({ navigation }) => {
         );
     };
 
+    const handleReset = (id, username) => {
+        Alert.alert(
+            'Change Device',
+            `This will remove the registered device for ${username}. They will be able to register a new device on their next login. Continue?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Change Device',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await api.resetDevice(id);
+                            Alert.alert('Success', `Device reset for ${username}. They can now register a new device.`);
+                            fetchData();
+                        } catch (err) {
+                            Alert.alert('Error', 'Failed to reset device');
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     const pendingDevices = devices.filter(d => d.status === 'PENDING');
     const approvedDevices = devices.filter(d => d.status === 'APPROVED');
     const blockedDevices = devices.filter(d => d.status === 'BLOCKED');
 
-    const currentDevices = activeTab === 0 ? pendingDevices : 
+    const currentDevices = activeTab === 0 ? pendingDevices :
                           activeTab === 1 ? approvedDevices : blockedDevices;
 
     const renderDevice = ({ item }) => (
         <View style={styles.deviceCard}>
             <View style={styles.deviceInfo}>
-                <Text style={styles.deviceName}>{item.username}</Text>
+                <Text style={styles.deviceName}>{item.username || item.user_display || 'Unknown'}</Text>
                 <Text style={styles.deviceDetail}>{item.device_name || item.device_id}</Text>
                 <View style={styles.deviceMeta}>
                     <Text style={styles.metaText}>{item.platform} | {item.browser} on {item.os}</Text>
-                    <Text style={styles.metaText}>Last active: {item.last_active ? new Date(item.last_active).toLocaleDateString() : 'N/A'}</Text>
+                    <Text style={styles.metaText}>
+                        Last active: {item.last_active ? new Date(item.last_active).toLocaleDateString() : 'N/A'}
+                    </Text>
                 </View>
             </View>
             <View style={styles.deviceActions}>
@@ -139,12 +166,27 @@ const AdminDevicesScreen = ({ navigation }) => {
                     </>
                 )}
                 {item.status === 'APPROVED' && (
-                    <TouchableOpacity
-                        style={[styles.actionBtn, styles.blockBtn]}
-                        onPress={() => handleBlock(item.id)}
-                    >
-                        <Text style={styles.actionBtnText}>Block</Text>
-                    </TouchableOpacity>
+                    <>
+                        <TouchableOpacity
+                            style={[styles.actionBtn, styles.resetBtn]}
+                            onPress={() => handleReset(item.id, item.username || 'this user')}
+                        >
+                            <Icon name="refresh-cw" size={12} color="#fff" style={{ marginRight: 4 }} />
+                            <Text style={styles.actionBtnText}>Change Device</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.actionBtn, styles.blockBtn]}
+                            onPress={() => handleBlock(item.id)}
+                        >
+                            <Text style={styles.actionBtnText}>Block</Text>
+                        </TouchableOpacity>
+                    </>
+                )}
+                {item.status === 'BLOCKED' && (
+                    <View style={styles.blockedBadge}>
+                        <Icon name="slash" size={12} color={colors.danger} />
+                        <Text style={styles.blockedText}>Blocked</Text>
+                    </View>
                 )}
             </View>
         </View>
@@ -190,18 +232,30 @@ const AdminDevicesScreen = ({ navigation }) => {
                 </TouchableOpacity>
             </View>
 
+            {error ? (
+                <View style={styles.errorBanner}>
+                    <Icon name="alert-circle" size={15} color={colors.danger} />
+                    <Text style={styles.errorBannerText}>{error}</Text>
+                    <TouchableOpacity onPress={fetchData}>
+                        <Text style={styles.retryLink}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : null}
+
             <FlatList
                 data={currentDevices}
                 keyExtractor={(item, index) => item.id ? `device_${item.id}` : `device-${index}`}
                 renderItem={renderDevice}
                 refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
                 }
                 contentContainerStyle={styles.listContent}
                 ListEmptyComponent={
                     <View style={styles.emptyContainer}>
                         <Icon name="smartphone" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>No devices found</Text>
+                        <Text style={styles.emptyText}>
+                            {loading ? 'Loading...' : 'No devices found'}
+                        </Text>
                     </View>
                 }
             />
@@ -270,6 +324,25 @@ const styles = StyleSheet.create({
         color: colors.primary,
         fontWeight: typography.weights.bold,
     },
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFF0F0',
+        borderRadius: 10,
+        padding: spacing.sm,
+        margin: spacing.md,
+        gap: 8,
+    },
+    errorBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.sm,
+        color: colors.danger,
+    },
+    retryLink: {
+        fontSize: typography.sizes.sm,
+        color: colors.primary,
+        fontWeight: '600',
+    },
     listContent: {
         padding: spacing.md,
         paddingBottom: 100,
@@ -308,13 +381,16 @@ const styles = StyleSheet.create({
     deviceActions: {
         flexDirection: 'row',
         justifyContent: 'flex-end',
+        alignItems: 'center',
         marginTop: spacing.sm,
+        gap: spacing.sm,
     },
     actionBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
         paddingVertical: spacing.sm,
         paddingHorizontal: spacing.md,
         borderRadius: 8,
-        marginLeft: spacing.sm,
     },
     approveBtn: {
         backgroundColor: colors.success,
@@ -325,10 +401,27 @@ const styles = StyleSheet.create({
     blockBtn: {
         backgroundColor: colors.warning,
     },
+    resetBtn: {
+        backgroundColor: colors.primary,
+    },
     actionBtnText: {
         color: colors.white,
         fontWeight: typography.weights.bold,
         fontSize: typography.sizes.sm,
+    },
+    blockedBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 4,
+        backgroundColor: '#FFF0F0',
+        borderRadius: 8,
+    },
+    blockedText: {
+        fontSize: typography.sizes.xs,
+        color: colors.danger,
+        fontWeight: typography.weights.medium,
     },
     emptyContainer: {
         padding: spacing.xxl,

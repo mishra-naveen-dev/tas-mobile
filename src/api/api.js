@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 
-const PROD_URL = 'https://tas-backendnew.onrender.com/api/v1';
+const PROD_URL = 'https://tsbackendtest.onrender.com/api/v1';
 
 let customBaseURL = null;
 
@@ -19,7 +19,7 @@ export const loadCustomBaseURL = async () => {
             api.defaults.baseURL = stored;
         }
     } catch (e) {
-        console.log('Error loading custom API URL:', e);
+        if (__DEV__) console.error('Error loading custom API URL:', e);
     }
 };
 
@@ -40,7 +40,7 @@ export const setCustomBaseURL = async (url) => {
             await AsyncStorage.removeItem('custom_api_url');
         }
     } catch (e) {
-        console.log('Error setting custom API URL:', e);
+        if (__DEV__) console.error('Error setting custom API URL:', e);
     }
 };
 
@@ -63,7 +63,7 @@ const generateDeviceFingerprint = async () => {
         const platform = Platform.OS.toUpperCase();
         return `MOBILE_${platform}_${Math.abs(hash).toString(16)}`;
     } catch (error) {
-        console.log('Device fingerprint error:', error);
+        if (__DEV__) console.error('Device fingerprint error:', error);
         return `MOBILE_${Platform.OS.toUpperCase()}_${Date.now()}`;
     }
 };
@@ -168,6 +168,13 @@ api.interceptors.response.use(
                 const refresh = await AsyncStorage.getItem('refresh');
 
                 if (!refresh) {
+                    // No refresh token — check whether user was ever authenticated.
+                    // On a fresh install both access and refresh are absent; firing
+                    // "Session Expired" in that state is wrong — silently reject.
+                    const access = await AsyncStorage.getItem('access');
+                    if (!access) {
+                        return Promise.reject(error);
+                    }
                     isSessionExpiredHandled = true;
                     await clearAuthData();
                     if (sessionExpiredCallback) {
@@ -348,6 +355,12 @@ api.createAllowanceRequest = (data) => {
     return api.post('/allowance/requests/', data);
 };
 
+api.updateCorrectionRequest = (id, data) =>
+    api.patch(`/attendance/correction-requests/${id}/`, data);
+
+api.deleteCorrectionRequest = (id) =>
+    api.delete(`/attendance/correction-requests/${id}/`);
+
 api.calculateDistance = async (fromAddress, toAddress) => {
     try {
         const res = await api.post('/attendance/address/calculate-distance/', {
@@ -419,6 +432,11 @@ api.getDevices = (params = {}) => {
     return api.get('/organization/devices/', { params });
 };
 
+api.approveDevice = (id) => api.post(`/organization/devices/${id}/approve/`);
+api.rejectDevice = (id) => api.post(`/organization/devices/${id}/reject/`);
+api.blockDevice = (id) => api.post(`/organization/devices/${id}/block/`);
+api.resetDevice = (id) => api.post(`/organization/devices/${id}/reset/`);
+
 api.getOrganizationStats = () => {
     return api.get('/organization/users/stats/');
 };
@@ -447,5 +465,27 @@ api.refreshToken = async (refreshToken) => {
 api.logout = async () => {
     return api.post('/auth/logout/');
 };
+
+// Master Data
+api.searchMasterValues = (categoryKey, query = '', limit = 20) =>
+    api.get('/master-data/values/', { params: { category: categoryKey, q: query, limit } });
+
+api.createMasterValue = (categoryKey, name) =>
+    api.post('/master-data/requests/', { category_key: categoryKey, requested_value: name });
+
+api.incrementMasterUsage = (valueId) =>
+    api.post(`/master-data/values/${valueId}/increment_usage/`, {});
+
+api.checkMasterDuplicate = (categoryKey, name) =>
+    api.get('/master-data/values/check_duplicate/', { params: { category: categoryKey, name } });
+
+api.getPendingMasterRequests = () =>
+    api.get('/master-data/requests/pending/');
+
+api.approveMasterRequest = (id, remarks = '') =>
+    api.post(`/master-data/requests/${id}/approve/`, { remarks });
+
+api.rejectMasterRequest = (id, remarks = '') =>
+    api.post(`/master-data/requests/${id}/reject/`, { remarks });
 
 export default api;

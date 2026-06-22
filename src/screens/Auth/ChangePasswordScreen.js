@@ -44,6 +44,11 @@ const ChangePasswordScreen = ({ navigation }) => {
             return false;
         }
 
+        if (newPassword === currentPassword) {
+            Alert.alert('Validation Error', 'New password cannot be the same as your current password.');
+            return false;
+        }
+
         if (newPassword !== confirmPassword) {
             Alert.alert('Validation Error', 'New password and confirm password do not match.');
             return false;
@@ -60,17 +65,21 @@ const ChangePasswordScreen = ({ navigation }) => {
         setIsLoading(true);
 
         try {
-            await changePassword(newPassword, token);
-            Alert.alert('Success', 'Password updated successfully. Please login again.', [
-                {
-                    text: 'OK',
-                    onPress: () => {
-                        auth.logout();
-                    }
-                }
-            ]);
+            await changePassword(currentPassword, newPassword);
+
+            // Clear force_password_change in local auth state.
+            // RootNavigator watches this flag — setting it false makes it
+            // immediately route the user to their home screen without logout.
+            auth.updateUser({
+                ...auth.user,
+                force_password_change: false,
+                forcePasswordChange: false,
+            });
         } catch (error) {
-            const errorMessage = error?.response?.data?.detail || 'Failed to change password. Please try again.';
+            const data = error?.response?.data;
+            const errorMessage =
+                data?.error || data?.detail || data?.message ||
+                'Failed to change password. Please try again.';
             Alert.alert('Error', errorMessage);
         } finally {
             setIsLoading(false);
@@ -100,7 +109,7 @@ const ChangePasswordScreen = ({ navigation }) => {
                             Enter your current password and choose a new password.
                         </Text>
 
-                        <View style={styles.inputContainer}>
+                        <View style={[styles.inputContainer, isLoading && styles.inputDisabled]}>
                             <Icon name="lock" size={20} color={colors.textMuted} />
                             <TextInput
                                 style={styles.input}
@@ -110,6 +119,7 @@ const ChangePasswordScreen = ({ navigation }) => {
                                 onChangeText={setCurrentPassword}
                                 secureTextEntry={!showPasswords}
                                 autoCapitalize="none"
+                                editable={!isLoading}
                             />
                             <TouchableOpacity onPress={() => setShowPasswords(!showPasswords)}>
                                 <Icon
@@ -120,7 +130,7 @@ const ChangePasswordScreen = ({ navigation }) => {
                             </TouchableOpacity>
                         </View>
 
-                        <View style={styles.inputContainer}>
+                        <View style={[styles.inputContainer, isLoading && styles.inputDisabled]}>
                             <Icon name="lock" size={20} color={colors.textMuted} />
                             <TextInput
                                 style={styles.input}
@@ -130,10 +140,11 @@ const ChangePasswordScreen = ({ navigation }) => {
                                 onChangeText={setNewPassword}
                                 secureTextEntry={!showPasswords}
                                 autoCapitalize="none"
+                                editable={!isLoading}
                             />
                         </View>
 
-                        <View style={styles.inputContainer}>
+                        <View style={[styles.inputContainer, isLoading && styles.inputDisabled]}>
                             <Icon name="lock" size={20} color={colors.textMuted} />
                             <TextInput
                                 style={styles.input}
@@ -143,11 +154,12 @@ const ChangePasswordScreen = ({ navigation }) => {
                                 onChangeText={setConfirmPassword}
                                 secureTextEntry={!showPasswords}
                                 autoCapitalize="none"
+                                editable={!isLoading}
                             />
                         </View>
 
                         <Text style={styles.hint}>
-                            Password must be at least 8 characters long
+                            Min. 8 characters · Must differ from current password
                         </Text>
 
                         <PrimaryButton
@@ -214,6 +226,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.sm,
         fontSize: typography.sizes.md,
         color: colors.textDark,
+    },
+    inputDisabled: {
+        opacity: 0.5,
     },
     hint: {
         fontSize: typography.sizes.sm,
