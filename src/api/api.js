@@ -466,4 +466,26 @@ api.logout = async () => {
     return api.post('/auth/logout/');
 };
 
+// Master Data
+api.searchMasterValues = (categoryKey, query = '', limit = 20) =>
+    api.get('/master-data/values/', { params: { category: categoryKey, q: query, limit } });
+
+api.createMasterValue = (categoryKey, name) =>
+    api.post('/master-data/requests/', { category_key: categoryKey, requested_value: name });
+
+api.incrementMasterUsage = (valueId) =>
+    api.post(`/master-data/values/${valueId}/increment_usage/`, {});
+
+api.checkMasterDuplicate = (categoryKey, name) =>
+    api.get('/master-data/values/check_duplicate/', { params: { category: categoryKey, name } });
+
+api.getPendingMasterRequests = () =>
+    api.get('/master-data/requests/pending/');
+
+api.approveMasterRequest = (id, remarks = '') =>
+    api.post(`/master-data/requests/${id}/approve/`, { remarks });
+
+api.rejectMasterRequest = (id, remarks = '') =>
+    api.post(`/master-data/requests/${id}/reject/`, { remarks });
+
 export default api;
