@@ -9,7 +9,6 @@ import {
     RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Circle } from 'react-native-svg';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { parseApiError } from '../../core/error/AppErrorHandler';
@@ -25,38 +24,38 @@ const PERIODS = [
 const MONTHLY_VISIT_TARGET = 100;
 const MONTHLY_AMOUNT_TARGET = 100000; // ₹1,00,000
 
-// ─── Radial ring (SVG arc, starts from top, fills clockwise) ─────────────────
+// ─── Radial ring (View-based, no native SVG module required) ─────────────────
 const RadialRing = ({ size, strokeWidth, progress, max, color, trackColor = '#F3F4F6' }) => {
-    const radius = (size - strokeWidth) / 2;
-    const circumference = 2 * Math.PI * radius;
     const pct = max > 0 ? Math.min(Math.max(progress / max, 0), 1) : 0;
-    const offset = circumference * (1 - pct);
+    const half = size / 2;
+    const deg1 = pct <= 0.5 ? pct * 360 - 90 : 90;
+    const deg2 = pct > 0.5 ? (pct - 0.5) * 360 - 90 : -90;
 
     return (
-        <Svg width={size} height={size} style={{ position: 'absolute' }}>
+        <View style={{ width: size, height: size, position: 'absolute' }}>
             {/* Track */}
-            <Circle
-                cx={size / 2}
-                cy={size / 2}
-                r={radius}
-                stroke={trackColor}
-                strokeWidth={strokeWidth}
-                fill="none"
-            />
-            {/* Progress arc */}
-            <Circle
-                cx={size / 2}
-                cy={size / 2}
-                r={radius}
-                stroke={color}
-                strokeWidth={strokeWidth}
-                fill="none"
-                strokeDasharray={`${circumference} ${circumference}`}
-                strokeDashoffset={offset}
-                strokeLinecap="round"
-                transform={`rotate(-90, ${size / 2}, ${size / 2})`}
-            />
-        </Svg>
+            <View style={{ position: 'absolute', width: size, height: size, borderRadius: half, borderWidth: strokeWidth, borderColor: trackColor }} />
+            {/* Right half clip (0–50%) */}
+            <View style={{ position: 'absolute', width: half, height: size, left: half, overflow: 'hidden' }}>
+                <View style={{
+                    position: 'absolute', left: -half, width: size, height: size,
+                    borderRadius: half, borderWidth: strokeWidth,
+                    borderColor: pct > 0 ? color : 'transparent',
+                    transform: [{ rotate: `${deg1}deg` }],
+                }} />
+            </View>
+            {/* Left half clip (50–100%) */}
+            {pct > 0.5 && (
+                <View style={{ position: 'absolute', width: half, height: size, left: 0, overflow: 'hidden' }}>
+                    <View style={{
+                        position: 'absolute', left: 0, width: size, height: size,
+                        borderRadius: half, borderWidth: strokeWidth,
+                        borderColor: color,
+                        transform: [{ rotate: `${deg2}deg` }],
+                    }} />
+                </View>
+            )}
+        </View>
     );
 };
 
