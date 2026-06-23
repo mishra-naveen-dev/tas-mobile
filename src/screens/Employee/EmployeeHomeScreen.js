@@ -9,6 +9,7 @@ import {
     ScrollView,
     Animated,
     Alert,
+    Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
@@ -25,7 +26,8 @@ import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
-import { WebView } from 'react-native-webview';
+
+const ZOHO_CHART_URL = 'https://analytics.zoho.in/open-view/334082000154073362';
 
 // ─── Static monthly target (swap for API value when backend exposes it) ───────
 const MONTHLY_AMOUNT_TARGET = 100000; // ₹1,00,000
@@ -563,29 +565,28 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 </View>
 
                 {/* ── Analytics Chart (Zoho) ── */}
-                <View style={styles.chartCard}>
+                <TouchableOpacity
+                    style={styles.chartCard}
+                    activeOpacity={0.85}
+                    onPress={() => Linking.openURL(ZOHO_CHART_URL)}
+                >
                     <View style={styles.chartHeader}>
                         <Icon name="bar-chart-2" size={16} color={colors.primary} />
                         <Text style={styles.chartTitle}>Analytics Overview</Text>
+                        <View style={{ flex: 1 }} />
+                        <Icon name="external-link" size={14} color={colors.textMuted} />
                     </View>
-                    <View style={styles.chartWebViewWrapper}>
-                        <WebView
-                            source={{ uri: 'https://analytics.zoho.in/open-view/334082000154073362' }}
-                            style={StyleSheet.absoluteFill}
-                            scrollEnabled={false}
-                            nestedScrollEnabled={true}
-                            javaScriptEnabled={true}
-                            domStorageEnabled={true}
-                            startInLoadingState={true}
-                            renderLoading={() => (
-                                <View style={styles.chartLoading}>
-                                    <Icon name="bar-chart-2" size={32} color={colors.textMuted} />
-                                    <Text style={styles.chartLoadingText}>Loading chart...</Text>
-                                </View>
-                            )}
-                        />
+                    <View style={styles.chartPreview}>
+                        <View style={styles.chartPreviewIcon}>
+                            <Icon name="trending-up" size={36} color={colors.primary} />
+                        </View>
+                        <Text style={styles.chartPreviewText}>Tap to open Zoho Analytics Dashboard</Text>
+                        <View style={styles.chartPreviewBtn}>
+                            <Icon name="bar-chart-2" size={13} color="#fff" />
+                            <Text style={styles.chartPreviewBtnText}>View Full Report</Text>
+                        </View>
                     </View>
-                </View>
+                </TouchableOpacity>
 
                 <MonthlyCollectionCard
                     collected={monthlyCollection}
@@ -721,22 +722,40 @@ const styles = StyleSheet.create({
         fontWeight: typography.weights.semibold,
         color: colors.textDark,
     },
-    chartWebViewWrapper: {
-        height: 320,
-        width: '100%',
-        borderBottomLeftRadius: 16,
-        borderBottomRightRadius: 16,
-        overflow: 'hidden',
-    },
-    chartLoading: {
-        flex: 1,
+    chartPreview: {
         alignItems: 'center',
-        justifyContent: 'center',
+        paddingVertical: spacing.xl,
+        paddingHorizontal: spacing.md,
         gap: spacing.sm,
     },
-    chartLoadingText: {
+    chartPreviewIcon: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        backgroundColor: '#FEE2E2',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: spacing.xs,
+    },
+    chartPreviewText: {
         fontSize: typography.sizes.sm,
         color: colors.textMuted,
+        textAlign: 'center',
+    },
+    chartPreviewBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.primary,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: 20,
+        marginTop: spacing.xs,
+        gap: spacing.xs,
+    },
+    chartPreviewBtnText: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.semibold,
+        color: '#fff',
     },
     statsRow: {
         flexDirection: 'row',
