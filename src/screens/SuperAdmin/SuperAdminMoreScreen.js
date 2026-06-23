@@ -145,6 +145,13 @@ const SuperAdminMoreScreen = ({ navigation }) => {
 
                     <SectionTitle title="Reports" />
                     <MenuItem
+                        title="Daily Activity"
+                        subtitle="Distance, punches & collection by date"
+                        icon="activity"
+                        color={colors.info}
+                        onPress={() => navigation.navigate('DailySummary')}
+                    />
+                    <MenuItem
                         title="View Reports"
                         subtitle="Generate & view reports"
                         icon="file-text"

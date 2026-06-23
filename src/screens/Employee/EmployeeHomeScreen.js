@@ -8,7 +8,7 @@ import {
     StatusBar,
     ScrollView,
     Animated,
-    Alert
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
@@ -25,6 +25,7 @@ import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
+import { WebView } from 'react-native-webview';
 
 // ─── Static monthly target (swap for API value when backend exposes it) ───────
 const MONTHLY_AMOUNT_TARGET = 100000; // ₹1,00,000
@@ -561,6 +562,31 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     </View>
                 </View>
 
+                {/* ── Analytics Chart (Zoho) ── */}
+                <View style={styles.chartCard}>
+                    <View style={styles.chartHeader}>
+                        <Icon name="bar-chart-2" size={16} color={colors.primary} />
+                        <Text style={styles.chartTitle}>Analytics Overview</Text>
+                    </View>
+                    <View style={styles.chartWebViewWrapper}>
+                        <WebView
+                            source={{ uri: 'https://analytics.zoho.in/open-view/334082000154073362' }}
+                            style={StyleSheet.absoluteFill}
+                            scrollEnabled={false}
+                            nestedScrollEnabled={true}
+                            javaScriptEnabled={true}
+                            domStorageEnabled={true}
+                            startInLoadingState={true}
+                            renderLoading={() => (
+                                <View style={styles.chartLoading}>
+                                    <Icon name="bar-chart-2" size={32} color={colors.textMuted} />
+                                    <Text style={styles.chartLoadingText}>Loading chart...</Text>
+                                </View>
+                            )}
+                        />
+                    </View>
+                </View>
+
                 <MonthlyCollectionCard
                     collected={monthlyCollection}
                     target={MONTHLY_AMOUNT_TARGET}
@@ -669,6 +695,48 @@ const styles = StyleSheet.create({
     },
     statsSection: {
         marginTop: spacing.md,
+    },
+    chartCard: {
+        backgroundColor: colors.surface,
+        borderRadius: 16,
+        marginHorizontal: spacing.md,
+        marginTop: spacing.md,
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+    },
+    chartHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+        gap: spacing.xs,
+    },
+    chartTitle: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.semibold,
+        color: colors.textDark,
+    },
+    chartWebViewWrapper: {
+        height: 320,
+        width: '100%',
+        borderBottomLeftRadius: 16,
+        borderBottomRightRadius: 16,
+        overflow: 'hidden',
+    },
+    chartLoading: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.sm,
+    },
+    chartLoadingText: {
+        fontSize: typography.sizes.sm,
+        color: colors.textMuted,
     },
     statsRow: {
         flexDirection: 'row',

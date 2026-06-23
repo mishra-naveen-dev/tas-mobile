@@ -88,6 +88,7 @@ const AppNavigator = () => {
                         <Stack.Screen name="AdminDevices" component={AdminDevicesScreen} />
                         <Stack.Screen name="UserManagement" component={UserManagementScreen} />
                         <Stack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+                        <Stack.Screen name="DailySummary" component={DailySummaryScreen} />
                         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
                         <Stack.Screen name="Profile" component={ProfileScreen} />
                     </>
@@ -98,6 +99,7 @@ const AppNavigator = () => {
                         <Stack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
                         <Stack.Screen name="AdminDevices" component={AdminDevicesScreen} />
                         <Stack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+                        <Stack.Screen name="DailySummary" component={DailySummaryScreen} />
                         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
                         <Stack.Screen name="Profile" component={ProfileScreen} />
                     </>

@@ -17,6 +17,19 @@ const VISIT_TYPES = [
   { value: 'OTHER', label: 'Other' },
 ];
 
+const REASON_PRESETS = [
+  { value: 'Collection',    label: 'Collection' },
+  { value: 'Home Visit',    label: 'Home Visit' },
+  { value: 'eKYC',          label: 'eKYC' },
+  { value: 'Disbursement',  label: 'Disbursement' },
+  { value: 'Audit',         label: 'Audit' },
+  { value: 'Brch_Audit',    label: 'Brch Audit' },
+  { value: 'P2P_JLG',       label: 'P2P JLG' },
+  { value: 'Custil_Aud',    label: 'Custil Aud' },
+  { value: 'CusJLG_Aud',    label: 'CusJLG Aud' },
+  { value: 'Branch_Visit',  label: 'Branch Visit' },
+];
+
 const PAYMENT_MODES = [
   { value: 'CASH', label: 'Cash' },
   { value: 'UPI', label: 'UPI' },
@@ -87,6 +100,7 @@ const EmployeePunchScreen = ({ navigation }) => {
 
   const [modalVisible, setModalVisible] = useState(false);
   const [localLocation, setLocalLocation] = useState(null);
+  const [reasonDropdownOpen, setReasonDropdownOpen] = useState(false);
   const [form, setForm] = useState({
     reason: '',
     visit_type: '',
@@ -198,6 +212,7 @@ const EmployeePunchScreen = ({ navigation }) => {
 
     if (result.success) {
       // Clear form for next punch - don't close modal
+      setReasonDropdownOpen(false);
       setForm({
         reason: '',
         visit_type: '',
@@ -222,6 +237,7 @@ const EmployeePunchScreen = ({ navigation }) => {
   const closeModal = () => {
     setModalVisible(false);
     setLocalLocation(null);
+    setReasonDropdownOpen(false);
     setForm({
       reason: '',
       visit_type: '',
@@ -447,7 +463,81 @@ const EmployeePunchScreen = ({ navigation }) => {
               )}
 
               <Text style={styles.label}>Reason</Text>
-              <TextInput style={styles.input} value={form.reason} onChangeText={(t) => updateForm('reason', t)} placeholder="Enter reason" placeholderTextColor={colors.textMuted} />
+              {/* Combo: free-text input + preset dropdown */}
+              <View style={styles.reasonWrap}>
+                <TextInput
+                  style={styles.reasonInput}
+                  value={form.reason}
+                  onChangeText={(t) => updateForm('reason', t)}
+                  placeholder="Type or select a reason..."
+                  placeholderTextColor={colors.textMuted}
+                  onFocus={() => setReasonDropdownOpen(true)}
+                />
+                <TouchableOpacity
+                  style={styles.reasonToggle}
+                  onPress={() => setReasonDropdownOpen((o) => !o)}
+                >
+                  <Icon
+                    name={reasonDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={reasonDropdownOpen ? colors.primary : colors.textMuted}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* Preset dropdown list */}
+              {reasonDropdownOpen && (
+                <View style={styles.reasonDropdown}>
+                  {REASON_PRESETS.map((r) => (
+                    <TouchableOpacity
+                      key={r.value}
+                      style={[
+                        styles.reasonOption,
+                        form.reason === r.value && styles.reasonOptionActive,
+                      ]}
+                      onPress={() => {
+                        updateForm('reason', r.value);
+                        setReasonDropdownOpen(false);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.reasonOptionText,
+                          form.reason === r.value && styles.reasonOptionTextActive,
+                        ]}
+                      >
+                        {r.label}
+                      </Text>
+                      {form.reason === r.value && (
+                        <Icon name="check" size={14} color={colors.primary} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {/* Quick-select chips (always visible) */}
+              <View style={styles.reasonChips}>
+                {REASON_PRESETS.map((r) => (
+                  <TouchableOpacity
+                    key={r.value}
+                    style={[
+                      styles.reasonChip,
+                      form.reason === r.value && styles.reasonChipActive,
+                    ]}
+                    onPress={() => updateForm('reason', form.reason === r.value ? '' : r.value)}
+                  >
+                    <Text
+                      style={[
+                        styles.reasonChipText,
+                        form.reason === r.value && styles.reasonChipTextActive,
+                      ]}
+                    >
+                      {r.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               <Text style={styles.label}>Visit Type *</Text>
               <View style={styles.chips}>
@@ -591,6 +681,88 @@ const styles = StyleSheet.create({
   chipText: { fontSize: typography.sizes.sm, color: colors.textMuted },
   chipTextActive: { color: '#fff', fontWeight: '600' },
   input: { backgroundColor: colors.background, borderRadius: 12, padding: spacing.md, fontSize: typography.sizes.md, color: colors.text },
+
+  // ── Reason combo field ────────────────────────────────────────────────────
+  reasonWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  reasonInput: {
+    flex: 1,
+    padding: spacing.md,
+    fontSize: typography.sizes.md,
+    color: colors.text,
+  },
+  reasonToggle: {
+    padding: spacing.md,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.border,
+  },
+  reasonDropdown: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 4,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    overflow: 'hidden',
+  },
+  reasonOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.background,
+  },
+  reasonOptionActive: {
+    backgroundColor: colors.primaryLight,
+  },
+  reasonOptionText: {
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+  },
+  reasonOptionTextActive: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  reasonChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: spacing.sm,
+    gap: 6,
+  },
+  reasonChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: colors.background,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  reasonChipActive: {
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primary,
+  },
+  reasonChipText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontWeight: '500',
+  },
+  reasonChipTextActive: {
+    color: colors.primary,
+    fontWeight: '700',
+  },
+
   modalFooter: { flexDirection: 'row', padding: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border },
   cancelBtn: { flex: 1, paddingVertical: spacing.md, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, marginRight: spacing.sm },
   cancelText: { fontSize: typography.sizes.md, fontWeight: '600', color: colors.textMuted },

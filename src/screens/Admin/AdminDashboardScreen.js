@@ -190,6 +190,13 @@ const AdminDashboardScreen = ({ navigation }) => {
                             color={colors.primary}
                             onPress={() => navigation.navigate('EmployeeTracking')}
                         />
+                        <MenuItem
+                            title="Daily Activity"
+                            subtitle="Distance, punches, collection by date"
+                            icon="activity"
+                            color={colors.info}
+                            onPress={() => navigation.navigate('DailySummary')}
+                        />
                     </View>
 
                     <View style={styles.menuSection}>

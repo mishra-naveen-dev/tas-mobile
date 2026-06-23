@@ -76,6 +76,7 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
         { title: 'User Management', icon: 'users', screen: 'UserManagement' },
         { title: 'Employee List', icon: 'user-check', screen: 'EmployeeList' },
         { title: 'Device Management', icon: 'smartphone', screen: 'AdminDevices' },
+        { title: 'Daily Activity', icon: 'activity', screen: 'DailySummary' },
         { title: 'Approval Routes', icon: 'git-branch', screen: 'ApprovalRoutes' },
         { title: 'Organization Settings', icon: 'settings', screen: 'OrgSettings' },
         { title: 'Employee Tracking', icon: 'map-pin', screen: 'EmployeeTracking' },

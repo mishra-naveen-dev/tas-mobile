@@ -118,6 +118,7 @@ const AdminStackNavigator = () => (
         <AdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
         <AdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <AdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <AdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <AdminStack.Screen name="Profile" component={ProfileScreen} />
     </AdminStack.Navigator>
@@ -204,6 +205,7 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
         <SuperAdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <SuperAdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <SuperAdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <SuperAdminStack.Screen name="UserManagement" component={UserManagementScreen} />
         <SuperAdminStack.Screen name="EmployeeList" component={EmployeeListScreen} />
         <SuperAdminStack.Screen name="ApprovalRoutes" component={ApprovalRoutesScreen} />
