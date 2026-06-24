@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, NativeModules, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
-import api from '../api/api';
+import api, { getBaseURL } from '../api/api';
 
 const IS_DEV = __DEV__;
 
@@ -23,11 +23,11 @@ const IS_DEV = __DEV__;
  */
 
 const CONFIG = {
-  pingIntervalMs: 10 * 1000,   // capture a fix every 10 seconds (per spec)
-  syncIntervalMs: 30 * 1000,   // flush queued pings to server every 30 seconds
-  maxBatchSize: 30,            // ...or sooner once this many are queued
-  gpsTimeoutMs: 9 * 1000,      // must be < pingIntervalMs so fixes don't overlap
-  maxQueueRetained: 1000,      // safety cap on the in-memory/persisted queue
+  pingIntervalMs: 10 * 1000,   // capture a fresh fix every 10 seconds (per spec)
+  fixTimeoutMs: 9 * 1000,      // per-fix GPS timeout — must be < pingIntervalMs
+  syncIntervalMs: 15 * 1000,   // flush queued pings to server every 15 seconds
+  maxBatchSize: 3,             // ...or sooner once this many are queued (~30s)
+  maxQueueRetained: 2000,      // safety cap on the in-memory/persisted queue
 };
 
 const QUEUE_KEY = '@tas_live_tracking_queue';
@@ -73,20 +73,28 @@ class LiveTrackingService {
 
     this.isRunning = true;
 
-    // Keep the Android process alive when the screen is off by reusing the
-    // existing native foreground service (safe no-op if the module is absent).
     if (Platform.OS === 'android') {
+      // Hand capture to the native foreground service: it records a fix every
+      // 10s and POSTs directly, so tracking continues when the app is in the
+      // background, the screen is off, or the app has been closed — none of
+      // which a JS timer survives. JS does NOT capture on Android (would
+      // double-count). Token lifetime is 8h, enough for a full shift.
       try {
-        NativeModules.TrackingBridge?.startForeground?.();
+        const token = await AsyncStorage.getItem('access');
+        NativeModules.TrackingBridge?.startLiveTracking?.(
+          getBaseURL(),
+          token || '',
+          this.sessionId
+        );
+        if (IS_DEV) console.log('[Live] Native capture started');
       } catch (e) {
-        if (IS_DEV) console.warn('[Live] Foreground service unavailable:', e.message);
+        if (IS_DEV) console.warn('[Live] Native start failed, falling back to JS timer:', e.message);
+        this._startJsCapture();
       }
+    } else {
+      // iOS: JS timers run in the background for location apps, so capture here.
+      this._startJsCapture();
     }
-
-    // Capture one fix immediately, then every 10 seconds.
-    this._capturePoint();
-    this.pingTimer = setInterval(() => this._capturePoint(), CONFIG.pingIntervalMs);
-    this.syncTimer = setInterval(() => this._sync(), CONFIG.syncIntervalMs);
 
     if (IS_DEV) console.log('[Live] Started — session:', this.sessionId);
     return { success: true, sessionId: this.sessionId };
@@ -129,42 +137,57 @@ class LiveTrackingService {
     return { success: true };
   }
 
-  static _capturePoint() {
+  // JS-timer capture (iOS, and Android fallback if the native bridge is absent).
+  // Fixed-clock getCurrentPosition every 10s — NOT watchPosition, which is
+  // movement-driven and goes silent when the user is stationary.
+  static _startJsCapture() {
+    this._captureFix();
+    this.pingTimer = setInterval(() => this._captureFix(), CONFIG.pingIntervalMs);
+    this.syncTimer = setInterval(() => this._sync(), CONFIG.syncIntervalMs);
+  }
+
+  // Ask the OS for one fresh fix. Called immediately at start and then every
+  // 10s by the interval timer.
+  static _captureFix() {
+    if (!this.isRunning) return;
+    Geolocation.getCurrentPosition(
+      (position) => this._enqueue(position),
+      (error) => { if (IS_DEV) console.warn('[Live] GPS error:', error.code, error.message); },
+      { enableHighAccuracy: true, timeout: CONFIG.fixTimeoutMs, maximumAge: 0 }
+    );
+  }
+
+  static _enqueue(position) {
     if (!this.isRunning) return;
 
-    Geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude, accuracy, speed, altitude, heading } = position.coords;
-        if (!this._isValidCoord(latitude, longitude)) return;
+    const coords = position?.coords;
+    if (!coords) return;
+    const { latitude, longitude, accuracy, speed, altitude, heading } = coords;
+    if (!this._isValidCoord(latitude, longitude)) return;
 
-        this.queue.push({
-          latitude,
-          longitude,
-          accuracy: accuracy ?? null,
-          speed: speed != null ? speed * 3.6 : null, // m/s -> km/h
-          altitude: altitude ?? null,
-          heading: heading ?? null,
-          battery_level: this.lastBattery,
-          timestamp: new Date(position.timestamp || Date.now()).toISOString(),
-        });
+    const now = Date.now();
 
-        if (this.queue.length > CONFIG.maxQueueRetained) {
-          this.queue = this.queue.slice(-CONFIG.maxQueueRetained);
-        }
+    this.queue.push({
+      latitude,
+      longitude,
+      accuracy: accuracy ?? null,
+      speed: speed != null ? speed * 3.6 : null, // m/s -> km/h
+      altitude: altitude ?? null,
+      heading: heading ?? null,
+      battery_level: this.lastBattery,
+      timestamp: new Date(position.timestamp || now).toISOString(),
+    });
 
-        if (IS_DEV) console.log('[Live] Ping queued, total:', this.queue.length);
+    if (this.queue.length > CONFIG.maxQueueRetained) {
+      this.queue = this.queue.slice(-CONFIG.maxQueueRetained);
+    }
 
-        if (this.queue.length >= CONFIG.maxBatchSize) this._sync();
-      },
-      (error) => {
-        if (IS_DEV) console.warn('[Live] GPS error:', error.code, error.message);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: CONFIG.gpsTimeoutMs,
-        maximumAge: 0,
-      }
-    );
+    if (IS_DEV) console.log('[Live] Ping queued, total:', this.queue.length);
+
+    // Persist immediately so an OS kill never loses captured points, then flush
+    // once we have a small batch (the 30s timer is unreliable in background).
+    this._saveQueue();
+    if (this.queue.length >= CONFIG.maxBatchSize) this._sync();
   }
 
   static async _sync(isFinal = false) {
@@ -178,7 +201,8 @@ class LiveTrackingService {
 
     try {
       await api.sendLivePoints({ session_id: this.sessionId, points: batch });
-      try { await AsyncStorage.removeItem(QUEUE_KEY); } catch {}
+      // Re-persist whatever arrived while the request was in flight (may be empty).
+      await this._saveQueue();
     } catch (err) {
       if (IS_DEV) console.warn('[Live] Sync failed, will retry:', err.message);
       // Requeue (preserving chronological order) and persist for crash recovery.

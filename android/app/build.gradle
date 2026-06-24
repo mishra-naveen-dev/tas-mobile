@@ -101,6 +101,10 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    // Fused location provider — used by the native TrackingService to capture
+    // GPS every 10s while punched in, even when the app is closed/screen off.
+    implementation("com.google.android.gms:play-services-location:20.0.0")
+
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {
