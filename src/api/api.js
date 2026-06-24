@@ -408,6 +408,23 @@ api.bulkTrackingPoints = (data) => {
     return api.post('/attendance/tracking-points/bulk_create/', data);
 };
 
+// ===== Live Route Tracking (separate 10s-ping system) =====
+api.startLiveSession = (data = {}) =>
+    api.post('/livetracking/sessions/start/', data);
+
+api.stopLiveSession = (data = {}) =>
+    api.post('/livetracking/sessions/stop/', data);
+
+api.sendLivePoints = (data) =>
+    api.post('/livetracking/points/', data);
+
+api.getActiveLiveSession = () =>
+    api.get('/livetracking/sessions/active/');
+
+// Coordinates for one day. Pass { date, employee_id? }.
+api.getLiveDailyRoute = (params = {}) =>
+    api.get('/livetracking/daily/', { params });
+
 api.getUserProfile = () => {
     return api.get('/organization/users/me/');
 };
