@@ -373,12 +373,20 @@ const EmployeeHomeScreen = ({ navigation }) => {
         );
     }, [auth, logout, navigation]);
 
-    const statsData = useMemo(() => [
-        { id: 'distance', icon: 'navigation', value: summary?.total_distance_today || 0, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km' },
-        { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
-        { id: 'collected', icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
-        { id: 'disbursement', icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.danger, bgColor: colors.dangerLight, prefix: '₹' },
-    ], [summary]);
+    const statsData = useMemo(() => {
+        // When tracking is active, GPS live distance is more accurate than the
+        // backend punch-to-punch value (which only counts straight lines between punches).
+        const distanceValue = (isActive || isTracking)
+            ? parseFloat((liveDistance || 0).toFixed(2))
+            : parseFloat((summary?.total_distance_today || 0).toFixed(2));
+
+        return [
+            { id: 'distance', icon: 'navigation', value: distanceValue, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km' },
+            { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
+            { id: 'collected', icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
+            { id: 'disbursement', icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.danger, bgColor: colors.dangerLight, prefix: '₹' },
+        ];
+    }, [summary, isActive, isTracking, liveDistance]);
 
     const correctionCounts = useMemo(() => ({
         pending: correctionSummary?.pending || 0,
@@ -452,7 +460,16 @@ const EmployeeHomeScreen = ({ navigation }) => {
     }, []);
 
     const duration = getTrackingDuration();
-    const distance = getTotalDistance();
+
+    // Live distance — polls LocationService every 3 s while tracking is active
+    const [liveDistance, setLiveDistance] = useState(() => getTotalDistance());
+    useEffect(() => {
+        const d = getTotalDistance();
+        setLiveDistance(d);
+        if (!isActive && !isTracking) return;
+        const t = setInterval(() => setLiveDistance(getTotalDistance()), 3000);
+        return () => clearInterval(t);
+    }, [isActive, isTracking, getTotalDistance]);
 
     const trackingStatus = useMemo(() => {
         if (isActive || isTracking) {
@@ -514,7 +531,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         <View style={styles.trackingStatsRow}>
                             <View style={styles.miniStat}>
                                 <Icon name="navigation" size={16} color={colors.primary} />
-                                <Text style={styles.miniStatValue}>{formatDistance(distance)}</Text>
+                                <Text style={styles.miniStatValue}>{formatDistance(liveDistance)}</Text>
                             </View>
                             <View style={styles.miniStatDivider} />
                             <View style={styles.miniStat}>
