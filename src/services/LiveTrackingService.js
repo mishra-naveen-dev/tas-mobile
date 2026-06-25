@@ -25,8 +25,8 @@ const IS_DEV = __DEV__;
 const CONFIG = {
   pingIntervalMs: 10 * 1000,   // capture a fresh fix every 10 seconds (per spec)
   fixTimeoutMs: 9 * 1000,      // per-fix GPS timeout — must be < pingIntervalMs
-  syncIntervalMs: 15 * 1000,   // flush queued pings to server every 15 seconds
-  maxBatchSize: 3,             // ...or sooner once this many are queued (~30s)
+  syncIntervalMs: 60 * 1000,   // flush queued pings to server once a minute (low server load)
+  maxBatchSize: 6,             // ...or sooner once this many are queued (~60s)
   maxQueueRetained: 2000,      // safety cap on the in-memory/persisted queue
 };
 
