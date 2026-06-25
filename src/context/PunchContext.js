@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
 import LocationService from '../services/LocationService';
 import BackgroundTrackingService from '../services/BackgroundTrackingService';
+import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
 
 const IS_DEV = __DEV__;
@@ -155,6 +156,11 @@ export const PunchProvider = ({ children }) => {
         });
       }
 
+      // Separate live route tracker (10s GPS pings) — independent session.
+      LiveTrackingService.start().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Live start error:', e.message);
+      });
+
       await fetchTodayPunches();
 
       return { success: true, data: res.data };
@@ -205,6 +211,11 @@ export const PunchProvider = ({ children }) => {
       // Flush remaining GPS points to backend before submitting punch-out
       await BackgroundTrackingService.stop().catch((e) => {
         if (IS_DEV) console.warn('[Punch] BTS stop error:', e.message);
+      });
+
+      // Stop the separate live route tracker and flush remaining pings.
+      await LiveTrackingService.stop().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Live stop error:', e.message);
       });
 
       await api.post('/attendance/punches/', payload);
@@ -258,6 +269,15 @@ export const PunchProvider = ({ children }) => {
   useEffect(() => {
     fetchTodayPunches();
   }, [fetchTodayPunches]);
+
+  // Request location + background + notification permissions up-front so live
+  // route tracking actually works the first time the user punches in. Safe to
+  // run on every authenticated launch — the OS won't re-prompt granted perms.
+  useEffect(() => {
+    LiveTrackingService.bootstrapPermissions().catch((e) => {
+      if (IS_DEV) console.warn('[Punch] Permission bootstrap error:', e.message);
+    });
+  }, []);
 
   const value = useMemo(() => ({
     punches,
