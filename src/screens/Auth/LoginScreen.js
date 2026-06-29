@@ -23,7 +23,7 @@ import { colors, typography, spacing } from '../../theme/tokens';
 const SUPPORT_EMAIL = 'naveen@armanindia.com';
 const SUPPORT_PHONE = '1-800-10-27626';
 const LOCAL_EMULATOR_URL = 'http://10.0.2.2:8000';
-const PROD_URL = 'https://tsbackendtest.onrender.com';
+const PROD_URL = 'https://api.tas.namracred.co.in';
 
 const LoginScreen = ({ navigation }) => {
     const auth = useAuth();

@@ -12,7 +12,7 @@ class SSEService {
     this.reconnectAttempts = 0;
     this.isConnecting = false;
     this.isConnected = false;
-    this.baseUrl = 'https://tas-backend-8emb.onrender.com';
+    this.baseUrl = 'https://api.tas.namracred.co.in';
   }
 
   // ==================== EVENT TYPES ====================

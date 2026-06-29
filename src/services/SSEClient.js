@@ -62,7 +62,7 @@ class SSEClient {
    */
   static async getBaseURL() {
     // Use the same base URL as API
-    return 'https://tas-backend-8emb.onrender.com/api/v1';
+    return 'https://api.tas.namracred.co.in/api/v1';
   }
 
   /**
