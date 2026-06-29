@@ -1,6 +1,6 @@
 // API Configuration
 export const API_CONFIG = {
-  BASE_URL: 'https://tas-backend-8emb.onrender.com',
+  BASE_URL: 'https://api.tas.namracred.co.in',
   API_VERSION: '/api/v1',
   TIMEOUT: 30000,
   RETRY_ATTEMPTS: 3,
