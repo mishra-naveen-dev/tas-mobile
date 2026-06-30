@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 
-const PROD_URL = 'https://tsbackendtest.onrender.com/api/v1';
+const PROD_URL = 'https://api.tas.namracred.co.in/api/v1';
 
 let customBaseURL = null;
 
