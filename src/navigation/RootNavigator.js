@@ -16,8 +16,8 @@ import EmployeeHomeScreen from '../screens/Employee/EmployeeHomeScreen';
 import EmployeePunchScreen from '../screens/Employee/EmployeePunchScreen';
 import PunchScreen from '../screens/Employee/PunchScreen';
 import EmployeeCorrectionScreen from '../screens/Employee/EmployeeCorrectionScreen';
-import EmployeeAllowanceScreen from '../screens/Employee/EmployeeAllowanceScreen';
 import EmployeeMoreScreen from '../screens/Employee/EmployeeMoreScreen';
+import CollectionsScreen from '../screens/Common/CollectionsScreen';
 
 // Admin Screens
 import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
@@ -89,7 +89,7 @@ const EmployeeTabNavigator = () => {
             <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
             <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
             <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
-            <EmployeeTab.Screen name="EmployeeAllowance" component={EmployeeAllowanceScreen} />
+            <EmployeeTab.Screen name="EmployeeCollections" component={CollectionsScreen} />
             <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
         </EmployeeTab.Navigator>
     );
