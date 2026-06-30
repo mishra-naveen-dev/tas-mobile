@@ -25,14 +25,23 @@ class LocationService {
   static routePoints = [];
   static listeners = new Set();
   static isTracking = false;
+  static _bgRequested = false;
 
-  static async requestPermission() {
+  // Request foreground location permission and report a granular status so the
+  // UI can react correctly:
+  //   'granted'  – good to go
+  //   'denied'   – user said no but can be asked again (show Retry)
+  //   'blocked'  – user picked "Don't ask again" / iOS denied (must open Settings)
+  static async requestForegroundStatus() {
     if (Platform.OS === 'ios') {
-      return new Promise((resolve) => {
-        Geolocation.requestAuthorization('whenInUse')
-          .then((result) => resolve(result === 'granted'))
-          .catch(() => resolve(false));
-      });
+      try {
+        const result = await Geolocation.requestAuthorization('whenInUse');
+        if (result === 'granted') return 'granted';
+        if (result === 'denied' || result === 'restricted' || result === 'disabled') return 'blocked';
+        return 'denied';
+      } catch {
+        return 'denied';
+      }
     }
 
     if (Platform.OS === 'android') {
@@ -47,13 +56,27 @@ class LocationService {
             buttonPositive: 'OK',
           }
         );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
+        if (granted === PermissionsAndroid.RESULTS.GRANTED) return 'granted';
+        if (granted === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) return 'blocked';
+        return 'denied';
       } catch {
-        return false;
+        return 'denied';
       }
     }
 
-    return false;
+    return 'denied';
+  }
+
+  // Backwards-compatible boolean wrapper.
+  static async requestPermission() {
+    const status = await this.requestForegroundStatus();
+    return status === 'granted';
+  }
+
+  // Opens the OS settings screen for this app so the user can flip a blocked
+  // permission back on.
+  static openSettings() {
+    Linking.openSettings().catch(() => {});
   }
 
   static async checkPermission() {
@@ -85,11 +108,24 @@ class LocationService {
   static async getCurrentLocation() {
     console.log('[Location] Fetching current location...');
 
-    const hasPermission = await this.requestPermission();
-    if (!hasPermission) {
-      console.warn('[Location] No permission');
-      return this.createError('Location permission denied. Please enable in Settings.', 'PERMISSION_DENIED');
+    const status = await this.requestForegroundStatus();
+    if (status !== 'granted') {
+      console.warn('[Location] Permission not granted:', status);
+      if (status === 'blocked') {
+        return this.createError(
+          'Location permission is turned off for TAS. Please enable it in Settings to punch.',
+          'PERMISSION_BLOCKED'
+        );
+      }
+      return this.createError(
+        'Location access is required to punch. Please allow location permission.',
+        'PERMISSION_DENIED'
+      );
     }
+
+    // Foreground granted — ask once for "Allow all the time" so route tracking
+    // keeps working when the app is in the background. Best-effort; never blocks.
+    this.ensureBackgroundPermission();
 
     return new Promise((resolve) => {
       let resolved = false;
@@ -146,7 +182,11 @@ class LocationService {
             console.log('[Location] Falling back to mock');
             resolve(this.getMockLocation());
           } else {
-            resolve(this.createError(this.getErrorMessage(error.code), 'GPS_ERROR'));
+            // code 1 = permission, 2 = location services (GPS) off, 3 = timeout
+            const type = error.code === 1 ? 'PERMISSION_BLOCKED'
+              : error.code === 2 ? 'LOCATION_OFF'
+              : 'GPS_ERROR';
+            resolve(this.createError(this.getErrorMessage(error.code), type));
           }
         },
         {
@@ -183,6 +223,16 @@ class LocationService {
     if (lat === 0 && lng === 0) return false;
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
     return true;
+  }
+
+  // Request background ("Allow all the time") permission at most once per app
+  // run, so the user isn't nagged on every punch. Best-effort.
+  static async ensureBackgroundPermission() {
+    if (this._bgRequested) return;
+    this._bgRequested = true;
+    try {
+      await this.requestBackgroundPermission();
+    } catch {}
   }
 
   static async requestBackgroundPermission() {

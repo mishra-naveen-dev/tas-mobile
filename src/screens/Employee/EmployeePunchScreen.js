@@ -147,9 +147,49 @@ const EmployeePunchScreen = ({ navigation }) => {
     if (isIdle) {
       const result = await fetchLocation();
       if (!result.success) {
-        Alert.alert('Location Error', result.error);
+        showLocationAlert(result);
       }
     }
+  };
+
+  // Turn a location failure into an actionable prompt instead of a dead-end "OK".
+  const showLocationAlert = (result) => {
+    const type = result.errorType;
+
+    if (type === 'PERMISSION_BLOCKED') {
+      Alert.alert(
+        'Enable Location',
+        result.error || 'Location permission is turned off for TAS. Please enable it in Settings to punch.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => LocationService?.openSettings?.() },
+        ]
+      );
+      return;
+    }
+
+    if (type === 'LOCATION_OFF') {
+      Alert.alert(
+        'Turn On Location',
+        'Your device location (GPS) is off. Please turn on location, then tap Retry.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Retry', onPress: () => handlePunchPress() },
+        ]
+      );
+      return;
+    }
+
+    // PERMISSION_DENIED / GPS_ERROR / TIMEOUT — allow a quick retry (which
+    // re-requests the permission prompt).
+    Alert.alert(
+      'Location Needed',
+      result.error || 'Could not get your location. Please try again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Retry', onPress: () => handlePunchPress() },
+      ]
+    );
   };
 
   const handlePunchOutPress = () => {

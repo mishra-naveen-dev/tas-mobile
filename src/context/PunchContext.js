@@ -84,7 +84,7 @@ export const PunchProvider = ({ children }) => {
       if (location.error) {
         setPunchState(STATES.ERROR);
         setErrorMessage(location.error);
-        return { success: false, error: location.error };
+        return { success: false, error: location.error, errorType: location.errorType };
       }
       
       const address = location.address || `${location.latitude?.toFixed(5)}, ${location.longitude?.toFixed(5)}`;
