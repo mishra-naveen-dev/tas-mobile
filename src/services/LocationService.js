@@ -92,6 +92,21 @@ class LocationService {
     return true;
   }
 
+  // True if background ("Allow all the time") location is granted. On Android
+  // below 10 background location is implicit, and on iOS this check isn't
+  // applicable here — treat both as satisfied so we never hard-block them.
+  static async checkBackgroundPermission() {
+    if (Platform.OS !== 'android') return true;
+    try {
+      if (parseInt(Platform.Version, 10) < 29) return true;
+      return await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION
+      );
+    } catch {
+      return true;
+    }
+  }
+
   static getMockLocation() {
     console.log('[Location] Using mock location (Dev mode)');
     return {

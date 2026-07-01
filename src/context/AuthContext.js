@@ -27,7 +27,12 @@ const normalizeUser = (userData) => {
     if (!userData) return null;
     return {
         ...userData,
-        forcePasswordChange: userData.force_password_change || userData.forcePasswordChange || false
+        forcePasswordChange: userData.force_password_change || userData.forcePasswordChange || false,
+        // Whether background location tracking is required for this user
+        // (Super Admin controls it; defaults ON for employees).
+        tracking_enabled: userData.tracking_enabled !== undefined
+            ? userData.tracking_enabled
+            : (String(userData.role || userData.role_name || '').toUpperCase() === 'EMPLOYEE'),
     };
 };
 

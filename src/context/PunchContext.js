@@ -127,6 +127,8 @@ export const PunchProvider = ({ children }) => {
         visit_type: formData.visit_type || 'VISIT',
         loan_id: formData.loan_id || '',
         amount: formData.amount ? parseFloat(formData.amount) : null,
+        // Backend field is payment_method; keep payment_mode too for compatibility.
+        payment_method: formData.payment_mode || '',
         payment_mode: formData.payment_mode || '',
         upi_ref: formData.upi_ref || '',
         cheque_no: formData.cheque_no || '',

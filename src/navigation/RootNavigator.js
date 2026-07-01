@@ -52,6 +52,7 @@ import MissedPunchDashboardScreen from '../screens/Employee/MissedPunchDashboard
 
 
 import CustomTabBar from '../components/CustomTabBar';
+import LocationGate from '../components/LocationGate';
 import { useAuth } from '../context/AuthContext';
 
 const AuthStack = createNativeStackNavigator();
@@ -244,7 +245,13 @@ const RootNavigator = () => {
         return <AdminStackNavigator />;
     }
 
-    return <EmployeeStackNavigator />;
+    // Employees must grant background ("Allow all the time") location before
+    // using the app — checked on login and every time the app is foregrounded.
+    return (
+        <LocationGate user={auth.user}>
+            <EmployeeStackNavigator />
+        </LocationGate>
+    );
 };
 
 export default RootNavigator;
