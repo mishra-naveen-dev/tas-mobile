@@ -29,7 +29,7 @@ const CustomTabBar = memo(function CustomTabBar({ state, navigation }) {
         { name: 'EmployeeHome', label: 'Home', icon: 'home' },
         { name: 'EmployeeCorrection', label: 'Correction', icon: 'edit' },
         { name: 'EmployeePunch', label: 'Punch', icon: 'map-pin' },
-        { name: 'EmployeeAllowance', label: 'Allowance', icon: 'dollar-sign' },
+        { name: 'EmployeeCollections', label: 'Collections', icon: 'dollar-sign' },
         { name: 'EmployeeMore', label: 'More', icon: 'menu' },
     ];
 

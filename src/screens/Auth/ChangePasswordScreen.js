@@ -57,6 +57,18 @@ const ChangePasswordScreen = ({ navigation }) => {
         return true;
     };
 
+    // Flip force_password_change locally so RootNavigator immediately routes the
+    // user to their home screen, then reconcile with the backend's truth.
+    const completeSuccess = async () => {
+        auth.updateUser({
+            ...auth.user,
+            force_password_change: false,
+            forcePasswordChange: false,
+        });
+        // Pull the canonical user so any other server-side state is in sync.
+        try { await auth.refreshUser(); } catch {}
+    };
+
     const handleChange = async () => {
         if (!validatePasswords()) {
             return;
@@ -66,22 +78,36 @@ const ChangePasswordScreen = ({ navigation }) => {
 
         try {
             await changePassword(currentPassword, newPassword);
-
-            // Clear force_password_change in local auth state.
-            // RootNavigator watches this flag — setting it false makes it
-            // immediately route the user to their home screen without logout.
-            auth.updateUser({
-                ...auth.user,
-                force_password_change: false,
-                forcePasswordChange: false,
-            });
+            await completeSuccess();
         } catch (error) {
-            const data = error?.response?.data;
-            const errorMessage =
-                data?.error || data?.detail || data?.message ||
-                'Failed to change password. Please try again.';
-            Alert.alert('Error', errorMessage);
-        } finally {
+            const response = error?.response;
+            const data = response?.data;
+
+            // A real validation error from the server (wrong current password,
+            // weak password, reused password, etc.) — show the message.
+            if (response && response.status >= 400 && response.status < 500) {
+                const errorMessage =
+                    data?.error || data?.detail || data?.message ||
+                    'Failed to change password. Please try again.';
+                Alert.alert('Error', errorMessage);
+                setIsLoading(false);
+                return;
+            }
+
+            // No HTTP response (timeout / network / slow server). The change may
+            // have actually applied server-side — verify via /me before failing,
+            // so the user isn't stranded on this screen (the old bug: they retry
+            // with a password that was already changed).
+            const refreshed = await auth.refreshUser();
+            if (refreshed && !refreshed.force_password_change) {
+                setIsLoading(false);
+                return; // success — navigation will switch to home
+            }
+
+            Alert.alert(
+                'Network Slow',
+                'We could not confirm the password change. Please check your connection and try again.'
+            );
             setIsLoading(false);
         }
     };

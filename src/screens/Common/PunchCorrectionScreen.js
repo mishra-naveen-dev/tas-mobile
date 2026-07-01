@@ -105,6 +105,17 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
     const [error, setError] = useState('');
     const [distance, setDistance] = useState(editMode && existingData ? (existingData.calculated_distance || 0) : 0);
     const [calculatingDistance, setCalculatingDistance] = useState(false);
+    // Intermediate stops between From (A) and To (B): A -> a.1 -> a.2 -> B
+    const [waypoints, setWaypoints] = useState([]);
+    // What the employee says they actually travelled (manual, km).
+    const [claimedDistance, setClaimedDistance] = useState(
+        editMode && existingData ? String(existingData.claimed_distance || '') : ''
+    );
+
+    const addWaypoint = () => setWaypoints(prev => [...prev, { address: '', pincode: '' }]);
+    const removeWaypoint = (index) => setWaypoints(prev => prev.filter((_, i) => i !== index));
+    const updateWaypoint = (index, key, value) =>
+        setWaypoints(prev => prev.map((w, i) => (i === index ? { ...w, [key]: value } : w)));
 
     const updateForm = (key, value) => {
         setFormData(prev => ({ ...prev, [key]: value }));
@@ -127,14 +138,29 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
 
     const debounceRef = useRef(null);
 
-    const runDistanceCalc = async (fromAddr, fromPin, toAddr, toPin) => {
+    // Build the ordered list of route stops: From -> each Via -> To.
+    const buildRouteQueries = () => {
+        const { from_address, pincode, to_address, to_pincode } = formData;
+        const stops = [];
+        if (from_address) stops.push(`${from_address}, ${pincode}, India`);
+        waypoints.forEach(w => {
+            if (w.address) stops.push(`${w.address}, ${w.pincode}, India`);
+        });
+        if (to_address) stops.push(`${to_address}, ${to_pincode}, India`);
+        return stops;
+    };
+
+    const runDistanceCalc = async () => {
+        const queries = buildRouteQueries();
+        if (queries.length < 2) {
+            setDistance(0);
+            return;
+        }
         setCalculatingDistance(true);
         try {
-            const fromQuery = `${fromAddr}, ${fromPin}, India`;
-            const toQuery = toAddr ? `${toAddr}, ${toPin}, India` : fromQuery;
-            const dist = await GeocodingService.calculateDrivingDistance(fromQuery, toQuery);
-            if (dist > 0) {
-                setDistance(dist);
+            const { total } = await GeocodingService.calculateMultiLegDistance(queries);
+            if (total > 0) {
+                setDistance(total);
             } else {
                 setDistance(0);
                 setError('Could not calculate distance. Please verify the addresses and pincodes.');
@@ -152,27 +178,34 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
             from_address.length >= 3 &&
             pincode.length === 6 &&
             to_address.length >= 3 &&
-            to_pincode.length === 6;
+            to_pincode.length === 6 &&
+            // every filled waypoint must have a 6-digit pincode
+            waypoints.every(w => !w.address || w.pincode.length === 6);
 
         if (!canCalc) return;
 
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
-            runDistanceCalc(from_address, pincode, to_address, to_pincode);
+            runDistanceCalc();
         }, 800);
 
         return () => {
             if (debounceRef.current) clearTimeout(debounceRef.current);
         };
-    }, [formData.from_address, formData.pincode, formData.to_address, formData.to_pincode]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [formData.from_address, formData.pincode, formData.to_address, formData.to_pincode, waypoints]);
 
     const handleCalculateDistance = async () => {
-        const { from_address, pincode, to_address, to_pincode } = formData;
+        const { from_address, to_address } = formData;
         if (!from_address || from_address.length < 3) {
             Alert.alert('Error', 'Please enter from address');
             return;
         }
-        await runDistanceCalc(from_address, pincode, to_address, to_pincode);
+        if (!to_address || to_address.length < 3) {
+            Alert.alert('Error', 'Please enter the destination (To) address');
+            return;
+        }
+        await runDistanceCalc();
     };
 
     const formatDate = (date) => {
@@ -225,7 +258,22 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
 
         try {
             const timeStr = formData.correction_time.toTimeString().slice(0, 5);
-            
+
+            // Build the ordered route: From (A) -> each Via (a.1, a.2) -> To (B).
+            const routeStops = [
+                { address: formData.from_address, pincode: formData.pincode },
+                ...waypoints.filter(w => w.address),
+                { address: formData.to_address, pincode: formData.to_pincode },
+            ].filter(s => s.address);
+
+            const punch_sequence = routeStops.map((s, i) => ({
+                sequence: i + 1,
+                address: s.address,
+                pincode: s.pincode,
+            }));
+
+            const manual = claimedDistance ? parseFloat(claimedDistance) : 0;
+
             const payload = {
                 correction_type: formData.correction_type,
                 correction_date: formData.correction_date.toISOString().split('T')[0],
@@ -240,9 +288,12 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
                 loan_id: formData.loan_id || null,
                 amount: formData.amount ? parseFloat(formData.amount) : null,
                 payment_method: formData.payment_method,
-                punch_sequence: [],
+                // Only send a multi-stop sequence when there are intermediate stops.
+                punch_sequence: waypoints.some(w => w.address) ? punch_sequence : [],
                 original_punch_id: null,
-                calculated_distance: distance || 0,
+                // Auto-calculated total; fall back to the manual value if geocoding failed.
+                calculated_distance: distance || manual || 0,
+                claimed_distance: manual,
             };
 
             if (editMode && correctionId) {
@@ -453,6 +504,41 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
                     />
                 </View>
 
+                {/* Intermediate stops: A -> a.1 -> a.2 -> B */}
+                {waypoints.map((wp, index) => (
+                    <View style={styles.section} key={`wp-${index}`}>
+                        <View style={styles.waypointHeader}>
+                            <FieldLabel>{`Stop ${index + 1} (Via)`}</FieldLabel>
+                            <TouchableOpacity onPress={() => removeWaypoint(index)} disabled={submitting}>
+                                <Icon name="x-circle" size={18} color={colors.danger} />
+                            </TouchableOpacity>
+                        </View>
+                        <TextInput
+                            style={[styles.input, submitting && styles.inputDisabled]}
+                            value={wp.address}
+                            onChangeText={(text) => updateWaypoint(index, 'address', text)}
+                            placeholder="Via address / location"
+                            placeholderTextColor={colors.textMuted}
+                            editable={!submitting}
+                        />
+                        <TextInput
+                            style={[styles.input, submitting && styles.inputDisabled, { marginTop: 8 }]}
+                            value={wp.pincode}
+                            onChangeText={(text) => updateWaypoint(index, 'pincode', text.replace(/[^0-9]/g, '').slice(0, 6))}
+                            placeholder="6-digit pincode"
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="numeric"
+                            maxLength={6}
+                            editable={!submitting}
+                        />
+                    </View>
+                ))}
+
+                <TouchableOpacity style={styles.addStopBtn} onPress={addWaypoint} disabled={submitting}>
+                    <Icon name="plus-circle" size={18} color={colors.primary} />
+                    <Text style={styles.addStopText}>Add stop (via point)</Text>
+                </TouchableOpacity>
+
                 <View style={styles.section}>
                     <FieldLabel>To Address (Optional)</FieldLabel>
                     <TextInput
@@ -506,6 +592,20 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
                                 <Text style={styles.calculateBtnText}>Calculate</Text>
                             </TouchableOpacity>
                         </View>
+
+                        <FieldLabel>Distance travelled (km)</FieldLabel>
+                        <TextInput
+                            style={[styles.input, submitting && styles.inputDisabled]}
+                            value={claimedDistance}
+                            onChangeText={(text) => setClaimedDistance(text.replace(/[^0-9.]/g, ''))}
+                            placeholder="Enter the distance you actually travelled"
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="numeric"
+                            editable={!submitting}
+                        />
+                        <Text style={styles.helperText}>
+                            Auto distance is system-calculated. Enter what you actually travelled if it differs.
+                        </Text>
                     </View>
                 )}
 
@@ -689,6 +789,29 @@ fieldLabel: {
         color: '#FFF',
         fontWeight: typography.weights.semibold,
         marginLeft: spacing.xs,
+    },
+    waypointHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    addStopBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        paddingVertical: spacing.xs,
+        paddingHorizontal: spacing.sm,
+        marginBottom: spacing.md,
+    },
+    addStopText: {
+        color: colors.primary,
+        fontWeight: typography.weights.semibold,
+        marginLeft: spacing.xs,
+    },
+    helperText: {
+        fontSize: typography.sizes.xs,
+        color: colors.textMuted,
+        marginTop: spacing.xs,
     },
     required: {
         color: colors.danger,

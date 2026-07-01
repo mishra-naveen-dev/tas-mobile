@@ -129,6 +129,27 @@ class GeocodingService {
     }
   }
 
+  // Total driving distance across an ordered list of address strings
+  // (A -> a.1 -> a.2 -> B): sums the distance of each consecutive leg.
+  // Returns { total, legs: [{ from, to, km }] }.
+  static async calculateMultiLegDistance(addresses) {
+    const clean = (addresses || []).filter((a) => a && a.trim().length > 0);
+    if (clean.length < 2) {
+      return { total: 0, legs: [] };
+    }
+
+    let total = 0;
+    const legs = [];
+    for (let i = 0; i < clean.length - 1; i++) {
+      // Reuse the single-leg driving distance (Google Distance Matrix with
+      // Haversine fallback), which also caches geocoding.
+      const km = await this.calculateDrivingDistance(clean[i], clean[i + 1]);
+      legs.push({ from: clean[i], to: clean[i + 1], km });
+      total += km || 0;
+    }
+    return { total: Math.round(total * 100) / 100, legs };
+  }
+
   static calculateHaversine(lat1, lon1, lat2, lon2) {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;

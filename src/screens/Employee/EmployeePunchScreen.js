@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { usePunch, STATES } from '../../context/PunchContext';
+import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 
 const { width } = Dimensions.get('window');
@@ -117,6 +118,42 @@ const EmployeePunchScreen = ({ navigation }) => {
     vehicle_number: '',
   });
 
+  // Loan ID autocomplete from the employee's uploaded collection records.
+  const [loanSuggestions, setLoanSuggestions] = useState([]);
+  const [showLoanSuggestions, setShowLoanSuggestions] = useState(false);
+  const loanDebounceRef = useRef(null);
+
+  const fetchLoanSuggestions = useCallback((query) => {
+    if (loanDebounceRef.current) clearTimeout(loanDebounceRef.current);
+    if (!query || query.length < 2) {
+      setLoanSuggestions([]);
+      setShowLoanSuggestions(false);
+      return;
+    }
+    loanDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await api.getCollections({ search: query });
+        const list = res.data.results || res.data || [];
+        setLoanSuggestions(list.slice(0, 8));
+        setShowLoanSuggestions(list.length > 0);
+      } catch {
+        setLoanSuggestions([]);
+      }
+    }, 350);
+  }, []);
+
+  const applyLoanSuggestion = (rec) => {
+    setForm((prev) => ({
+      ...prev,
+      loan_id: rec.loan_id,
+      customer_name: rec.customer_name && rec.customer_name !== 'Unknown' ? rec.customer_name : prev.customer_name,
+      customer_address: [rec.address, rec.pincode].filter(Boolean).join(', ') || prev.customer_address,
+      amount: rec.amount_due ? String(rec.amount_due) : prev.amount,
+    }));
+    setShowLoanSuggestions(false);
+    setLoanSuggestions([]);
+  };
+
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const mapRef = useRef(null);
 
@@ -147,9 +184,49 @@ const EmployeePunchScreen = ({ navigation }) => {
     if (isIdle) {
       const result = await fetchLocation();
       if (!result.success) {
-        Alert.alert('Location Error', result.error);
+        showLocationAlert(result);
       }
     }
+  };
+
+  // Turn a location failure into an actionable prompt instead of a dead-end "OK".
+  const showLocationAlert = (result) => {
+    const type = result.errorType;
+
+    if (type === 'PERMISSION_BLOCKED') {
+      Alert.alert(
+        'Enable Location',
+        result.error || 'Location permission is turned off for TAS. Please enable it in Settings to punch.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => LocationService?.openSettings?.() },
+        ]
+      );
+      return;
+    }
+
+    if (type === 'LOCATION_OFF') {
+      Alert.alert(
+        'Turn On Location',
+        'Your device location (GPS) is off. Please turn on location, then tap Retry.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Retry', onPress: () => handlePunchPress() },
+        ]
+      );
+      return;
+    }
+
+    // PERMISSION_DENIED / GPS_ERROR / TIMEOUT — allow a quick retry (which
+    // re-requests the permission prompt).
+    Alert.alert(
+      'Location Needed',
+      result.error || 'Could not get your location. Please try again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Retry', onPress: () => handlePunchPress() },
+      ]
+    );
   };
 
   const handlePunchOutPress = () => {
@@ -185,6 +262,14 @@ const EmployeePunchScreen = ({ navigation }) => {
       }
       if (!form.amount) {
         Alert.alert('Required', 'Amount is required');
+        return false;
+      }
+      if (isNaN(parseFloat(form.amount)) || parseFloat(form.amount) < 0) {
+        Alert.alert('Invalid', 'Amount cannot be negative');
+        return false;
+      }
+      if (form.loan_id.length > 10) {
+        Alert.alert('Invalid', 'Loan ID cannot be more than 10 characters');
         return false;
       }
       if (form.visit_type === 'COLLECTION' && !form.payment_mode) {
@@ -551,10 +636,42 @@ const EmployeePunchScreen = ({ navigation }) => {
               {(form.visit_type === 'COLLECTION' || form.visit_type === 'DISBURSEMENT') && (
                 <>
                   <Text style={styles.label}>Loan ID *</Text>
-                  <TextInput style={styles.input} value={form.loan_id} onChangeText={(t) => updateForm('loan_id', t)} placeholder="Loan ID" placeholderTextColor={colors.textMuted} />
+                  <TextInput
+                    style={styles.input}
+                    value={form.loan_id}
+                    onChangeText={(t) => {
+                      const v = t.slice(0, 10);
+                      updateForm('loan_id', v);
+                      fetchLoanSuggestions(v);
+                    }}
+                    placeholder="Loan ID (max 10)"
+                    placeholderTextColor={colors.textMuted}
+                    maxLength={10}
+                    autoCapitalize="characters"
+                  />
+                  {showLoanSuggestions && (
+                    <View style={styles.suggestionBox}>
+                      {loanSuggestions.map((s) => (
+                        <TouchableOpacity key={s.id} style={styles.suggestionItem} onPress={() => applyLoanSuggestion(s)}>
+                          <Text style={styles.suggestionLoan}>{s.loan_id}</Text>
+                          <Text style={styles.suggestionMeta} numberOfLines={1}>
+                            {(s.customer_name && s.customer_name !== 'Unknown') ? s.customer_name : 'Customer'}
+                            {s.amount_due ? `  ·  ₹${Number(s.amount_due).toLocaleString('en-IN')}` : ''}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
 
                   <Text style={styles.label}>Amount *</Text>
-                  <TextInput style={styles.input} value={form.amount} onChangeText={(t) => updateForm('amount', t)} placeholder="Amount" placeholderTextColor={colors.textMuted} keyboardType="numeric" />
+                  <TextInput
+                    style={styles.input}
+                    value={form.amount}
+                    onChangeText={(t) => updateForm('amount', t.replace(/[^0-9.]/g, ''))}
+                    placeholder="Amount"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="numeric"
+                  />
 
                   {form.visit_type === 'COLLECTION' && (
                     <>
@@ -681,6 +798,23 @@ const styles = StyleSheet.create({
   chipText: { fontSize: typography.sizes.sm, color: colors.textMuted },
   chipTextActive: { color: '#fff', fontWeight: '600' },
   input: { backgroundColor: colors.background, borderRadius: 12, padding: spacing.md, fontSize: typography.sizes.md, color: colors.text },
+
+  suggestionBox: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    marginTop: spacing.xs,
+    overflow: 'hidden',
+  },
+  suggestionItem: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  suggestionLoan: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.text },
+  suggestionMeta: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
 
   // ── Reason combo field ────────────────────────────────────────────────────
   reasonWrap: {

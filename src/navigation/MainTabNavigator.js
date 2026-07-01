@@ -5,7 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 
 import DashboardScreen from '../screens/Common/DashboardScreen';
-import ApplyAllowanceScreen from '../screens/Common/ApplyAllowanceScreen';
+import CollectionsScreen from '../screens/Common/CollectionsScreen';
 import PunchCorrectionScreen from '../screens/Common/PunchCorrectionScreen';
 import HistoryHubScreen from '../screens/Common/HistoryHubScreen';
 import EmployeePunchScreen from '../screens/Employee/EmployeePunchScreen';
@@ -35,7 +35,7 @@ const MainTabNavigator = () => {
             >
                 <Tab.Screen name="Home" component={DashboardScreen} />
                 <Tab.Screen name="Correction" component={PunchCorrectionScreen} />
-                <Tab.Screen name="Allowance" component={ApplyAllowanceScreen} />
+                <Tab.Screen name="Collections" component={CollectionsScreen} />
                 <Tab.Screen name="History" component={HistoryHubScreen} />
                 <Tab.Screen
                     name="More"

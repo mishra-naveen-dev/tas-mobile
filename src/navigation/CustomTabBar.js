@@ -11,7 +11,7 @@ const TAB_LEFT = [
 ];
 
 const TAB_RIGHT = [
-    { name: 'Allowance', label: 'Allowance', icon: 'file-text' },
+    { name: 'Collections', label: 'Collections', icon: 'dollar-sign' },
     { name: 'More', label: 'More', icon: 'grid' },
 ];
 

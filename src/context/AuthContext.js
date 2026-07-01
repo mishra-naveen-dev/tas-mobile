@@ -27,7 +27,12 @@ const normalizeUser = (userData) => {
     if (!userData) return null;
     return {
         ...userData,
-        forcePasswordChange: userData.force_password_change || userData.forcePasswordChange || false
+        forcePasswordChange: userData.force_password_change || userData.forcePasswordChange || false,
+        // Whether background location tracking is required for this user
+        // (Super Admin controls it; defaults ON for employees).
+        tracking_enabled: userData.tracking_enabled !== undefined
+            ? userData.tracking_enabled
+            : (String(userData.role || userData.role_name || '').toUpperCase() === 'EMPLOYEE'),
     };
 };
 
@@ -235,6 +240,25 @@ export const AuthProvider = ({ children }) => {
         }
     }, []);
 
+    // Re-fetch the canonical user from the backend (/me) and update state.
+    // Used after a password change so navigation reacts to the server's truth
+    // (e.g. force_password_change flips to false) even if the local update was
+    // missed due to a slow/timed-out response.
+    const refreshUser = useCallback(async () => {
+        try {
+            const res = await api.getUserProfile();
+            if (res?.data) {
+                const normalized = normalizeUser(res.data);
+                setUser(normalized);
+                await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(normalized));
+                return normalized;
+            }
+        } catch (e) {
+            if (__DEV__) console.warn('[Auth] refreshUser failed:', e?.message);
+        }
+        return null;
+    }, []);
+
     const value = useMemo(() => ({
         user,
         role,
@@ -253,6 +277,7 @@ export const AuthProvider = ({ children }) => {
         login,
         logout,
         updateUser,
+        refreshUser,
     }), [
         user,
         role,
@@ -269,6 +294,7 @@ export const AuthProvider = ({ children }) => {
         login,
         logout,
         updateUser,
+        refreshUser,
     ]);
 
     return (
@@ -301,6 +327,7 @@ export const useAuth = () => {
             login: () => Promise.resolve({ success: false, error: 'Auth not initialized' }),
             logout: () => Promise.resolve(),
             updateUser: () => {},
+            refreshUser: () => Promise.resolve(null),
         };
     }
 

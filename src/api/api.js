@@ -505,4 +505,11 @@ api.approveMasterRequest = (id, remarks = '') =>
 api.rejectMasterRequest = (id, remarks = '') =>
     api.post(`/master-data/requests/${id}/reject/`, { remarks });
 
+// ── Customer collections ──
+api.getCollections = (params = {}) =>
+    api.get('/loans/collections/', { params });
+
+api.updateCollectionStatus = (id, data) =>
+    api.post(`/loans/collections/${id}/update_status/`, data);
+
 export default api;

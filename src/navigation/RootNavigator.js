@@ -16,8 +16,8 @@ import EmployeeHomeScreen from '../screens/Employee/EmployeeHomeScreen';
 import EmployeePunchScreen from '../screens/Employee/EmployeePunchScreen';
 import PunchScreen from '../screens/Employee/PunchScreen';
 import EmployeeCorrectionScreen from '../screens/Employee/EmployeeCorrectionScreen';
-import EmployeeAllowanceScreen from '../screens/Employee/EmployeeAllowanceScreen';
 import EmployeeMoreScreen from '../screens/Employee/EmployeeMoreScreen';
+import CollectionsScreen from '../screens/Common/CollectionsScreen';
 
 // Admin Screens
 import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
@@ -52,6 +52,7 @@ import MissedPunchDashboardScreen from '../screens/Employee/MissedPunchDashboard
 
 
 import CustomTabBar from '../components/CustomTabBar';
+import LocationGate from '../components/LocationGate';
 import { useAuth } from '../context/AuthContext';
 
 const AuthStack = createNativeStackNavigator();
@@ -89,7 +90,7 @@ const EmployeeTabNavigator = () => {
             <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
             <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
             <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
-            <EmployeeTab.Screen name="EmployeeAllowance" component={EmployeeAllowanceScreen} />
+            <EmployeeTab.Screen name="EmployeeCollections" component={CollectionsScreen} />
             <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
         </EmployeeTab.Navigator>
     );
@@ -244,7 +245,13 @@ const RootNavigator = () => {
         return <AdminStackNavigator />;
     }
 
-    return <EmployeeStackNavigator />;
+    // Employees must grant background ("Allow all the time") location before
+    // using the app — checked on login and every time the app is foregrounded.
+    return (
+        <LocationGate user={auth.user}>
+            <EmployeeStackNavigator />
+        </LocationGate>
+    );
 };
 
 export default RootNavigator;
