@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -11,6 +11,8 @@ import {
     Linking,
     ActivityIndicator,
     Alert,
+    ScrollView,
+    StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -22,7 +24,7 @@ const STATUS_OPTIONS = [
     { value: 'PENDING', label: 'Pending', color: colors.textMuted },
     { value: 'VISITED', label: 'Visited', color: colors.info },
     { value: 'COLLECTED', label: 'Collected', color: colors.success },
-    { value: 'PARTIALLY_COLLECTED', label: 'Partially Collected', color: colors.warning },
+    { value: 'PARTIALLY_COLLECTED', label: 'Partial', color: colors.warning },
     { value: 'NOT_PAID', label: 'Not Paid', color: colors.danger },
 ];
 
@@ -31,11 +33,41 @@ const STATUS_META = STATUS_OPTIONS.reduce((a, o) => { a[o.value] = o; return a; 
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const fmtAmount = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
+const fmtCompact = (n) => {
+    const v = Number(n || 0);
+    if (v >= 10000000) return `₹${(v / 10000000).toFixed(1)}Cr`;
+    if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`;
+    if (v >= 1000) return `₹${(v / 1000).toFixed(1)}K`;
+    return `₹${v}`;
+};
+
+const KpiPill = ({ label, value, accent }) => (
+    <View style={styles.kpiPill}>
+        <Text style={[styles.kpiValue, accent && { color: accent }]}>{value}</Text>
+        <Text style={styles.kpiLabel}>{label}</Text>
+    </View>
+);
+
+const FilterChip = ({ label, color, count, active, onPress }) => (
+    <TouchableOpacity
+        style={[styles.filterChip, active && { backgroundColor: color || colors.primary, borderColor: color || colors.primary }]}
+        onPress={onPress}
+        activeOpacity={0.8}
+    >
+        <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
+        <View style={[styles.filterCount, active && styles.filterCountActive]}>
+            <Text style={[styles.filterCountText, active && styles.filterChipTextActive]}>{count}</Text>
+        </View>
+    </TouchableOpacity>
+);
 
 const CollectionsScreen = () => {
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+
+    const [search, setSearch] = useState('');
+    const [activeFilter, setActiveFilter] = useState('ALL');
 
     const [modal, setModal] = useState({ open: false, record: null });
     const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '' });
@@ -56,6 +88,40 @@ const CollectionsScreen = () => {
     useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
     const onRefresh = () => { setRefreshing(true); fetchRecords(); };
+
+    // ── Derived stats & filtering ───────────────────────────────────────────
+    const stats = useMemo(() => {
+        const countBy = {};
+        let totalDue = 0;
+        let totalCollected = 0;
+        records.forEach(r => {
+            countBy[r.status] = (countBy[r.status] || 0) + 1;
+            totalDue += Number(r.amount_due || 0);
+            totalCollected += Number(r.collected_amount || 0);
+        });
+        return {
+            total: records.length,
+            countBy,
+            pending: countBy.PENDING || 0,
+            collected: (countBy.COLLECTED || 0) + (countBy.PARTIALLY_COLLECTED || 0),
+            totalDue,
+            totalCollected,
+        };
+    }, [records]);
+
+    const filtered = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return records.filter(r => {
+            if (activeFilter !== 'ALL' && r.status !== activeFilter) return false;
+            if (!q) return true;
+            return (
+                (r.loan_id || '').toLowerCase().includes(q) ||
+                (r.customer_name || '').toLowerCase().includes(q) ||
+                (r.customer_phone || '').toLowerCase().includes(q) ||
+                (r.pincode || '').toLowerCase().includes(q)
+            );
+        });
+    }, [records, activeFilter, search]);
 
     const openUpdate = (record) => {
         setForm({
@@ -81,82 +147,157 @@ const CollectionsScreen = () => {
         }
     };
 
-    const pendingCount = records.filter(r => r.status === 'PENDING').length;
-
     const renderItem = ({ item }) => {
         const meta = STATUS_META[item.status] || STATUS_META.PENDING;
         const fullAddress = [item.address, item.area, item.pincode && `PIN: ${item.pincode}`]
             .filter(Boolean).join(', ');
         return (
             <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.customerName}>{item.customer_name}</Text>
-                        <Text style={styles.loanId}>Loan ID: {item.loan_id}</Text>
+                <View style={[styles.cardAccent, { backgroundColor: meta.color }]} />
+                <View style={styles.cardBody}>
+                    <View style={styles.cardHeader}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.customerName}>{item.customer_name}</Text>
+                            <Text style={styles.loanId}>Loan ID: {item.loan_id}</Text>
+                        </View>
+                        <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
+                            <Text style={[styles.statusChipText, { color: meta.color }]}>
+                                {item.status_display || meta.label}
+                            </Text>
+                        </View>
                     </View>
-                    <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
-                        <Text style={[styles.statusChipText, { color: meta.color }]}>
-                            {item.status_display || meta.label}
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.row}>
+                        <Icon name="map-pin" size={15} color={colors.textMuted} />
+                        <Text style={styles.rowText}>{fullAddress || 'No address'}</Text>
+                    </View>
+
+                    {!!item.customer_phone && (
+                        <TouchableOpacity style={styles.row} onPress={() => Linking.openURL(`tel:${item.customer_phone}`)}>
+                            <Icon name="phone" size={15} color={colors.textMuted} />
+                            <Text style={[styles.rowText, { color: colors.primary }]}>{item.customer_phone}</Text>
+                        </TouchableOpacity>
+                    )}
+
+                    <View style={styles.row}>
+                        <Icon name="dollar-sign" size={15} color={colors.textMuted} />
+                        <Text style={styles.rowText}>
+                            To collect: <Text style={styles.bold}>{fmtAmount(item.amount_due)}</Text>
+                            {item.collected_amount != null ? `  ·  Collected: ${fmtAmount(item.collected_amount)}` : ''}
                         </Text>
                     </View>
-                </View>
 
-                <View style={styles.divider} />
+                    {!!item.due_date && (
+                        <View style={styles.row}>
+                            <Icon name="calendar" size={15} color={colors.textMuted} />
+                            <Text style={styles.rowText}>Planned: {fmtDate(item.due_date)}</Text>
+                        </View>
+                    )}
 
-                <View style={styles.row}>
-                    <Icon name="map-pin" size={15} color={colors.textMuted} />
-                    <Text style={styles.rowText}>{fullAddress || 'No address'}</Text>
-                </View>
-
-                {!!item.customer_phone && (
-                    <TouchableOpacity style={styles.row} onPress={() => Linking.openURL(`tel:${item.customer_phone}`)}>
-                        <Icon name="phone" size={15} color={colors.textMuted} />
-                        <Text style={[styles.rowText, { color: colors.primary }]}>{item.customer_phone}</Text>
-                    </TouchableOpacity>
-                )}
-
-                <View style={styles.row}>
-                    <Icon name="dollar-sign" size={15} color={colors.textMuted} />
-                    <Text style={styles.rowText}>
-                        To collect: <Text style={styles.bold}>{fmtAmount(item.amount_due)}</Text>
-                        {item.collected_amount != null ? `  ·  Collected: ${fmtAmount(item.collected_amount)}` : ''}
-                    </Text>
-                </View>
-
-                {!!item.due_date && (
                     <View style={styles.row}>
-                        <Icon name="calendar" size={15} color={colors.textMuted} />
-                        <Text style={styles.rowText}>Planned: {fmtDate(item.due_date)}</Text>
+                        <Icon name="clock" size={15} color={colors.textMuted} />
+                        <Text style={styles.rowText}>Last collection: {fmtDate(item.last_collection_date)}</Text>
                     </View>
-                )}
 
-                <View style={styles.row}>
-                    <Icon name="clock" size={15} color={colors.textMuted} />
-                    <Text style={styles.rowText}>Last collection: {fmtDate(item.last_collection_date)}</Text>
+                    <View style={styles.actionRow}>
+                        {!!item.customer_phone && (
+                            <TouchableOpacity
+                                style={styles.iconBtn}
+                                onPress={() => Linking.openURL(`tel:${item.customer_phone}`)}
+                            >
+                                <Icon name="phone-call" size={16} color={colors.primary} />
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                            style={styles.iconBtn}
+                            onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`)}
+                        >
+                            <Icon name="navigation" size={16} color={colors.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.updateBtn} onPress={() => openUpdate(item)}>
+                            <Icon name="edit-3" size={16} color="#FFFFFF" />
+                            <Text style={styles.updateBtnText}>Update Status</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
-
-                <TouchableOpacity style={styles.updateBtn} onPress={() => openUpdate(item)}>
-                    <Icon name="edit-3" size={16} color="#FFFFFF" />
-                    <Text style={styles.updateBtnText}>Update Status</Text>
-                </TouchableOpacity>
             </View>
         );
     };
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
+            <StatusBar barStyle="light-content" backgroundColor={colors.primaryDark} />
+
+            {/* ── Enterprise header ── */}
             <View style={styles.header}>
-                <Text style={styles.title}>My Collections</Text>
-                <Text style={styles.subtitle}>
-                    {records.length} assigned · {pendingCount} pending
-                </Text>
+                <View style={styles.headerTopRow}>
+                    <View>
+                        <Text style={styles.headerTitle}>My Collections</Text>
+                        <Text style={styles.headerSub}>{stats.total} assigned · {stats.pending} pending</Text>
+                    </View>
+                    <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
+                        <Icon name="refresh-cw" size={18} color="#FFFFFF" />
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.kpiRow}>
+                    <KpiPill label="To Collect" value={fmtCompact(stats.totalDue)} />
+                    <KpiPill label="Collected" value={fmtCompact(stats.totalCollected)} accent={colors.successLight} />
+                    <KpiPill label="Pending" value={stats.pending} />
+                    <KpiPill label="Done" value={stats.collected} />
+                </View>
+            </View>
+
+            {/* ── Search ── */}
+            <View style={styles.searchWrap}>
+                <Icon name="search" size={18} color={colors.textMuted} />
+                <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search name, loan id, phone, pincode…"
+                    placeholderTextColor={colors.textMuted}
+                    value={search}
+                    onChangeText={setSearch}
+                />
+                {!!search && (
+                    <TouchableOpacity onPress={() => setSearch('')}>
+                        <Icon name="x-circle" size={18} color={colors.textMuted} />
+                    </TouchableOpacity>
+                )}
+            </View>
+
+            {/* ── Status filters ── */}
+            <View>
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.filterRow}
+                >
+                    <FilterChip
+                        label="All"
+                        count={stats.total}
+                        active={activeFilter === 'ALL'}
+                        onPress={() => setActiveFilter('ALL')}
+                    />
+                    {STATUS_OPTIONS.map(o => (
+                        <FilterChip
+                            key={o.value}
+                            label={o.label}
+                            color={o.color}
+                            count={stats.countBy[o.value] || 0}
+                            active={activeFilter === o.value}
+                            onPress={() => setActiveFilter(o.value)}
+                        />
+                    ))}
+                </ScrollView>
             </View>
 
             {loading ? (
                 <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
             ) : (
                 <FlatList
-                    data={records}
+                    data={filtered}
                     keyExtractor={(item) => String(item.id)}
                     renderItem={renderItem}
                     contentContainerStyle={{ padding: spacing.md, paddingBottom: 120 }}
@@ -164,7 +305,9 @@ const CollectionsScreen = () => {
                     ListEmptyComponent={
                         <View style={styles.center}>
                             <Icon name="inbox" size={40} color={colors.textLight} />
-                            <Text style={styles.emptyText}>No customers assigned to you yet.</Text>
+                            <Text style={styles.emptyText}>
+                                {records.length === 0 ? 'No customers assigned to you yet.' : 'No records match this filter.'}
+                            </Text>
                         </View>
                     }
                 />
@@ -209,7 +352,7 @@ const CollectionsScreen = () => {
                                     style={styles.input}
                                     keyboardType="numeric"
                                     value={form.collected_amount}
-                                    onChangeText={(v) => setForm(f => ({ ...f, collected_amount: v }))}
+                                    onChangeText={(v) => setForm(f => ({ ...f, collected_amount: v.replace(/[^0-9.]/g, '') }))}
                                     placeholder="0"
                                     placeholderTextColor={colors.textMuted}
                                 />
@@ -218,7 +361,7 @@ const CollectionsScreen = () => {
 
                         <Text style={styles.fieldLabel}>Remarks</Text>
                         <TextInput
-                            style={[styles.input, { height: 70, textAlignVertical: 'top' }]}
+                            style={[styles.input, styles.remarksInput]}
                             multiline
                             value={form.remarks}
                             onChangeText={(v) => setForm(f => ({ ...f, remarks: v }))}
@@ -238,20 +381,67 @@ const CollectionsScreen = () => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
-    header: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.xs },
-    title: { fontSize: typography.sizes.xxl, fontWeight: typography.weights.bold, color: colors.textDark },
-    subtitle: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
     center: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xxxl },
     emptyText: { marginTop: spacing.sm, color: colors.textMuted, fontSize: typography.sizes.sm },
 
+    // Header
+    header: {
+        backgroundColor: colors.primary,
+        paddingHorizontal: spacing.lg,
+        paddingTop: spacing.md,
+        paddingBottom: spacing.lg,
+        borderBottomLeftRadius: borderRadius.xl,
+        borderBottomRightRadius: borderRadius.xl,
+    },
+    headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    headerTitle: { fontSize: typography.sizes.xxl, fontWeight: typography.weights.bold, color: '#FFFFFF' },
+    headerSub: { fontSize: typography.sizes.xs, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+    refreshBtn: {
+        width: 38, height: 38, borderRadius: 19,
+        backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center',
+    },
+    kpiRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+    kpiPill: {
+        flex: 1, backgroundColor: 'rgba(255,255,255,0.15)',
+        borderRadius: borderRadius.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.xs, alignItems: 'center',
+    },
+    kpiValue: { fontSize: typography.sizes.md, fontWeight: typography.weights.bold, color: '#FFFFFF' },
+    kpiLabel: { fontSize: 10, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+
+    // Search
+    searchWrap: {
+        flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+        backgroundColor: colors.surface, marginHorizontal: spacing.md, marginTop: spacing.md,
+        paddingHorizontal: spacing.md, borderRadius: borderRadius.md,
+        borderWidth: 1, borderColor: colors.border,
+    },
+    searchInput: { flex: 1, paddingVertical: spacing.sm, fontSize: typography.sizes.sm, color: colors.textDark, marginLeft: spacing.xs },
+
+    // Filters
+    filterRow: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.xs },
+    filterChip: {
+        flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+        paddingHorizontal: spacing.md, paddingVertical: spacing.xs, marginRight: spacing.xs,
+        borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+    },
+    filterChipText: { fontSize: typography.sizes.xs, fontWeight: '600', color: colors.textMedium },
+    filterChipTextActive: { color: '#FFFFFF' },
+    filterCount: { backgroundColor: colors.background, borderRadius: borderRadius.full, paddingHorizontal: 6, paddingVertical: 1, marginLeft: 4 },
+    filterCountActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
+    filterCountText: { fontSize: 10, fontWeight: '700', color: colors.textMuted },
+
+    // Card
     card: {
+        flexDirection: 'row',
         backgroundColor: colors.surface,
         borderRadius: borderRadius.lg,
-        padding: spacing.md,
         marginBottom: spacing.md,
         borderWidth: 1,
         borderColor: colors.border,
+        overflow: 'hidden',
     },
+    cardAccent: { width: 4 },
+    cardBody: { flex: 1, padding: spacing.md },
     cardHeader: { flexDirection: 'row', alignItems: 'flex-start' },
     customerName: { fontSize: typography.sizes.md, fontWeight: typography.weights.bold, color: colors.textDark },
     loanId: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
@@ -261,12 +451,18 @@ const styles = StyleSheet.create({
     row: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xs },
     rowText: { flex: 1, fontSize: typography.sizes.sm, color: colors.textMedium, marginLeft: spacing.xs },
     bold: { fontWeight: typography.weights.bold, color: colors.textDark },
+    actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.sm },
+    iconBtn: {
+        width: 40, height: 40, borderRadius: borderRadius.md,
+        borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center',
+    },
     updateBtn: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
-        backgroundColor: colors.primary, borderRadius: borderRadius.md, paddingVertical: spacing.sm, marginTop: spacing.sm,
+        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
+        backgroundColor: colors.primary, borderRadius: borderRadius.md, paddingVertical: spacing.sm,
     },
     updateBtnText: { color: '#FFFFFF', fontWeight: '700', marginLeft: spacing.xs },
 
+    // Modal
     modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
     modalContent: {
         backgroundColor: colors.surface,
@@ -287,6 +483,7 @@ const styles = StyleSheet.create({
         borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md,
         paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, fontSize: typography.sizes.sm, color: colors.textDark,
     },
+    remarksInput: { height: 70, textAlignVertical: 'top' },
     saveBtn: {
         backgroundColor: colors.primary, borderRadius: borderRadius.md,
         paddingVertical: spacing.md, alignItems: 'center', marginTop: spacing.lg,
