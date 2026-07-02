@@ -30,6 +30,18 @@ const STATUS_OPTIONS = [
 
 const STATUS_META = STATUS_OPTIONS.reduce((a, o) => { a[o.value] = o; return a; }, {});
 
+const TYPE_OPTIONS = [
+    { value: 'ALL', label: 'All Types' },
+    { value: 'REGULAR', label: 'Regular', color: colors.info },
+    { value: 'OD', label: 'OD', color: colors.danger },
+    { value: 'ADVANCE', label: 'Advance', color: '#7b1fa2' },
+];
+const TYPE_META = {
+    REGULAR: { label: 'Regular', color: colors.info },
+    OD: { label: 'OD', color: colors.danger },
+    ADVANCE: { label: 'Advance', color: '#7b1fa2' },
+};
+
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const fmtAmount = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
@@ -68,6 +80,7 @@ const CollectionsScreen = () => {
 
     const [search, setSearch] = useState('');
     const [activeFilter, setActiveFilter] = useState('ALL');
+    const [typeFilter, setTypeFilter] = useState('ALL');
 
     const [modal, setModal] = useState({ open: false, record: null });
     const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '' });
@@ -113,6 +126,7 @@ const CollectionsScreen = () => {
         const q = search.trim().toLowerCase();
         return records.filter(r => {
             if (activeFilter !== 'ALL' && r.status !== activeFilter) return false;
+            if (typeFilter !== 'ALL' && (r.collection_type || 'REGULAR') !== typeFilter) return false;
             if (!q) return true;
             return (
                 (r.loan_id || '').toLowerCase().includes(q) ||
@@ -121,7 +135,7 @@ const CollectionsScreen = () => {
                 (r.pincode || '').toLowerCase().includes(q)
             );
         });
-    }, [records, activeFilter, search]);
+    }, [records, activeFilter, typeFilter, search]);
 
     const openUpdate = (record) => {
         setForm({
@@ -158,7 +172,17 @@ const CollectionsScreen = () => {
                     <View style={styles.cardHeader}>
                         <View style={{ flex: 1 }}>
                             <Text style={styles.customerName}>{item.customer_name}</Text>
-                            <Text style={styles.loanId}>Loan ID: {item.loan_id}</Text>
+                            <View style={styles.loanRow}>
+                                <Text style={styles.loanId}>Loan ID: {item.loan_id}</Text>
+                                {(() => {
+                                    const t = TYPE_META[item.collection_type] || TYPE_META.REGULAR;
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: t.color + '1A' }]}>
+                                            <Text style={[styles.typeTagText, { color: t.color }]}>{t.label}</Text>
+                                        </View>
+                                    );
+                                })()}
+                            </View>
                         </View>
                         <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
                             <Text style={[styles.statusChipText, { color: meta.color }]}>
@@ -290,6 +314,27 @@ const CollectionsScreen = () => {
                             onPress={() => setActiveFilter(o.value)}
                         />
                     ))}
+                </ScrollView>
+
+                {/* Collection type filter */}
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.typeRow}
+                >
+                    {TYPE_OPTIONS.map(o => {
+                        const active = typeFilter === o.value;
+                        return (
+                            <TouchableOpacity
+                                key={o.value}
+                                style={[styles.typeChip, active && { backgroundColor: (o.color || colors.textDark), borderColor: (o.color || colors.textDark) }]}
+                                onPress={() => setTypeFilter(o.value)}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={[styles.typeChipText, active && styles.filterChipTextActive]}>{o.label}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </ScrollView>
             </View>
 
@@ -429,6 +474,17 @@ const styles = StyleSheet.create({
     filterCount: { backgroundColor: colors.background, borderRadius: borderRadius.full, paddingHorizontal: 6, paddingVertical: 1, marginLeft: 4 },
     filterCountActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
     filterCountText: { fontSize: 10, fontWeight: '700', color: colors.textMuted },
+
+    // Type filter row
+    typeRow: { paddingHorizontal: spacing.md, paddingBottom: spacing.sm, gap: spacing.xs },
+    typeChip: {
+        paddingHorizontal: spacing.md, paddingVertical: 5, marginRight: spacing.xs,
+        borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+    },
+    typeChipText: { fontSize: 11, fontWeight: '600', color: colors.textMedium },
+    loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2 },
+    typeTag: { paddingHorizontal: spacing.xs, paddingVertical: 1, borderRadius: borderRadius.sm, marginLeft: spacing.xs },
+    typeTagText: { fontSize: 10, fontWeight: '700' },
 
     // Card
     card: {
