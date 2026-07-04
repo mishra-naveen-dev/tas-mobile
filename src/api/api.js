@@ -388,6 +388,9 @@ api.getAllowanceHistory = (params = {}) => {
     return api.get('/allowance/requests/', { params });
 };
 
+api.getAllowanceRequests = (params = {}) =>
+    api.get('/allowance/requests/', { params });
+
 api.getDailyPunchDetail = (date) => {
     return api.get('/attendance/punches/by-date/', {
         params: { date }
