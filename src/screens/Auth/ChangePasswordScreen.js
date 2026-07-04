@@ -79,6 +79,11 @@ const ChangePasswordScreen = ({ navigation }) => {
         try {
             await changePassword(currentPassword, newPassword);
             await completeSuccess();
+            setIsLoading(false);
+            Alert.alert('Success', 'Password changed successfully.', [{
+                text: 'OK',
+                onPress: () => { if (navigation.canGoBack()) navigation.goBack(); },
+            }]);
         } catch (error) {
             const response = error?.response;
             const data = response?.data;
