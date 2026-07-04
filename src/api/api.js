@@ -516,4 +516,7 @@ api.getCollections = (params = {}) =>
 api.updateCollectionStatus = (id, data) =>
     api.post(`/loans/collections/${id}/update_status/`, data);
 
+api.getCollectionDashboardStats = () =>
+    api.get('/loans/collections/dashboard_stats/');
+
 export default api;
