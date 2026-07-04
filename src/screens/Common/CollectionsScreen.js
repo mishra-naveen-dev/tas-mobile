@@ -13,7 +13,6 @@ import {
     Alert,
     ScrollView,
     StatusBar,
-    Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -86,7 +85,7 @@ const FilterChip = ({ label, color, count, active, onPress }) => (
 );
 
 // ── Map tab ─────────────────────────────────────────────────────────────────
-const CollectionsMap = ({ records, userLocation }) => {
+const CollectionsMap = ({ records }) => {
     const mapRef = useRef(null);
 
     // Only records that have a GPS pin from a visit
@@ -104,14 +103,6 @@ const CollectionsMap = ({ records, userLocation }) => {
     }, [pinned]);
 
     const initialRegion = useMemo(() => {
-        if (userLocation) {
-            return {
-                latitude: userLocation.latitude,
-                longitude: userLocation.longitude,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05,
-            };
-        }
         if (pinned.length > 0) {
             return {
                 latitude: pinned[0].visit_latitude,
@@ -122,9 +113,9 @@ const CollectionsMap = ({ records, userLocation }) => {
         }
         // Default to India center
         return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 15, longitudeDelta: 15 };
-    }, [userLocation, pinned]);
+    }, [pinned]);
 
-    if (pinned.length === 0 && !userLocation) {
+    if (pinned.length === 0) {
         return (
             <View style={styles.mapEmpty}>
                 <Icon name="map" size={40} color={colors.textLight} />
@@ -185,8 +176,6 @@ const CollectionsScreen = () => {
     const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '' });
     const [saving, setSaving] = useState(false);
 
-    const [userLocation, setUserLocation] = useState(null);
-
     const fetchRecords = useCallback(async () => {
         try {
             const res = await api.getCollections();
@@ -200,15 +189,6 @@ const CollectionsScreen = () => {
     }, []);
 
     useEffect(() => { fetchRecords(); }, [fetchRecords]);
-
-    // Get user's current location for the map
-    useEffect(() => {
-        LocationService.getCurrentLocationInfo()
-            .then(info => {
-                if (info?.latitude) setUserLocation(info);
-            })
-            .catch(() => {});
-    }, []);
 
     const onRefresh = () => { setRefreshing(true); fetchRecords(); };
 
@@ -262,8 +242,8 @@ const CollectionsScreen = () => {
             // Auto-capture GPS at the moment of save
             let gpsPayload = {};
             try {
-                const loc = await LocationService.getCurrentLocationInfo();
-                if (loc?.latitude && loc?.longitude) {
+                const loc = await LocationService.getCurrentLocation();
+                if (loc?.latitude && loc?.longitude && !loc?.error) {
                     gpsPayload.latitude = loc.latitude;
                     gpsPayload.longitude = loc.longitude;
                     gpsPayload.location_address = loc.address || '';
@@ -435,7 +415,7 @@ const CollectionsScreen = () => {
                             <Text style={styles.legendText}>Route</Text>
                         </View>
                     </ScrollView>
-                    <CollectionsMap records={records} userLocation={userLocation} />
+                    <CollectionsMap records={records} />
                 </View>
             ) : (
                 <>
