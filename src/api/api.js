@@ -483,6 +483,10 @@ api.logout = async () => {
     return api.post('/auth/logout/');
 };
 
+// Reverse geocode proxy — key stays on the server, never in the APK
+api.reverseGeocode = (lat, lng) =>
+    api.get('/attendance/geocode/', { params: { latlng: `${lat},${lng}` } });
+
 // Master Data
 api.searchMasterValues = (categoryKey, query = '', limit = 20) =>
     api.get('/master-data/values/', { params: { category: categoryKey, q: query, limit } });

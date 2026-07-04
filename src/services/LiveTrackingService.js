@@ -28,6 +28,7 @@ const CONFIG = {
   syncIntervalMs: 60 * 1000,   // flush queued pings to server once a minute (low server load)
   maxBatchSize: 6,             // ...or sooner once this many are queued (~60s)
   maxQueueRetained: 2000,      // safety cap on the in-memory/persisted queue
+  maxAccuracyMetres: 100,      // ignore fixes worse than 100 m — drops WiFi/cell noise
 };
 
 const QUEUE_KEY = '@tas_live_tracking_queue';
@@ -164,6 +165,13 @@ class LiveTrackingService {
     if (!coords) return;
     const { latitude, longitude, accuracy, speed, altitude, heading } = coords;
     if (!this._isValidCoord(latitude, longitude)) return;
+
+    // Reject low-quality fixes (WiFi positioning, indoors) — same 100 m threshold
+    // used by LocationService so route points are always GPS-quality.
+    if (accuracy != null && accuracy > CONFIG.maxAccuracyMetres) {
+      if (IS_DEV) console.log('[Live] Skipped low-accuracy fix:', accuracy.toFixed(0), 'm');
+      return;
+    }
 
     const now = Date.now();
 

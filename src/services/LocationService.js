@@ -17,7 +17,7 @@ const CONFIG = {
   gpsTimeout: 20000,
   trackingInterval: 120000, // 2 minutes — battery efficient per spec
   distanceFilter: 100,      // 100 metres — triggers update on movement even within interval
-  maxAccuracy: 100,
+  maxAccuracy: 100,         // reject fixes worse than 100 m — filters WiFi/cell-tower noise
 };
 
 class LocationService {
@@ -297,6 +297,11 @@ class LocationService {
               return;
             }
 
+            // Drop junk indoor/WiFi fixes — accuracy > maxAccuracy means unreliable
+            if (accuracy && accuracy > CONFIG.maxAccuracy) {
+              return;
+            }
+
             const point = {
               latitude,
               longitude,
@@ -406,13 +411,9 @@ class LocationService {
 
   static async reverseGeocode(lat, lng) {
     try {
-      const apiKey = 'AIzaSyDM0WAR3vYxXNqSklb868wEmtDftQvYDkQ';
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data.results?.[0]?.formatted_address) {
-        return data.results[0].formatted_address;
-      }
+      const api = require('../api/api').default;
+      const res = await api.reverseGeocode(lat, lng);
+      if (res.data?.address) return res.data.address;
     } catch {}
     return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   }
