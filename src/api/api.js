@@ -5,16 +5,10 @@ import DeviceInfo from 'react-native-device-info';
 
 const PROD_URL = 'https://api.tas.namracred.co.in/api/v1';
 
-// In dev/emulator mode the AVD has no internet route. A local proxy running on
-// the host machine (proxy-server.js) forwards http://localhost:8088 → PROD_URL.
-// adb reverse tcp:8088 tcp:8088 makes localhost:8088 on the device reach the host.
-const DEV_PROXY_URL = 'http://localhost:8088/api/v1';
-
 let customBaseURL = null;
 
 export const getBaseURL = () => {
-    if (customBaseURL) return customBaseURL;
-    return __DEV__ ? DEV_PROXY_URL : PROD_URL;
+    return customBaseURL || PROD_URL;
 };
 
 export const loadCustomBaseURL = async () => {
