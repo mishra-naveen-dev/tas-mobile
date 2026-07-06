@@ -12,6 +12,13 @@ export const getBaseURL = () => {
 };
 
 export const loadCustomBaseURL = async () => {
+    // Custom URL overrides are only honoured in dev builds.
+    // In production the app always hits PROD_URL so testers/devices
+    // don't accidentally stay pointed at a dev server.
+    if (!__DEV__) {
+        await AsyncStorage.removeItem('custom_api_url');
+        return;
+    }
     try {
         const stored = await AsyncStorage.getItem('custom_api_url');
         if (stored) {
