@@ -1,18 +1,12 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
-    View,
-    Text,
-    FlatList,
-    StyleSheet,
-    TouchableOpacity,
-    RefreshControl,
-    ActivityIndicator,
+    View, Text, FlatList, StyleSheet,
+    TouchableOpacity, RefreshControl, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
-import GlassCard from '../../components/GlassCard';
-import { colors, typography, spacing } from '../../theme/tokens';
+import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
@@ -29,11 +23,7 @@ const today = () => {
     return d;
 };
 
-const addDays = (d, n) => {
-    const r = new Date(d);
-    r.setDate(r.getDate() + n);
-    return r;
-};
+const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
 
 const displayDate = (d) => {
     const t = today();
@@ -43,10 +33,29 @@ const displayDate = (d) => {
     return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 };
 
+const fmtTime = (iso) => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+
+const fmtDateShort = (iso) => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+};
+
+// ─── Punch type config ────────────────────────────────────────────────────────
+const PUNCH_CFG = {
+    PUNCH_IN:     { icon: 'log-in',      color: '#059669', bg: '#D1FAE5', label: 'Punch In'     },
+    PUNCH_OUT:    { icon: 'log-out',     color: '#DC2626', bg: '#FEE2E2', label: 'Punch Out'    },
+    COLLECTION:   { icon: 'dollar-sign', color: '#2563EB', bg: '#DBEAFE', label: 'Collection'   },
+    DISBURSEMENT: { icon: 'trending-up', color: '#D97706', bg: '#FEF3C7', label: 'Disbursement' },
+};
+const getCfg = (t) => PUNCH_CFG[String(t || '').toUpperCase()] || { icon: 'map-pin', color: colors.primary, bg: colors.primaryLight, label: String(t || 'Punch') };
+
 const QUICK_FILTERS = [
-    { key: 'week',  label: 'This Week'   },
-    { key: 'month', label: 'This Month'  },
-    { key: 'all',   label: 'All Records' },
+    { key: 'week',  label: 'This Week'  },
+    { key: 'month', label: 'This Month' },
+    { key: 'all',   label: 'All Records'},
 ];
 
 const getQuickRange = (key) => {
@@ -59,55 +68,197 @@ const getQuickRange = (key) => {
     if (key === 'month') {
         return { date_from: fmt(new Date(t.getFullYear(), t.getMonth(), 1)), date_to: fmt(t) };
     }
-    return {}; // all
+    return {};
 };
 
-// ─── Punch card ───────────────────────────────────────────────────────────────
-const PUNCH_CFG = {
-    PUNCH_IN:     { icon: 'log-in',      color: '#059669' },
-    PUNCH_OUT:    { icon: 'log-out',     color: '#DC2626' },
-    COLLECTION:   { icon: 'dollar-sign', color: '#2563EB' },
-    DISBURSEMENT: { icon: 'trending-up', color: '#D97706' },
-};
-const punchCfg = (t) => PUNCH_CFG[t] || { icon: 'map-pin', color: colors.primary };
+// ─── Summary bar (shown above list) ──────────────────────────────────────────
+const SummaryBar = ({ punches }) => {
+    const stats = useMemo(() => ({
+        total:      punches.length,
+        punchIns:   punches.filter(p => p.punch_type === 'PUNCH_IN').length,
+        punchOuts:  punches.filter(p => p.punch_type === 'PUNCH_OUT').length,
+        collection: punches.filter(p => ['COLLECTION', 'DISBURSEMENT'].includes(p.punch_type))
+                           .reduce((s, p) => s + parseFloat(p.amount || 0), 0),
+    }), [punches]);
 
-const formatTime = (d) => {
-    if (!d) return '';
-    return new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-};
-const formatDateShort = (d) => {
-    if (!d) return '';
-    return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-};
+    if (punches.length === 0) return null;
 
-const PunchCard = ({ item }) => {
-    const cfg   = punchCfg(item.punch_type);
-    const label = String(item.punch_type || 'PUNCH').replace(/_/g, ' ');
     return (
-        <GlassCard style={styles.card}>
-            <View style={styles.cardRow}>
-                <View style={[styles.iconBadge, { backgroundColor: cfg.color + '18' }]}>
-                    <Icon name={cfg.icon} size={18} color={cfg.color} />
-                </View>
-                <View style={styles.cardInfo}>
-                    <Text style={styles.punchType}>{label}</Text>
-                    {item.current_address ? (
-                        <Text style={styles.addressText} numberOfLines={1}>{item.current_address}</Text>
-                    ) : null}
-                </View>
-                <View style={styles.cardRight}>
-                    <Text style={styles.timeText}>{formatTime(item.punched_at)}</Text>
-                    <Text style={styles.dateSmall}>{formatDateShort(item.punched_at)}</Text>
-                </View>
+        <View style={sb.bar}>
+            <View style={sb.tile}>
+                <Text style={sb.val}>{stats.total}</Text>
+                <Text style={sb.lbl}>Total</Text>
             </View>
-            {item.visit_type ? (
-                <View style={styles.visitBadge}>
-                    <Text style={styles.visitText}>{item.visit_type}</Text>
-                </View>
-            ) : null}
-        </GlassCard>
+            <View style={[sb.tile, sb.divider]}>
+                <Text style={[sb.val, { color: '#059669' }]}>{stats.punchIns}</Text>
+                <Text style={sb.lbl}>Punch In</Text>
+            </View>
+            <View style={[sb.tile, sb.divider]}>
+                <Text style={[sb.val, { color: colors.danger }]}>{stats.punchOuts}</Text>
+                <Text style={sb.lbl}>Punch Out</Text>
+            </View>
+            <View style={[sb.tile, sb.divider]}>
+                <Text style={[sb.val, { color: '#2563EB', fontSize: 13 }]}>
+                    {stats.collection > 0 ? `₹${Math.round(stats.collection).toLocaleString('en-IN')}` : '₹0'}
+                </Text>
+                <Text style={sb.lbl}>Collected</Text>
+            </View>
+        </View>
     );
 };
+
+const sb = StyleSheet.create({
+    bar: {
+        flexDirection: 'row', backgroundColor: colors.surface,
+        marginHorizontal: spacing.md, marginBottom: spacing.sm,
+        borderRadius: borderRadius.md, overflow: 'hidden', ...shadows.xs,
+    },
+    tile:    { flex: 1, alignItems: 'center', paddingVertical: spacing.sm },
+    divider: { borderLeftWidth: 1, borderLeftColor: colors.border },
+    val:     { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
+    lbl:     { fontSize: 10, color: colors.textMuted, marginTop: 2 },
+});
+
+// ─── Punch card ───────────────────────────────────────────────────────────────
+const PunchCard = ({ item, onViewRoute }) => {
+    const cfg = getCfg(item.punch_type);
+    const hasGps = item.latitude && item.longitude &&
+        parseFloat(item.latitude) !== 0 && parseFloat(item.longitude) !== 0;
+    const hasAmount  = item.amount && parseFloat(item.amount) > 0;
+    const hasNotes   = item.notes && item.notes.trim().length > 0;
+    const hasCustomer= item.customer_name && item.customer_name.trim().length > 0;
+
+    return (
+        <View style={pc.card}>
+            {/* ── Top row: icon + type + time ── */}
+            <View style={pc.topRow}>
+                <View style={[pc.iconWrap, { backgroundColor: cfg.bg }]}>
+                    <Icon name={cfg.icon} size={20} color={cfg.color} />
+                </View>
+                <View style={{ flex: 1 }}>
+                    <View style={pc.typeRow}>
+                        <View style={[pc.typeBadge, { backgroundColor: cfg.bg }]}>
+                            <Text style={[pc.typeText, { color: cfg.color }]}>{cfg.label}</Text>
+                        </View>
+                        {hasAmount && (
+                            <View style={[pc.amtBadge, { backgroundColor: cfg.bg }]}>
+                                <Text style={[pc.amtText, { color: cfg.color }]}>
+                                    ₹{Number(item.amount).toLocaleString('en-IN')}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                    {hasCustomer && (
+                        <Text style={pc.customerName} numberOfLines={1}>{item.customer_name}</Text>
+                    )}
+                </View>
+                <View style={pc.timeBlock}>
+                    <Text style={pc.time}>{fmtTime(item.punched_at)}</Text>
+                    <Text style={pc.dateSmall}>{fmtDateShort(item.punched_at)}</Text>
+                </View>
+            </View>
+
+            {/* ── Address ── */}
+            {item.current_address ? (
+                <View style={pc.addrRow}>
+                    <Icon name="map-pin" size={12} color={colors.textMuted} />
+                    <Text style={pc.addrText} numberOfLines={2}>{item.current_address}</Text>
+                </View>
+            ) : null}
+
+            {/* ── Customer address (if different) ── */}
+            {item.customer_address && item.customer_address !== item.current_address ? (
+                <View style={pc.addrRow}>
+                    <Icon name="briefcase" size={12} color={colors.textMuted} />
+                    <Text style={pc.addrText} numberOfLines={1}>{item.customer_address}</Text>
+                </View>
+            ) : null}
+
+            {/* ── Notes ── */}
+            {hasNotes && (
+                <View style={pc.notesRow}>
+                    <Icon name="message-square" size={11} color={colors.textMuted} />
+                    <Text style={pc.notesText} numberOfLines={2}>{item.notes}</Text>
+                </View>
+            )}
+
+            {/* ── Footer: GPS badge + distance + loan ID ── */}
+            <View style={pc.footer}>
+                {hasGps ? (
+                    <View style={pc.gpsBadge}>
+                        <Icon name="crosshair" size={10} color={colors.success} />
+                        <Text style={pc.gpsText}>GPS</Text>
+                    </View>
+                ) : (
+                    <View style={[pc.gpsBadge, { backgroundColor: '#FEF3C7' }]}>
+                        <Icon name="alert-triangle" size={10} color={colors.warning} />
+                        <Text style={[pc.gpsText, { color: colors.warning }]}>No GPS</Text>
+                    </View>
+                )}
+                {item.distance_km ? (
+                    <View style={pc.distBadge}>
+                        <Icon name="activity" size={10} color="#7c3aed" />
+                        <Text style={pc.distText}>{item.distance_km} km</Text>
+                    </View>
+                ) : null}
+                {item.loan_id ? (
+                    <View style={pc.loanBadge}>
+                        <Text style={pc.loanText}>Loan: {item.loan_id}</Text>
+                    </View>
+                ) : null}
+                <View style={{ flex: 1 }} />
+                {item.punch_type === 'PUNCH_IN' && onViewRoute && (
+                    <TouchableOpacity style={pc.routeBtn} onPress={onViewRoute} activeOpacity={0.7}>
+                        <Icon name="map" size={11} color={colors.primary} />
+                        <Text style={pc.routeBtnText}>Map</Text>
+                    </TouchableOpacity>
+                )}
+            </View>
+        </View>
+    );
+};
+
+const pc = StyleSheet.create({
+    card: {
+        backgroundColor: colors.surface, borderRadius: borderRadius.md,
+        marginBottom: spacing.sm, padding: spacing.md,
+        ...shadows.sm,
+    },
+    topRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
+    iconWrap: {
+        width: 44, height: 44, borderRadius: 12,
+        alignItems: 'center', justifyContent: 'center', marginRight: 10,
+    },
+    typeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 3 },
+    typeBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+    typeText:  { fontSize: 12, fontWeight: '700' },
+    amtBadge:  { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+    amtText:   { fontSize: 12, fontWeight: '700' },
+    customerName: { fontSize: 13, color: colors.textDark, fontWeight: '500' },
+    timeBlock: { alignItems: 'flex-end', marginLeft: 6 },
+    time:      { fontSize: typography.sizes.md, fontWeight: '700', color: colors.textDark },
+    dateSmall: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+
+    addrRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginBottom: 4 },
+    addrText: { flex: 1, fontSize: 12, color: colors.textMuted, lineHeight: 17 },
+
+    notesRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginBottom: 6,
+        backgroundColor: '#F8FAFC', borderRadius: 6, padding: 6 },
+    notesText: { flex: 1, fontSize: 12, color: colors.textDark, lineHeight: 16, fontStyle: 'italic' },
+
+    footer: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },
+    gpsBadge: { flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: colors.successLight, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
+    gpsText: { fontSize: 10, color: colors.success, fontWeight: '600' },
+    distBadge: { flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: '#F5F3FF', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
+    distText:  { fontSize: 10, color: '#7c3aed', fontWeight: '600' },
+    loanBadge: { backgroundColor: '#F0FDF4', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
+    loanText:  { fontSize: 10, color: colors.success, fontWeight: '600' },
+    routeBtn:  { flexDirection: 'row', alignItems: 'center', gap: 4,
+        backgroundColor: colors.primaryLight, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+    routeBtnText: { fontSize: 11, color: colors.primary, fontWeight: '700' },
+});
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 const PunchHistoryScreen = ({ navigation }) => {
@@ -116,11 +267,9 @@ const PunchHistoryScreen = ({ navigation }) => {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [hasError, setHasError]         = useState(false);
     const [errorMsg, setErrorMsg]         = useState('');
-
-    // Mode: 'date' (single day) or a quick-filter key
-    const [mode, setMode]         = useState('date');
-    const [activeDate, setActiveDate] = useState(today());   // used in date mode
-    const [quickFilter, setQuickFilter] = useState(null);    // used in quick mode
+    const [mode, setMode]                 = useState('date');
+    const [activeDate, setActiveDate]     = useState(today());
+    const [quickFilter, setQuickFilter]   = useState(null);
 
     const getParams = useCallback(() => {
         if (mode === 'date') {
@@ -134,23 +283,18 @@ const PunchHistoryScreen = ({ navigation }) => {
         try {
             setHasError(false);
             setErrorMsg('');
-            if (isRefresh) {
-                setIsRefreshing(true);
-            } else {
-                setIsLoading(true);
-                setPunches([]); // clear only for fresh (non-refresh) loads
-            }
+            if (isRefresh) setIsRefreshing(true);
+            else { setIsLoading(true); setPunches([]); }
 
             const response = await api.getPunchHistory(params);
             const data = Array.isArray(response.data)
                 ? response.data
                 : (response.data?.results || []);
-            setPunches(data);
+            setPunches(data.sort((a, b) => new Date(b.punched_at) - new Date(a.punched_at)));
         } catch (err) {
             setHasError(true);
             const { message } = parseApiError(err);
             setErrorMsg(message);
-            // punches preserved on error so stale data stays visible on refresh
         } finally {
             setIsLoading(false);
             setIsRefreshing(false);
@@ -161,10 +305,9 @@ const PunchHistoryScreen = ({ navigation }) => {
         fetchData(getParams());
     }, [mode, activeDate, quickFilter]);
 
-    // Navigate prev / next day
     const goDay = (dir) => {
         const next = addDays(activeDate, dir);
-        if (next > today()) return; // can't go into future
+        if (next > today()) return;
         setMode('date');
         setQuickFilter(null);
         setActiveDate(next);
@@ -182,84 +325,91 @@ const PunchHistoryScreen = ({ navigation }) => {
         setActiveDate(today());
     };
 
-    const isToday = fmt(activeDate) === fmt(today());
+    const isDateToday = fmt(activeDate) === fmt(today());
+
+    const handleViewRoute = (punchDate) => {
+        navigation.navigate('RouteMap', { date: punchDate });
+    };
 
     return (
-        <SafeAreaView style={styles.container} edges={['top']}>
+        <SafeAreaView style={s.container} edges={['top']}>
 
             {/* ── Header ── */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <View style={s.header}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
                     <Icon name="arrow-left" size={22} color="#fff" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Punch History</Text>
+                <Text style={s.headerTitle}>Punch History</Text>
                 <View style={{ width: 38 }} />
             </View>
 
-            {/* ── Date navigator (date mode) ── */}
-            <View style={styles.dateNav}>
-                <TouchableOpacity style={styles.navArrow} onPress={() => goDay(-1)}>
+            {/* ── Date navigator ── */}
+            <View style={s.dateNav}>
+                <TouchableOpacity style={s.navArrow} onPress={() => goDay(-1)}>
                     <Icon name="chevron-left" size={22} color={colors.textDark} />
                 </TouchableOpacity>
-
-                <TouchableOpacity style={styles.dateLabel} onPress={goToday} activeOpacity={0.7}>
+                <TouchableOpacity style={s.dateLabel} onPress={goToday} activeOpacity={0.7}>
                     <Icon name="calendar" size={14} color={mode === 'date' ? colors.primary : colors.textMuted} />
-                    <Text style={[styles.dateLabelText, mode === 'date' && styles.dateLabelActive]}>
-                        {mode === 'date' ? displayDate(activeDate) : 'Pick a date'}
+                    <Text style={[s.dateLabelText, mode === 'date' && s.dateLabelActive]}>
+                        {mode === 'date' ? displayDate(activeDate) : 'Custom range'}
                     </Text>
-                    {mode === 'date' && !isToday && (
-                        <View style={styles.todayPill}>
-                            <Text style={styles.todayPillText}>Tap for today</Text>
-                        </View>
+                    {mode === 'date' && !isDateToday && (
+                        <View style={s.todayPill}><Text style={s.todayPillTxt}>Tap for today</Text></View>
                     )}
                 </TouchableOpacity>
-
                 <TouchableOpacity
-                    style={[styles.navArrow, isToday && mode === 'date' && styles.navArrowDisabled]}
+                    style={[s.navArrow, isDateToday && mode === 'date' && s.navDisabled]}
                     onPress={() => goDay(1)}
-                    disabled={isToday && mode === 'date'}
+                    disabled={isDateToday && mode === 'date'}
                 >
-                    <Icon name="chevron-right" size={22} color={isToday && mode === 'date' ? colors.border : colors.textDark} />
+                    <Icon name="chevron-right" size={22}
+                        color={isDateToday && mode === 'date' ? colors.border : colors.textDark} />
                 </TouchableOpacity>
             </View>
 
             {/* ── Quick filter chips ── */}
-            <View style={styles.chipRow}>
-                {QUICK_FILTERS.map(f => (
-                    <TouchableOpacity
-                        key={f.key}
-                        style={[styles.chip, mode === 'quick' && quickFilter === f.key && styles.chipActive]}
-                        onPress={() => selectQuick(f.key)}
-                        activeOpacity={0.7}
-                    >
-                        <Text style={[styles.chipText, mode === 'quick' && quickFilter === f.key && styles.chipTextActive]}>
-                            {f.label}
-                        </Text>
-                    </TouchableOpacity>
-                ))}
+            <View style={s.chipRow}>
+                {QUICK_FILTERS.map(f => {
+                    const active = mode === 'quick' && quickFilter === f.key;
+                    return (
+                        <TouchableOpacity
+                            key={f.key}
+                            style={[s.chip, active && s.chipActive]}
+                            onPress={() => selectQuick(f.key)}
+                            activeOpacity={0.7}
+                        >
+                            <Text style={[s.chipText, active && s.chipTextActive]}>{f.label}</Text>
+                        </TouchableOpacity>
+                    );
+                })}
             </View>
 
             {/* ── Content ── */}
             {isLoading ? (
-                <View style={styles.centered}>
+                <View style={s.centered}>
                     <ActivityIndicator size="large" color={colors.primary} />
+                    <Text style={s.loadingTxt}>Loading records…</Text>
                 </View>
             ) : hasError && punches.length === 0 ? (
-                /* Full-page error — no stale data to fall back on */
-                <View style={styles.centered}>
+                <View style={s.centered}>
                     <Icon name="wifi-off" size={44} color={colors.danger} />
-                    <Text style={styles.errorText}>{errorMsg || 'Could not load data'}</Text>
-                    <TouchableOpacity style={styles.retryBtn} onPress={() => fetchData(getParams())}>
+                    <Text style={s.errorTxt}>{errorMsg || 'Could not load data'}</Text>
+                    <TouchableOpacity style={s.retryBtn} onPress={() => fetchData(getParams())}>
                         <Icon name="refresh-cw" size={14} color="#fff" />
-                        <Text style={styles.retryText}>Try Again</Text>
+                        <Text style={s.retryTxt}>Try Again</Text>
                     </TouchableOpacity>
                 </View>
             ) : (
                 <FlatList
                     data={punches}
                     keyExtractor={(item, i) => item?.id ? String(item.id) : String(i)}
-                    renderItem={({ item }) => <PunchCard item={item} />}
-                    contentContainerStyle={styles.listContent}
+                    renderItem={({ item }) => (
+                        <PunchCard
+                            item={item}
+                            onViewRoute={item.punched_at ? () => handleViewRoute(item.punched_at.slice(0, 10)) : null}
+                        />
+                    )}
+                    contentContainerStyle={s.listContent}
                     showsVerticalScrollIndicator={false}
                     refreshControl={
                         <RefreshControl
@@ -272,28 +422,22 @@ const PunchHistoryScreen = ({ navigation }) => {
                     ListHeaderComponent={
                         <>
                             {hasError && (
-                                <View style={styles.errorBanner}>
-                                    <Icon name="wifi-off" size={14} color={colors.warning} />
-                                    <Text style={styles.errorBannerText}>
-                                        {errorMsg || 'Could not refresh'} — showing last loaded data
-                                    </Text>
+                                <View style={s.warnBanner}>
+                                    <Icon name="wifi-off" size={13} color={colors.warning} />
+                                    <Text style={s.warnTxt}>{errorMsg || 'Could not refresh'} — showing cached data</Text>
                                     <TouchableOpacity onPress={() => fetchData(getParams(), true)}>
-                                        <Text style={styles.retryLink}>Retry</Text>
+                                        <Text style={s.retryLink}>Retry</Text>
                                     </TouchableOpacity>
                                 </View>
                             )}
-                            {punches.length > 0 && (
-                                <Text style={styles.countLabel}>
-                                    {punches.length} record{punches.length !== 1 ? 's' : ''}
-                                </Text>
-                            )}
+                            <SummaryBar punches={punches} />
                         </>
                     }
                     ListEmptyComponent={
-                        <View style={styles.centered}>
+                        <View style={s.centered}>
                             <Icon name="inbox" size={44} color={colors.border} />
-                            <Text style={styles.emptyTitle}>No punches found</Text>
-                            <Text style={styles.emptySubtitle}>No records for this period</Text>
+                            <Text style={s.emptyTitle}>No punches found</Text>
+                            <Text style={s.emptySub}>No records for this period</Text>
                         </View>
                     }
                 />
@@ -302,128 +446,55 @@ const PunchHistoryScreen = ({ navigation }) => {
     );
 };
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.background },
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+    container: { flex: 1, backgroundColor: '#F8FAFC' },
 
-    // Header
     header: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: 'row', alignItems: 'center',
         backgroundColor: colors.primary,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.md,
+        paddingHorizontal: spacing.md, paddingVertical: spacing.md,
     },
-    backBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
-    headerTitle: { flex: 1, textAlign: 'center', fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: '#fff' },
+    backBtn:     { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+    headerTitle: { flex: 1, textAlign: 'center', fontSize: typography.sizes.lg, fontWeight: '700', color: '#fff' },
 
-    // Date navigator
     dateNav: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: 'row', alignItems: 'center',
         backgroundColor: colors.surface,
-        paddingVertical: spacing.sm,
-        paddingHorizontal: spacing.sm,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.border,
+        paddingVertical: spacing.xs, paddingHorizontal: spacing.xs,
+        borderBottomWidth: 1, borderBottomColor: colors.border,
     },
-    navArrow: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
-    navArrowDisabled: { opacity: 0.3 },
-    dateLabel: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        paddingVertical: 6,
-    },
-    dateLabelText: {
-        fontSize: typography.sizes.md,
-        fontWeight: typography.weights.semibold,
-        color: colors.textMuted,
-    },
+    navArrow:    { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+    navDisabled: { opacity: 0.25 },
+    dateLabel:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 6 },
+    dateLabelText: { fontSize: typography.sizes.md, fontWeight: '600', color: colors.textMuted },
     dateLabelActive: { color: colors.primary },
-    todayPill: {
-        backgroundColor: colors.primaryLight,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 10,
-    },
-    todayPillText: { fontSize: 10, color: colors.primary, fontWeight: typography.weights.semibold },
+    todayPill:    { backgroundColor: colors.primaryLight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+    todayPillTxt: { fontSize: 10, color: colors.primary, fontWeight: '600' },
 
-    // Quick filter chips
     chipRow: {
-        flexDirection: 'row',
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
-        gap: spacing.sm,
-        backgroundColor: colors.surface,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.border,
+        flexDirection: 'row', paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+        gap: spacing.sm, backgroundColor: colors.surface,
+        borderBottomWidth: 1, borderBottomColor: colors.border,
     },
-    chip: {
-        paddingHorizontal: spacing.md,
-        paddingVertical: 6,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.background,
-    },
-    chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-    chipText: { fontSize: typography.sizes.sm, color: colors.textMuted, fontWeight: typography.weights.medium },
-    chipTextActive: { color: '#fff', fontWeight: typography.weights.semibold },
+    chip:         { paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background },
+    chipActive:   { backgroundColor: colors.primary, borderColor: colors.primary },
+    chipText:     { fontSize: typography.sizes.sm, color: colors.textMuted, fontWeight: '500' },
+    chipTextActive: { color: '#fff', fontWeight: '600' },
 
-    // List
     listContent: { padding: spacing.md, paddingBottom: 100 },
-    countLabel: {
-        fontSize: typography.sizes.sm,
-        color: colors.textMuted,
-        marginBottom: spacing.sm,
-        fontWeight: typography.weights.medium,
-    },
 
-    // Card
-    card: { marginBottom: spacing.sm, padding: spacing.md },
-    cardRow: { flexDirection: 'row', alignItems: 'center' },
-    iconBadge: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-    cardInfo: { flex: 1 },
-    punchType: { fontSize: typography.sizes.md, fontWeight: typography.weights.semibold, color: colors.textDark, textTransform: 'capitalize' },
-    addressText: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
-    cardRight: { alignItems: 'flex-end' },
-    timeText: { fontSize: typography.sizes.md, fontWeight: typography.weights.bold, color: colors.textDark },
-    dateSmall: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
-    visitBadge: { alignSelf: 'flex-start', backgroundColor: colors.primaryLight, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, marginTop: 8 },
-    visitText: { fontSize: 11, color: colors.primary, fontWeight: typography.weights.semibold },
+    centered:    { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
+    loadingTxt:  { marginTop: spacing.sm, fontSize: typography.sizes.sm, color: colors.textMuted },
+    errorTxt:    { fontSize: typography.sizes.sm, color: colors.danger, marginTop: spacing.md, textAlign: 'center', paddingHorizontal: spacing.lg },
+    retryBtn:    { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, backgroundColor: colors.primary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 20 },
+    retryTxt:    { color: '#fff', fontSize: typography.sizes.sm, fontWeight: '600' },
+    emptyTitle:  { fontSize: typography.sizes.md, fontWeight: '600', color: colors.textDark, marginTop: spacing.md },
+    emptySub:    { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4 },
 
-    // States
-    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
-    errorText: { fontSize: typography.sizes.md, color: colors.danger, marginTop: spacing.md, textAlign: 'center', paddingHorizontal: spacing.lg },
-    retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, backgroundColor: colors.primary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 20 },
-    retryText: { color: '#fff', fontSize: typography.sizes.sm, fontWeight: typography.weights.semibold },
-    emptyTitle: { fontSize: typography.sizes.md, fontWeight: typography.weights.semibold, color: colors.textDark, marginTop: spacing.md },
-    emptySubtitle: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4 },
-
-    // Error banner (shown over stale data)
-    errorBanner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#FFFBEB',
-        borderRadius: 10,
-        padding: spacing.sm,
-        marginBottom: spacing.sm,
-        gap: 8,
-        borderWidth: 1,
-        borderColor: '#FCD34D',
-    },
-    errorBannerText: {
-        flex: 1,
-        fontSize: typography.sizes.xs,
-        color: '#92400E',
-    },
-    retryLink: {
-        fontSize: typography.sizes.sm,
-        color: colors.primary,
-        fontWeight: '600',
-    },
+    warnBanner:  { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFBEB', borderRadius: 10, padding: spacing.sm, marginBottom: spacing.sm, gap: 8, borderWidth: 1, borderColor: '#FCD34D' },
+    warnTxt:     { flex: 1, fontSize: typography.sizes.xs, color: '#92400E' },
+    retryLink:   { fontSize: typography.sizes.sm, color: colors.primary, fontWeight: '600' },
 });
 
 export default PunchHistoryScreen;
