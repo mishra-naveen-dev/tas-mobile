@@ -799,7 +799,19 @@ const CollectionsScreen = () => {
                                     <TouchableOpacity
                                         key={o.value}
                                         style={[styles.statusOption, active && { backgroundColor: o.color, borderColor: o.color }]}
-                                        onPress={() => setForm(f => ({ ...f, status: o.value }))}
+                                        onPress={() => setForm(f => {
+                                            const next = { ...f, status: o.value };
+                                            // Auto-fill full EMI amount when "Collected" is selected
+                                            if (o.value === 'COLLECTED') {
+                                                const emi = modal.record?.amount_due;
+                                                if (emi != null) next.collected_amount = String(emi);
+                                            }
+                                            // Clear amount when switching away from collection statuses
+                                            if (o.value !== 'COLLECTED' && o.value !== 'PARTIALLY_COLLECTED') {
+                                                next.collected_amount = '';
+                                            }
+                                            return next;
+                                        })}
                                     >
                                         <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
                                     </TouchableOpacity>
@@ -809,7 +821,15 @@ const CollectionsScreen = () => {
 
                         {(form.status === 'COLLECTED' || form.status === 'PARTIALLY_COLLECTED') && (
                             <>
-                                <Text style={styles.fieldLabel}>Collected Amount (₹)</Text>
+                                <View style={styles.amountLabelRow}>
+                                    <Text style={styles.fieldLabel}>Collected Amount (₹)</Text>
+                                    {form.status === 'COLLECTED' && modal.record?.amount_due != null && (
+                                        <View style={styles.emiHint}>
+                                            <Icon name="zap" size={11} color={colors.success} />
+                                            <Text style={styles.emiHintText}>Auto-filled from EMI</Text>
+                                        </View>
+                                    )}
+                                </View>
                                 <TextInput
                                     style={styles.input}
                                     keyboardType="numeric"
@@ -818,6 +838,11 @@ const CollectionsScreen = () => {
                                     placeholder="0"
                                     placeholderTextColor={colors.textMuted}
                                 />
+                                {form.status === 'COLLECTED' && modal.record?.amount_due != null && (
+                                    <Text style={styles.emiSub}>
+                                        EMI due: ₹{Number(modal.record.amount_due).toLocaleString('en-IN')} — edit if different
+                                    </Text>
+                                )}
                             </>
                         )}
 
@@ -1053,6 +1078,10 @@ const styles = StyleSheet.create({
     modalTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     modalSub: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4, marginBottom: spacing.sm },
     fieldLabel: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textMedium, marginTop: spacing.sm, marginBottom: spacing.xs },
+    amountLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm, marginBottom: spacing.xs },
+    emiHint: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+    emiHintText: { fontSize: 10, fontWeight: '600', color: colors.success },
+    emiSub: { fontSize: 11, color: colors.textMuted, marginTop: 4, marginBottom: 2 },
     statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
     statusOption: {
         paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
