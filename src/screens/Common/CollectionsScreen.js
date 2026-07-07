@@ -271,6 +271,7 @@ const CollectionsScreen = () => {
     const [typeFilter, setTypeFilter] = useState('ALL');
 
     const [view, setView] = useState('list'); // 'list' | 'map'
+    const [mapSearch, setMapSearch] = useState('');
 
     const [modal, setModal] = useState({ open: false, record: null });
     const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '' });
@@ -326,6 +327,24 @@ const CollectionsScreen = () => {
             );
         });
     }, [records, activeFilter, typeFilter, search]);
+
+    // Map view search — non-collected only, across name/address/area/loan/date
+    const mapPending = useMemo(() => {
+        const q = mapSearch.trim().toLowerCase();
+        return records.filter(r => {
+            if (r.status === 'COLLECTED') return false;
+            if (!q) return true;
+            const due = r.due_date ? new Date(r.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).toLowerCase() : '';
+            return (
+                (r.customer_name || '').toLowerCase().includes(q) ||
+                (r.loan_id || '').toLowerCase().includes(q) ||
+                (r.address || '').toLowerCase().includes(q) ||
+                (r.area || '').toLowerCase().includes(q) ||
+                (r.pincode || '').toLowerCase().includes(q) ||
+                due.includes(q)
+            );
+        });
+    }, [records, mapSearch]);
 
     const openUpdate = (record) => {
         setForm({
@@ -545,15 +564,36 @@ const CollectionsScreen = () => {
                         />
                     </View>
 
-                    {/* Scrollable customer list — only pending/partial/not-paid (done customers removed) */}
+                    {/* Scrollable customer list — pending only, with search */}
                     {(() => {
-                        const pending = records.filter(r => r.status !== 'COLLECTED');
-                        const done = records.length - pending.length;
+                        const allPending = records.filter(r => r.status !== 'COLLECTED');
+                        const done = records.length - allPending.length;
+                        const pending = mapPending;
                         return (
                             <View style={styles.mapListSection}>
+                                {/* Search bar */}
+                                <View style={styles.mapSearchWrap}>
+                                    <Icon name="search" size={15} color={colors.textMuted} />
+                                    <TextInput
+                                        style={styles.mapSearchInput}
+                                        placeholder="Search name, loan ID, address, area, date…"
+                                        placeholderTextColor={colors.textMuted}
+                                        value={mapSearch}
+                                        onChangeText={setMapSearch}
+                                        returnKeyType="search"
+                                    />
+                                    {!!mapSearch && (
+                                        <TouchableOpacity onPress={() => setMapSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                            <Icon name="x-circle" size={15} color={colors.textMuted} />
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+
                                 <View style={styles.mapListHeaderRow}>
-                                    <Text style={styles.mapListHeader}>{pending.length} Remaining</Text>
-                                    {done > 0 && (
+                                    <Text style={styles.mapListHeader}>
+                                        {mapSearch ? `${pending.length} results` : `${allPending.length} Remaining`}
+                                    </Text>
+                                    {done > 0 && !mapSearch && (
                                         <View style={styles.mapDoneBadge}>
                                             <Icon name="check-circle" size={12} color={colors.success} />
                                             <Text style={styles.mapDoneBadgeText}>{done} done</Text>
@@ -633,12 +673,17 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })}
-                                {pending.length === 0 && (
+                                {pending.length === 0 && mapSearch ? (
+                                    <View style={styles.mapAllDone}>
+                                        <Icon name="search" size={28} color={colors.textLight} />
+                                        <Text style={[styles.mapAllDoneText, { color: colors.textMuted }]}>No customers match your search</Text>
+                                    </View>
+                                ) : pending.length === 0 ? (
                                     <View style={styles.mapAllDone}>
                                         <Icon name="check-circle" size={32} color={colors.success} />
                                         <Text style={styles.mapAllDoneText}>All collections done!</Text>
                                     </View>
-                                )}
+                                ) : null}
                             </View>
                         );
                     })()}
@@ -878,7 +923,18 @@ const styles = StyleSheet.create({
     mapEmptySub: { fontSize: typography.sizes.sm, color: colors.textMuted, textAlign: 'center', marginTop: spacing.xs, lineHeight: 20 },
 
     // Map mode customer list below the map
-    mapListSection: { paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: 120 },
+    mapListSection: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: 120 },
+    mapSearchWrap: {
+        flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+        backgroundColor: colors.surface, borderRadius: borderRadius.md,
+        borderWidth: 1, borderColor: colors.border,
+        paddingHorizontal: spacing.sm, paddingVertical: 9,
+        marginBottom: spacing.sm,
+    },
+    mapSearchInput: {
+        flex: 1, fontSize: typography.sizes.sm, color: colors.textDark,
+        marginLeft: 4, paddingVertical: 0,
+    },
     mapListHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
     mapListHeader: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
     mapDoneBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 },
