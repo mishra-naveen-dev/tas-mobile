@@ -27,7 +27,7 @@ import LocationService from '../../services/LocationService';
 import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
 
 const STATUS_OPTIONS = [
-    { value: 'PENDING', label: 'Pending', color: colors.textMuted },
+    { value: 'PENDING', label: 'P2P', color: colors.textMuted },
     { value: 'VISITED', label: 'Visited', color: colors.info },
     { value: 'COLLECTED', label: 'Collected', color: colors.success },
     { value: 'PARTIALLY_COLLECTED', label: 'Partial', color: colors.warning },
