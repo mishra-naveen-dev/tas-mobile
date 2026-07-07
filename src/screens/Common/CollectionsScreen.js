@@ -146,6 +146,19 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
         }
     }, [pinned]);
 
+    if (pinned.length === 0) {
+        return (
+            <View style={styles.mapEmpty}>
+                <Icon name="map-pin" size={36} color={colors.textLight} />
+                <Text style={styles.mapEmptyTitle}>No location pins yet</Text>
+                <Text style={styles.mapEmptySub}>
+                    Pins appear after you update a customer status in the field.
+                    Use the Navigate buttons in the list below to get directions.
+                </Text>
+            </View>
+        );
+    }
+
     return (
         <View style={styles.mapWrapper}>
             <MapView
@@ -203,8 +216,8 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
                 })}
             </MapView>
 
-            {/* Zoom controls — right side panel */}
-            <View style={styles.zoomControls}>
+            {/* Zoom controls — floating right, above map layer */}
+            <View style={styles.zoomControls} pointerEvents="box-none">
                 <TouchableOpacity style={styles.zoomBtn} onPress={zoomIn} activeOpacity={0.75}>
                     <Icon name="plus" size={18} color="#1e293b" />
                 </TouchableOpacity>
@@ -214,7 +227,7 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
                 </TouchableOpacity>
             </View>
 
-            {/* Recenter / redirect button */}
+            {/* Recenter button */}
             <TouchableOpacity style={styles.recenterBtn} onPress={reCenter} activeOpacity={0.75}>
                 <Icon name="crosshair" size={20} color={colors.primary} />
             </TouchableOpacity>
@@ -839,26 +852,30 @@ const styles = StyleSheet.create({
     legendLine: { width: 18, height: 3, backgroundColor: colors.primary, borderRadius: 2 },
     legendText: { fontSize: 11, color: colors.textMedium },
 
-    // Zoom controls (floating right side)
+    // Zoom controls (floating right side, above map layer)
     zoomControls: {
-        position: 'absolute', right: 12, top: 12,
+        position: 'absolute', right: 12, top: 60,
+        zIndex: 10, elevation: 10,
         backgroundColor: '#FFFFFF',
         borderRadius: 10,
-        elevation: 4,
-        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 5,
         overflow: 'hidden',
     },
-    zoomBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    zoomBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
     zoomDivider: { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: 6 },
 
-    // Recenter / redirect button (floating right side below zoom)
+    // Recenter button (floating right side below zoom)
     recenterBtn: {
-        position: 'absolute', right: 12, top: 104,
-        width: 40, height: 40, borderRadius: 10,
+        position: 'absolute', right: 12, top: 168,
+        zIndex: 10, elevation: 10,
+        width: 42, height: 42, borderRadius: 10,
         backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
-        elevation: 4,
-        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 5,
     },
+
+    // Map empty state
+    mapEmptyTitle: { fontSize: typography.sizes.md, fontWeight: '700', color: colors.textDark, marginTop: spacing.md, textAlign: 'center' },
+    mapEmptySub: { fontSize: typography.sizes.sm, color: colors.textMuted, textAlign: 'center', marginTop: spacing.xs, lineHeight: 20 },
 
     // Map mode customer list below the map
     mapListSection: { paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: 120 },
