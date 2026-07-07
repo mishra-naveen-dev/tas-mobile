@@ -16,6 +16,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { filterGpsOutliers, calcTotalDistanceKm } from '../../utils/gpsUtils';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import HeroHeader from '../../components/HeroHeader';
@@ -148,6 +149,7 @@ const DashboardScreen = ({ navigation }) => {
     const [hasError, setHasError] = useState(false);
     const [summary, setSummary] = useState({});
     const [punches, setPunches] = useState([]);
+    const [cleanDistanceKm, setCleanDistanceKm] = useState(null); // outlier-filtered
     const [isGpsActive, setIsGpsActive] = useState(false);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
 
@@ -156,15 +158,19 @@ const DashboardScreen = ({ navigation }) => {
             setHasError(false);
             if (!isRefresh) setIsLoading(true);
 
-            const cachedSummary = await AsyncStorage.getItem('@dashboard_summary');
-            const cachedPunches = await AsyncStorage.getItem('@dashboard_punches');
-            if (cachedSummary) setSummary(JSON.parse(cachedSummary));
-            if (cachedPunches) setPunches(JSON.parse(cachedPunches));
+            const cachedSummary  = await AsyncStorage.getItem('@dashboard_summary');
+            const cachedPunches  = await AsyncStorage.getItem('@dashboard_punches');
+            const cachedCleanDist = await AsyncStorage.getItem('@dashboard_clean_dist');
+            if (cachedSummary)   setSummary(JSON.parse(cachedSummary));
+            if (cachedPunches)   setPunches(JSON.parse(cachedPunches));
+            if (cachedCleanDist) setCleanDistanceKm(Number(cachedCleanDist));
 
             try {
-                const [summaryRes, punchRes] = await Promise.all([
+                const today = new Date().toISOString().slice(0, 10);
+                const [summaryRes, punchRes, liveRes] = await Promise.all([
                     api.get(`/attendance/punches/daily_summary/`),
                     api.get(`/attendance/punches/today_punches/`),
+                    api.getLiveDailyRoute({ date: today }).catch(() => null), // non-blocking
                 ]);
 
                 const liveSummary = summaryRes?.data || {};
@@ -173,8 +179,26 @@ const DashboardScreen = ({ navigation }) => {
                 setPunches(livePunches);
                 setIsGpsActive(livePunches.length > 0);
 
+                // Use live tracking distance with GPS outlier filtering.
+                // The daily_summary distance can be wildly wrong when any punch
+                // record was captured with a bad GPS fix (multipath / NLOS outlier).
+                // The live track gives the actual travelled path — filter it for
+                // any remaining bad points and use that as the displayed distance.
+                if (liveRes?.data?.route?.length > 0) {
+                    const clean = filterGpsOutliers(liveRes.data.route);
+                    setCleanDistanceKm(calcTotalDistanceKm(clean));
+                } else {
+                    setCleanDistanceKm(null); // fall back to summary value
+                }
+
                 AsyncStorage.setItem('@dashboard_summary', JSON.stringify(liveSummary));
                 AsyncStorage.setItem('@dashboard_punches', JSON.stringify(livePunches));
+                if (liveRes?.data?.route?.length > 0) {
+                    const clean = filterGpsOutliers(liveRes.data.route);
+                    const dist  = calcTotalDistanceKm(clean);
+                    setCleanDistanceKm(dist);
+                    AsyncStorage.setItem('@dashboard_clean_dist', String(dist));
+                }
             } catch (apiError) {
                 if (IS_DEV) console.log('[Dashboard] API error:', apiError?.message || apiError);
                 // If session expired, try to use cached data
@@ -206,12 +230,17 @@ const DashboardScreen = ({ navigation }) => {
         fetchData(true);
     }, [fetchData]);
 
-    const statsData = useMemo(() => [
-        { icon: 'navigation', value: summary?.total_distance_today || 0, label: 'Distance', iconColor: colors.danger, bgColor: colors.dangerLight, suffix: ' km' },
-        { icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
-        { icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
-        { icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.info, bgColor: colors.infoLight, prefix: '₹' },
-    ], [summary]);
+    const statsData = useMemo(() => {
+        // Prefer the outlier-filtered live tracking distance.
+        // Fall back to the punch summary value only when live track data is absent.
+        const distanceKm = cleanDistanceKm ?? summary?.total_distance_today ?? 0;
+        return [
+            { icon: 'navigation', value: Number(distanceKm).toFixed(2), label: 'Distance', iconColor: colors.danger, bgColor: colors.dangerLight, suffix: ' km' },
+            { icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
+            { icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
+            { icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.info, bgColor: colors.infoLight, prefix: '₹' },
+        ];
+    }, [summary, cleanDistanceKm]);
 
     const routePoints = useMemo(() =>
         punches.filter(p => p.latitude && p.longitude)

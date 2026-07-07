@@ -12,6 +12,13 @@ export const getBaseURL = () => {
 };
 
 export const loadCustomBaseURL = async () => {
+    // Custom URL overrides are only honoured in dev builds.
+    // In production the app always hits PROD_URL so testers/devices
+    // don't accidentally stay pointed at a dev server.
+    if (!__DEV__) {
+        await AsyncStorage.removeItem('custom_api_url');
+        return;
+    }
     try {
         const stored = await AsyncStorage.getItem('custom_api_url');
         if (stored) {
@@ -388,6 +395,9 @@ api.getAllowanceHistory = (params = {}) => {
     return api.get('/allowance/requests/', { params });
 };
 
+api.getAllowanceRequests = (params = {}) =>
+    api.get('/allowance/requests/', { params });
+
 api.getDailyPunchDetail = (date) => {
     return api.get('/attendance/punches/by-date/', {
         params: { date }
@@ -483,6 +493,10 @@ api.logout = async () => {
     return api.post('/auth/logout/');
 };
 
+// Reverse geocode proxy — key stays on the server, never in the APK
+api.reverseGeocode = (lat, lng) =>
+    api.get('/attendance/geocode/', { params: { latlng: `${lat},${lng}` } });
+
 // Master Data
 api.searchMasterValues = (categoryKey, query = '', limit = 20) =>
     api.get('/master-data/values/', { params: { category: categoryKey, q: query, limit } });
@@ -511,5 +525,8 @@ api.getCollections = (params = {}) =>
 
 api.updateCollectionStatus = (id, data) =>
     api.post(`/loans/collections/${id}/update_status/`, data);
+
+api.getCollectionDashboardStats = () =>
+    api.get('/loans/collections/dashboard_stats/');
 
 export default api;

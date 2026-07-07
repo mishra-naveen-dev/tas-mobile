@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     View,
     Text,
@@ -16,8 +16,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 
 import api from '../../api/api';
+import LocationService from '../../services/LocationService';
 import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
 
 const STATUS_OPTIONS = [
@@ -29,6 +31,15 @@ const STATUS_OPTIONS = [
 ];
 
 const STATUS_META = STATUS_OPTIONS.reduce((a, o) => { a[o.value] = o; return a; }, {});
+
+// Pin color for map markers per status
+const PIN_COLOR = {
+    VISITED: '#2196F3',
+    COLLECTED: '#4CAF50',
+    PARTIALLY_COLLECTED: '#FF9800',
+    NOT_PAID: '#F44336',
+    PENDING: '#9E9E9E',
+};
 
 const TYPE_OPTIONS = [
     { value: 'ALL', label: 'All Types' },
@@ -73,6 +84,83 @@ const FilterChip = ({ label, color, count, active, onPress }) => (
     </TouchableOpacity>
 );
 
+// ── Map tab ─────────────────────────────────────────────────────────────────
+const CollectionsMap = ({ records }) => {
+    const mapRef = useRef(null);
+
+    // Only records that have a GPS pin from a visit
+    const pinned = useMemo(
+        () => records.filter(r => r.visit_latitude != null && r.visit_longitude != null),
+        [records]
+    );
+
+    // Polyline: visited records ordered by last_collection_date
+    const routeCoords = useMemo(() => {
+        const sorted = [...pinned]
+            .filter(r => r.last_collection_date)
+            .sort((a, b) => new Date(a.last_collection_date) - new Date(b.last_collection_date));
+        return sorted.map(r => ({ latitude: r.visit_latitude, longitude: r.visit_longitude }));
+    }, [pinned]);
+
+    const initialRegion = useMemo(() => {
+        if (pinned.length > 0) {
+            return {
+                latitude: pinned[0].visit_latitude,
+                longitude: pinned[0].visit_longitude,
+                latitudeDelta: 0.05,
+                longitudeDelta: 0.05,
+            };
+        }
+        // Default to India center
+        return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 15, longitudeDelta: 15 };
+    }, [pinned]);
+
+    if (pinned.length === 0) {
+        return (
+            <View style={styles.mapEmpty}>
+                <Icon name="map" size={40} color={colors.textLight} />
+                <Text style={styles.emptyText}>No visited customers yet.</Text>
+                <Text style={[styles.emptyText, { fontSize: 12, marginTop: 4 }]}>
+                    Pins appear here after you update a customer's status in the field.
+                </Text>
+            </View>
+        );
+    }
+
+    return (
+        <MapView
+            ref={mapRef}
+            provider={PROVIDER_GOOGLE}
+            style={styles.map}
+            initialRegion={initialRegion}
+            showsUserLocation
+            showsMyLocationButton
+        >
+            {/* Route polyline connecting visited customers in time order */}
+            {routeCoords.length > 1 && (
+                <Polyline
+                    coordinates={routeCoords}
+                    strokeColor={colors.primary}
+                    strokeWidth={3}
+                    lineDashPattern={[6, 3]}
+                />
+            )}
+
+            {/* Customer visit pins */}
+            {pinned.map(r => (
+                <Marker
+                    key={r.id}
+                    coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
+                    pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
+                    title={r.customer_name}
+                    description={`${r.loan_id} · ${STATUS_META[r.status]?.label || r.status} · ${fmtAmount(r.collected_amount || r.amount_due)}`}
+                />
+            ))}
+        </MapView>
+    );
+};
+
+// ── Main screen ──────────────────────────────────────────────────────────────
 const CollectionsScreen = () => {
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -81,6 +169,8 @@ const CollectionsScreen = () => {
     const [search, setSearch] = useState('');
     const [activeFilter, setActiveFilter] = useState('ALL');
     const [typeFilter, setTypeFilter] = useState('ALL');
+
+    const [view, setView] = useState('list'); // 'list' | 'map'
 
     const [modal, setModal] = useState({ open: false, record: null });
     const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '' });
@@ -102,7 +192,7 @@ const CollectionsScreen = () => {
 
     const onRefresh = () => { setRefreshing(true); fetchRecords(); };
 
-    // ── Derived stats & filtering ───────────────────────────────────────────
+    // ── Derived stats & filtering ─────────────────────────────────────────
     const stats = useMemo(() => {
         const countBy = {};
         let totalDue = 0;
@@ -149,8 +239,22 @@ const CollectionsScreen = () => {
     const save = async () => {
         setSaving(true);
         try {
-            const payload = { status: form.status, remarks: form.remarks };
+            // Auto-capture GPS at the moment of save
+            let gpsPayload = {};
+            try {
+                const loc = await LocationService.getCurrentLocation();
+                if (loc?.latitude && loc?.longitude && !loc?.error) {
+                    gpsPayload.latitude = loc.latitude;
+                    gpsPayload.longitude = loc.longitude;
+                    gpsPayload.location_address = loc.address || '';
+                }
+            } catch (_) {
+                // GPS optional — don't block the save
+            }
+
+            const payload = { status: form.status, remarks: form.remarks, ...gpsPayload };
             if (form.collected_amount !== '') payload.collected_amount = parseFloat(form.collected_amount);
+
             await api.updateCollectionStatus(modal.record.id, payload);
             setModal({ open: false, record: null });
             fetchRecords();
@@ -196,6 +300,10 @@ const CollectionsScreen = () => {
                     <View style={styles.row}>
                         <Icon name="map-pin" size={15} color={colors.textMuted} />
                         <Text style={styles.rowText}>{fullAddress || 'No address'}</Text>
+                        {/* Green dot if GPS was captured for this record */}
+                        {item.visit_latitude != null && (
+                            <View style={styles.gpsDot} />
+                        )}
                     </View>
 
                     {!!item.customer_phone && (
@@ -254,16 +362,33 @@ const CollectionsScreen = () => {
         <SafeAreaView style={styles.container} edges={['top']}>
             <StatusBar barStyle="light-content" backgroundColor={colors.primaryDark} />
 
-            {/* ── Enterprise header ── */}
+            {/* ── Header ── */}
             <View style={styles.header}>
                 <View style={styles.headerTopRow}>
                     <View>
                         <Text style={styles.headerTitle}>My Collections</Text>
                         <Text style={styles.headerSub}>{stats.total} assigned · {stats.pending} pending</Text>
                     </View>
-                    <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
-                        <Icon name="refresh-cw" size={18} color="#FFFFFF" />
-                    </TouchableOpacity>
+                    <View style={styles.headerActions}>
+                        {/* List / Map toggle */}
+                        <View style={styles.viewToggle}>
+                            <TouchableOpacity
+                                style={[styles.toggleBtn, view === 'list' && styles.toggleBtnActive]}
+                                onPress={() => setView('list')}
+                            >
+                                <Icon name="list" size={16} color={view === 'list' ? colors.primary : 'rgba(255,255,255,0.7)'} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.toggleBtn, view === 'map' && styles.toggleBtnActive]}
+                                onPress={() => setView('map')}
+                            >
+                                <Icon name="map" size={16} color={view === 'map' ? colors.primary : 'rgba(255,255,255,0.7)'} />
+                            </TouchableOpacity>
+                        </View>
+                        <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
+                            <Icon name="refresh-cw" size={18} color="#FFFFFF" />
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 <View style={styles.kpiRow}>
@@ -274,91 +399,112 @@ const CollectionsScreen = () => {
                 </View>
             </View>
 
-            {/* ── Search ── */}
-            <View style={styles.searchWrap}>
-                <Icon name="search" size={18} color={colors.textMuted} />
-                <TextInput
-                    style={styles.searchInput}
-                    placeholder="Search name, loan id, phone, pincode…"
-                    placeholderTextColor={colors.textMuted}
-                    value={search}
-                    onChangeText={setSearch}
-                />
-                {!!search && (
-                    <TouchableOpacity onPress={() => setSearch('')}>
-                        <Icon name="x-circle" size={18} color={colors.textMuted} />
-                    </TouchableOpacity>
-                )}
-            </View>
-
-            {/* ── Status filters ── */}
-            <View>
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.filterRow}
-                >
-                    <FilterChip
-                        label="All"
-                        count={stats.total}
-                        active={activeFilter === 'ALL'}
-                        onPress={() => setActiveFilter('ALL')}
-                    />
-                    {STATUS_OPTIONS.map(o => (
-                        <FilterChip
-                            key={o.value}
-                            label={o.label}
-                            color={o.color}
-                            count={stats.countBy[o.value] || 0}
-                            active={activeFilter === o.value}
-                            onPress={() => setActiveFilter(o.value)}
-                        />
-                    ))}
-                </ScrollView>
-
-                {/* Collection type filter */}
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.typeRow}
-                >
-                    {TYPE_OPTIONS.map(o => {
-                        const active = typeFilter === o.value;
-                        return (
-                            <TouchableOpacity
-                                key={o.value}
-                                style={[styles.typeChip, active && { backgroundColor: (o.color || colors.textDark), borderColor: (o.color || colors.textDark) }]}
-                                onPress={() => setTypeFilter(o.value)}
-                                activeOpacity={0.8}
-                            >
-                                <Text style={[styles.typeChipText, active && styles.filterChipTextActive]}>{o.label}</Text>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </ScrollView>
-            </View>
-
-            {loading ? (
-                <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
-            ) : (
-                <FlatList
-                    data={filtered}
-                    keyExtractor={(item) => String(item.id)}
-                    renderItem={renderItem}
-                    contentContainerStyle={{ padding: spacing.md, paddingBottom: 120 }}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                    ListEmptyComponent={
-                        <View style={styles.center}>
-                            <Icon name="inbox" size={40} color={colors.textLight} />
-                            <Text style={styles.emptyText}>
-                                {records.length === 0 ? 'No customers assigned to you yet.' : 'No records match this filter.'}
-                            </Text>
+            {/* ── Map view ── */}
+            {view === 'map' ? (
+                <View style={styles.mapContainer}>
+                    {/* Map legend */}
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.legendScroll} contentContainerStyle={styles.legendRow}>
+                        {Object.entries(PIN_COLOR).filter(([k]) => k !== 'PENDING').map(([status, color]) => (
+                            <View key={status} style={styles.legendItem}>
+                                <View style={[styles.legendDot, { backgroundColor: color }]} />
+                                <Text style={styles.legendText}>{STATUS_META[status]?.label || status}</Text>
+                            </View>
+                        ))}
+                        <View style={styles.legendItem}>
+                            <View style={[styles.legendLine]} />
+                            <Text style={styles.legendText}>Route</Text>
                         </View>
-                    }
-                />
+                    </ScrollView>
+                    <CollectionsMap records={records} />
+                </View>
+            ) : (
+                <>
+                    {/* ── Search ── */}
+                    <View style={styles.searchWrap}>
+                        <Icon name="search" size={18} color={colors.textMuted} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder="Search name, loan id, phone, pincode…"
+                            placeholderTextColor={colors.textMuted}
+                            value={search}
+                            onChangeText={setSearch}
+                        />
+                        {!!search && (
+                            <TouchableOpacity onPress={() => setSearch('')}>
+                                <Icon name="x-circle" size={18} color={colors.textMuted} />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    {/* ── Status filters ── */}
+                    <View>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.filterRow}
+                        >
+                            <FilterChip
+                                label="All"
+                                count={stats.total}
+                                active={activeFilter === 'ALL'}
+                                onPress={() => setActiveFilter('ALL')}
+                            />
+                            {STATUS_OPTIONS.map(o => (
+                                <FilterChip
+                                    key={o.value}
+                                    label={o.label}
+                                    color={o.color}
+                                    count={stats.countBy[o.value] || 0}
+                                    active={activeFilter === o.value}
+                                    onPress={() => setActiveFilter(o.value)}
+                                />
+                            ))}
+                        </ScrollView>
+
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.typeRow}
+                        >
+                            {TYPE_OPTIONS.map(o => {
+                                const active = typeFilter === o.value;
+                                return (
+                                    <TouchableOpacity
+                                        key={o.value}
+                                        style={[styles.typeChip, active && { backgroundColor: (o.color || colors.textDark), borderColor: (o.color || colors.textDark) }]}
+                                        onPress={() => setTypeFilter(o.value)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={[styles.typeChipText, active && styles.filterChipTextActive]}>{o.label}</Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </ScrollView>
+                    </View>
+
+                    {loading ? (
+                        <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+                    ) : (
+                        <FlatList
+                            data={filtered}
+                            keyExtractor={(item) => String(item.id)}
+                            renderItem={renderItem}
+                            contentContainerStyle={{ padding: spacing.md, paddingBottom: 120 }}
+                            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                            ListEmptyComponent={
+                                <View style={styles.center}>
+                                    <Icon name="inbox" size={40} color={colors.textLight} />
+                                    <Text style={styles.emptyText}>
+                                        {records.length === 0 ? 'No customers assigned to you yet.' : 'No records match this filter.'}
+                                    </Text>
+                                </View>
+                            }
+                        />
+                    )}
+                </>
             )}
 
-            {/* Update modal */}
+            {/* ── Update modal ── */}
             <Modal visible={modal.open} transparent animationType="slide" onRequestClose={() => setModal({ open: false, record: null })}>
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
@@ -414,6 +560,12 @@ const CollectionsScreen = () => {
                             placeholderTextColor={colors.textMuted}
                         />
 
+                        {/* GPS capture notice */}
+                        <View style={styles.gpsNotice}>
+                            <Icon name="crosshair" size={13} color={colors.textMuted} />
+                            <Text style={styles.gpsNoticeText}>Your GPS location will be captured automatically on save</Text>
+                        </View>
+
                         <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={saving}>
                             {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveBtnText}>Save</Text>}
                         </TouchableOpacity>
@@ -427,7 +579,7 @@ const CollectionsScreen = () => {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     center: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xxxl },
-    emptyText: { marginTop: spacing.sm, color: colors.textMuted, fontSize: typography.sizes.sm },
+    emptyText: { marginTop: spacing.sm, color: colors.textMuted, fontSize: typography.sizes.sm, textAlign: 'center' },
 
     // Header
     header: {
@@ -441,6 +593,15 @@ const styles = StyleSheet.create({
     headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     headerTitle: { fontSize: typography.sizes.xxl, fontWeight: typography.weights.bold, color: '#FFFFFF' },
     headerSub: { fontSize: typography.sizes.xs, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+    viewToggle: {
+        flexDirection: 'row',
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        borderRadius: borderRadius.md,
+        overflow: 'hidden',
+    },
+    toggleBtn: { padding: spacing.xs + 2, paddingHorizontal: spacing.sm },
+    toggleBtnActive: { backgroundColor: '#FFFFFF' },
     refreshBtn: {
         width: 38, height: 38, borderRadius: 19,
         backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center',
@@ -452,6 +613,20 @@ const styles = StyleSheet.create({
     },
     kpiValue: { fontSize: typography.sizes.md, fontWeight: typography.weights.bold, color: '#FFFFFF' },
     kpiLabel: { fontSize: 10, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+
+    // Map
+    mapContainer: { flex: 1 },
+    map: { flex: 1 },
+    mapEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
+    legendScroll: { maxHeight: 40 },
+    legendRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.xs, gap: spacing.md },
+    legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    legendDot: { width: 10, height: 10, borderRadius: 5 },
+    legendLine: { width: 18, height: 3, backgroundColor: colors.primary, borderRadius: 2 },
+    legendText: { fontSize: 11, color: colors.textMedium },
+
+    // GPS indicator dot on card
+    gpsDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4CAF50', marginLeft: 4 },
 
     // Search
     searchWrap: {
@@ -540,9 +715,14 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, fontSize: typography.sizes.sm, color: colors.textDark,
     },
     remarksInput: { height: 70, textAlignVertical: 'top' },
+    gpsNotice: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        marginTop: spacing.sm, paddingVertical: spacing.xs,
+    },
+    gpsNoticeText: { fontSize: 11, color: colors.textMuted },
     saveBtn: {
         backgroundColor: colors.primary, borderRadius: borderRadius.md,
-        paddingVertical: spacing.md, alignItems: 'center', marginTop: spacing.lg,
+        paddingVertical: spacing.md, alignItems: 'center', marginTop: spacing.sm,
     },
     saveBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: typography.sizes.md },
 });

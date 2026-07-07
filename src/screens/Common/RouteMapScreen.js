@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -13,6 +13,7 @@ import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-nativ
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { filterGpsOutliers, calcTotalDistanceKm } from '../../utils/gpsUtils';
 
 const { height } = Dimensions.get('window');
 
@@ -47,43 +48,61 @@ const RouteMapScreen = ({ navigation, route }) => {
 
     const initialDate = route?.params?.date ? new Date(route.params.date) : new Date();
     const [activeDate, setActiveDate] = useState(initialDate);
-    const [allPunches, setAllPunches] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
+    const [allPunches,  setAllPunches]  = useState([]);
+    const [gpsRoute,    setGpsRoute]    = useState([]);   // actual 10-s GPS track
+    const [routeDist,   setRouteDist]   = useState(null); // km, outlier-filtered
+    const [loading,     setLoading]     = useState(true);
+    const [error,       setError]       = useState(null);
 
     const isTodayActive = toDateStr(activeDate) === toDateStr(new Date());
 
-    const fetchPunches = useCallback(async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
             const dateStr = toDateStr(activeDate);
-            const params = { date_from: dateStr, date_to: dateStr };
-            if (employeeId) params.employee_id = employeeId;
+            const punchParams = { date_from: dateStr, date_to: dateStr };
+            if (employeeId) punchParams.employee_id = employeeId;
 
-            const res = await api.get('/attendance/punches/', { params });
-            const raw = Array.isArray(res.data)
-                ? res.data
-                : Array.isArray(res.data?.results)
-                ? res.data.results
-                : [];
+            const liveParams = { date: dateStr };
+            if (employeeId) liveParams.employee_id = employeeId;
 
-            // Oldest first for chronological path
-            const sorted = [...raw].sort(
-                (a, b) => new Date(a.punched_at) - new Date(b.punched_at)
-            );
-            setAllPunches(sorted);
-        } catch (err) {
-            setError('Failed to load punch data. Pull down to retry.');
+            // Run both requests in parallel
+            const [punchRes, liveRes] = await Promise.allSettled([
+                api.get('/attendance/punches/', { params: punchParams }),
+                api.getLiveDailyRoute(liveParams),
+            ]);
+
+            // ── Punch records (markers) ───────────────────────────────────────
+            if (punchRes.status === 'fulfilled') {
+                const raw = Array.isArray(punchRes.value.data)
+                    ? punchRes.value.data
+                    : Array.isArray(punchRes.value.data?.results)
+                    ? punchRes.value.data.results
+                    : [];
+                setAllPunches(
+                    [...raw].sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
+                );
+            }
+
+            // ── Actual GPS track (polyline) ───────────────────────────────────
+            if (liveRes.status === 'fulfilled') {
+                const rawPoints = liveRes.value.data?.route || [];
+                // Speed-based outlier filter (>120 km/h → drop the point)
+                const clean = filterGpsOutliers(rawPoints);
+                setGpsRoute(clean);
+                setRouteDist(calcTotalDistanceKm(clean));
+            }
+        } catch {
+            setError('Failed to load route data. Pull down to retry.');
         } finally {
             setLoading(false);
         }
     }, [activeDate, employeeId]);
 
-    useEffect(() => {
-        fetchPunches();
-    }, [fetchPunches]);
+    useEffect(() => { fetchData(); }, [fetchData]);
 
+    // Punch markers — only those with valid GPS
     const mappablePunches = allPunches.filter(
         (p) =>
             p.latitude != null &&
@@ -92,20 +111,30 @@ const RouteMapScreen = ({ navigation, route }) => {
             parseFloat(p.longitude) !== 0
     );
 
-    const coordinates = mappablePunches.map((p) => ({
+    // The true GPS track converted to react-native-maps coordinate format
+    const gpsCoordinates = useMemo(() =>
+        gpsRoute.map((p) => ({ latitude: Number(p.lat ?? p.latitude), longitude: Number(p.lon ?? p.lng ?? p.longitude) })),
+        [gpsRoute]
+    );
+
+    // Fallback: if live track unavailable, connect punch markers
+    const punchCoordinates = mappablePunches.map((p) => ({
         latitude: parseFloat(p.latitude),
         longitude: parseFloat(p.longitude),
     }));
 
+    // Coordinates used to fit the map view
+    const allCoordinates = gpsCoordinates.length > 0 ? gpsCoordinates : punchCoordinates;
+
     const getMapRegion = () => {
-        if (coordinates.length === 0) {
+        if (allCoordinates.length === 0) {
             return { latitude: 23.0225, longitude: 72.5714, latitudeDelta: 0.1, longitudeDelta: 0.1 };
         }
-        if (coordinates.length === 1) {
-            return { ...coordinates[0], latitudeDelta: 0.01, longitudeDelta: 0.01 };
+        if (allCoordinates.length === 1) {
+            return { ...allCoordinates[0], latitudeDelta: 0.01, longitudeDelta: 0.01 };
         }
-        const lats = coordinates.map((c) => c.latitude);
-        const lngs = coordinates.map((c) => c.longitude);
+        const lats = allCoordinates.map((c) => c.latitude);
+        const lngs = allCoordinates.map((c) => c.longitude);
         const minLat = Math.min(...lats);
         const maxLat = Math.max(...lats);
         const minLng = Math.min(...lngs);
@@ -132,20 +161,19 @@ const RouteMapScreen = ({ navigation, route }) => {
     const formatTime = (ts) =>
         ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
 
-    // Latest punch = last item (sorted oldest→newest)
+    // Latest known location: prefer last GPS track point, fall back to last punch
+    const latestGpsPt  = gpsCoordinates.length > 0 ? gpsCoordinates[gpsCoordinates.length - 1] : null;
     const latestMappable = mappablePunches.length > 0
         ? mappablePunches[mappablePunches.length - 1]
         : null;
 
     const goToLatest = () => {
-        if (!latestMappable) return;
+        const target = latestGpsPt ?? (latestMappable
+            ? { latitude: parseFloat(latestMappable.latitude), longitude: parseFloat(latestMappable.longitude) }
+            : null);
+        if (!target) return;
         mapRef.current?.animateToRegion(
-            {
-                latitude: parseFloat(latestMappable.latitude),
-                longitude: parseFloat(latestMappable.longitude),
-                latitudeDelta: 0.005,
-                longitudeDelta: 0.005,
-            },
+            { ...target, latitudeDelta: 0.005, longitudeDelta: 0.005 },
             600
         );
     };
@@ -160,7 +188,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                 <Text style={styles.headerTitle}>
                     {employeeName ? employeeName : 'Route Map'}
                 </Text>
-                <TouchableOpacity onPress={fetchPunches} style={styles.refreshBtn}>
+                <TouchableOpacity onPress={fetchData} style={styles.refreshBtn}>
                     <Icon name="refresh-cw" size={20} color={loading ? colors.border : colors.primary} />
                 </TouchableOpacity>
             </View>
@@ -201,20 +229,31 @@ const RouteMapScreen = ({ navigation, route }) => {
                     provider={PROVIDER_GOOGLE}
                     initialRegion={getMapRegion()}
                     onMapReady={() => {
-                        if (coordinates.length > 1) {
-                            mapRef.current?.fitToCoordinates(coordinates, {
+                        if (allCoordinates.length > 1) {
+                            mapRef.current?.fitToCoordinates(allCoordinates, {
                                 edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
                                 animated: true,
                             });
                         }
                     }}
                 >
-                    {/* Polyline connecting all punch locations */}
-                    {coordinates.length > 1 && (
+                    {/* Actual GPS track — drawn from live tracking points (10 s intervals) */}
+                    {gpsCoordinates.length > 1 && (
                         <Polyline
-                            coordinates={coordinates}
+                            coordinates={gpsCoordinates}
                             strokeColor={colors.primary}
                             strokeWidth={3}
+                            lineDashPattern={undefined}
+                        />
+                    )}
+
+                    {/* Fallback: connect punch markers when GPS track unavailable */}
+                    {gpsCoordinates.length < 2 && punchCoordinates.length > 1 && (
+                        <Polyline
+                            coordinates={punchCoordinates}
+                            strokeColor={colors.primary}
+                            strokeWidth={2}
+                            lineDashPattern={[6, 4]}
                         />
                     )}
 
@@ -263,11 +302,11 @@ const RouteMapScreen = ({ navigation, route }) => {
                     </View>
                 )}
 
-                {coordinates.length > 1 && !loading && (
+                {allCoordinates.length > 1 && !loading && (
                     <TouchableOpacity
                         style={styles.fitBtn}
                         onPress={() =>
-                            mapRef.current?.fitToCoordinates(coordinates, {
+                            mapRef.current?.fitToCoordinates(allCoordinates, {
                                 edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
                                 animated: true,
                             })
@@ -279,7 +318,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                 )}
 
                 {/* Go-to-latest button — like Google Maps location button */}
-                {latestMappable && !loading && (
+                {(latestGpsPt || latestMappable) && !loading && (
                     <TouchableOpacity
                         style={styles.latestBtn}
                         onPress={goToLatest}
@@ -318,12 +357,10 @@ const RouteMapScreen = ({ navigation, route }) => {
                         <Text style={styles.statLbl}>Punch Out</Text>
                     </View>
                     <View style={[styles.statItem, styles.statDivider]}>
-                        <Text style={[styles.statVal, { color: PUNCH_COLORS.COLLECTION }]}>
-                            {allPunches.filter(
-                                (p) => p.punch_type === 'COLLECTION' || p.punch_type === 'DISBURSEMENT'
-                            ).length}
+                        <Text style={[styles.statVal, { color: '#7b1fa2', fontSize: 14 }]}>
+                            {routeDist != null ? `${routeDist}` : '—'}
                         </Text>
-                        <Text style={styles.statLbl}>Collection</Text>
+                        <Text style={styles.statLbl}>km</Text>
                     </View>
                 </View>
 

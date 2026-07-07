@@ -163,6 +163,135 @@ const MonthlyCollectionCard = ({ collected, target }) => {
     );
 };
 
+// ─── Collection Stats Widget ──────────────────────────────────────────────────
+const CollectionWidget = ({ stats, onPress }) => {
+    if (!stats) return null;
+
+    const fmtAmt = (n) => {
+        if (n >= 100000) return `₹${(n / 100000).toFixed(2)}L`;
+        if (n >= 1000)   return `₹${(n / 1000).toFixed(1)}K`;
+        return `₹${Number(n).toLocaleString('en-IN')}`;
+    };
+
+    const done       = (stats.today?.collected || 0) + (stats.today?.partial || 0);
+    const todayAmt   = stats.today?.amount || 0;
+    const mtdAmt     = stats.mtd?.amount || 0;
+    const total      = stats.total_assigned || 0;
+    const pending    = stats.pending || 0;
+    const notPaid    = stats.not_paid || 0;
+
+    return (
+        <TouchableOpacity style={cwStyles.card} onPress={onPress} activeOpacity={0.92}>
+            {/* Header */}
+            <View style={cwStyles.header}>
+                <View style={cwStyles.headerLeft}>
+                    <View style={cwStyles.iconBox}>
+                        <Icon name="dollar-sign" size={14} color="#d32f2f" />
+                    </View>
+                    <View>
+                        <Text style={cwStyles.title}>My Collections</Text>
+                        <Text style={cwStyles.sub}>Today's activity</Text>
+                    </View>
+                </View>
+                <View style={cwStyles.todayBadge}>
+                    <Text style={cwStyles.todayBadgeText}>{done} done today</Text>
+                </View>
+            </View>
+
+            {/* Stat pills row */}
+            <View style={cwStyles.pillRow}>
+                {[
+                    { label: 'Assigned', value: total,   color: '#1d4ed8', bg: '#dbeafe' },
+                    { label: 'Pending',  value: pending, color: '#d97706', bg: '#fef3c7' },
+                    { label: 'Done',     value: done,    color: '#16a34a', bg: '#dcfce7' },
+                    { label: 'Not Paid', value: notPaid, color: '#dc2626', bg: '#fee2e2' },
+                ].map(p => (
+                    <View key={p.label} style={[cwStyles.pill, { backgroundColor: p.bg }]}>
+                        <Text style={[cwStyles.pillValue, { color: p.color }]}>{p.value}</Text>
+                        <Text style={[cwStyles.pillLabel, { color: p.color + 'bb' }]}>{p.label}</Text>
+                    </View>
+                ))}
+            </View>
+
+            {/* Amount row */}
+            <View style={cwStyles.amtRow}>
+                <View style={cwStyles.amtBox}>
+                    <Text style={cwStyles.amtLabel}>Today Collected</Text>
+                    <Text style={cwStyles.amtValue}>{fmtAmt(todayAmt)}</Text>
+                </View>
+                <View style={cwStyles.amtDivider} />
+                <View style={cwStyles.amtBox}>
+                    <Text style={cwStyles.amtLabel}>MTD Collected</Text>
+                    <Text style={[cwStyles.amtValue, { color: '#16a34a' }]}>{fmtAmt(mtdAmt)}</Text>
+                </View>
+                <View style={cwStyles.amtDivider} />
+                <View style={cwStyles.amtBox}>
+                    <Icon name="chevron-right" size={16} color="#d32f2f" />
+                    <Text style={[cwStyles.amtLabel, { color: '#d32f2f', fontWeight: '700' }]}>View All</Text>
+                </View>
+            </View>
+        </TouchableOpacity>
+    );
+};
+
+const cwStyles = StyleSheet.create({
+    card: {
+        backgroundColor: '#fff',
+        borderRadius: 16,
+        marginTop: 12,
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        borderWidth: 1,
+        borderColor: '#fee2e2',
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 14,
+        paddingTop: 12,
+        paddingBottom: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#fef2f2',
+    },
+    headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    iconBox: {
+        width: 28, height: 28, borderRadius: 8,
+        backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center',
+    },
+    title: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
+    sub:   { fontSize: 10, color: '#94a3b8', marginTop: 1 },
+    todayBadge: { backgroundColor: '#dcfce7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
+    todayBadgeText: { fontSize: 11, fontWeight: '700', color: '#16a34a' },
+    pillRow: {
+        flexDirection: 'row',
+        paddingHorizontal: 10,
+        paddingVertical: 10,
+        gap: 6,
+    },
+    pill: {
+        flex: 1, alignItems: 'center', paddingVertical: 8,
+        borderRadius: 10,
+    },
+    pillValue: { fontSize: 16, fontWeight: '800', lineHeight: 18 },
+    pillLabel: { fontSize: 9, fontWeight: '600', marginTop: 2, textTransform: 'uppercase' },
+    amtRow: {
+        flexDirection: 'row',
+        borderTopWidth: 1,
+        borderTopColor: '#f1f5f9',
+        paddingVertical: 10,
+        paddingHorizontal: 10,
+        alignItems: 'center',
+    },
+    amtBox: { flex: 1, alignItems: 'center' },
+    amtLabel: { fontSize: 10, color: '#94a3b8', fontWeight: '500' },
+    amtValue: { fontSize: 14, fontWeight: '800', color: '#1e293b', marginTop: 2 },
+    amtDivider: { width: 1, height: 28, backgroundColor: '#e2e8f0' },
+});
+
 const IS_DEV = __DEV__;
 
 const MapPreview = React.memo(({ points, mapRef }) => {
@@ -288,6 +417,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const [punches, setPunches] = useState([]);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
     const [monthlyCollection, setMonthlyCollection] = useState(0);
+    const [collectionStats, setCollectionStats] = useState(null);
 
     useEffect(() => {
         isMountedRef.current = true;
@@ -330,12 +460,13 @@ const EmployeeHomeScreen = ({ navigation }) => {
         try {
             if (!isRefresh) setIsLoading(true);
 
-            const [summaryRes, punchRes, correctionRes, monthlyRes] = await Promise.all([
+            const [summaryRes, punchRes, correctionRes, monthlyRes, collectionRes] = await Promise.all([
                 api.get('/attendance/punches/daily_summary/'),
                 api.get('/attendance/punches/today_punches/'),
                 api.getCorrectionCounts(),
                 api.getPerformance('monthly').catch(() => null),
-            ]).catch(() => [null, null, null, null]);
+                api.getCollectionDashboardStats().catch(() => null),
+            ]).catch(() => [null, null, null, null, null]);
 
             if (!isMountedRef.current) return;
 
@@ -347,6 +478,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
             setPunches(livePunches);
             setCorrectionSummary(correctionCounts);
             setMonthlyCollection(Number(monthlyRes?.data?.total_collection_amount) || 0);
+            if (collectionRes?.data) setCollectionStats(collectionRes.data);
         } catch {
             // Server unavailable or session expired — interceptor already handles 401
         } finally {
@@ -594,6 +726,12 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     </View>
                 </View>
 
+                {/* ── Collection Stats Widget ── */}
+                <CollectionWidget
+                    stats={collectionStats}
+                    onPress={() => navigation.navigate('Collections')}
+                />
+
                 {/* ── Analytics Chart (Zoho) ── */}
                 <TouchableOpacity
                     style={styles.chartCard}
@@ -619,7 +757,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 </TouchableOpacity>
 
                 <MonthlyCollectionCard
-                    collected={monthlyCollection}
+                    collected={collectionStats?.mtd?.amount ?? monthlyCollection}
                     target={MONTHLY_AMOUNT_TARGET}
                 />
 
