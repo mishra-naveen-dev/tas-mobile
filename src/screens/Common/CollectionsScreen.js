@@ -549,28 +549,74 @@ const CollectionsScreen = () => {
                                 </View>
                                 {pending.map(r => {
                                     const meta = STATUS_META[r.status] || STATUS_META.PENDING;
+                                    const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
                                     return (
                                         <View key={r.id} style={styles.mapListCard}>
-                                            <View style={[styles.mapListDot, { backgroundColor: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]} />
-                                            <View style={{ flex: 1 }}>
-                                                <Text style={styles.mapListName} numberOfLines={1}>{r.customer_name}</Text>
-                                                <Text style={styles.mapListSub}>{r.loan_id} · {meta.label}</Text>
+                                            {/* Status accent bar on left */}
+                                            <View style={[styles.mapListAccent, { backgroundColor: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]} />
+
+                                            <View style={{ flex: 1, paddingRight: 4 }}>
+                                                {/* Row 1: name + amount */}
+                                                <View style={styles.mapListTopRow}>
+                                                    <Text style={styles.mapListName} numberOfLines={1}>{r.customer_name}</Text>
+                                                    <Text style={styles.mapListAmt}>{fmtCompact(r.amount_due)}</Text>
+                                                </View>
+
+                                                {/* Row 2: loan ID + status chip */}
+                                                <View style={styles.mapListRow}>
+                                                    <Text style={styles.mapListSub}>{r.loan_id}</Text>
+                                                    <View style={[styles.mapStatusChip, { backgroundColor: (PIN_COLOR[r.status] || PIN_COLOR.PENDING) + '20' }]}>
+                                                        <Text style={[styles.mapStatusChipText, { color: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]}>{meta.label}</Text>
+                                                    </View>
+                                                </View>
+
+                                                {/* Row 3: address */}
+                                                {!!addr && (
+                                                    <View style={styles.mapListInfoRow}>
+                                                        <Icon name="map-pin" size={11} color={colors.textMuted} />
+                                                        <Text style={styles.mapListInfoText} numberOfLines={1}>{addr}</Text>
+                                                    </View>
+                                                )}
+
+                                                {/* Row 4: phone + EMI date */}
+                                                <View style={styles.mapListBottomRow}>
+                                                    {!!r.customer_phone && (
+                                                        <TouchableOpacity
+                                                            style={styles.mapListInfoRow}
+                                                            onPress={() => Linking.openURL(`tel:${r.customer_phone}`)}
+                                                        >
+                                                            <Icon name="phone" size={11} color={colors.primary} />
+                                                            <Text style={[styles.mapListInfoText, { color: colors.primary }]}>{r.customer_phone}</Text>
+                                                        </TouchableOpacity>
+                                                    )}
+                                                    {!!r.due_date && (
+                                                        <View style={styles.mapListInfoRow}>
+                                                            <Icon name="calendar" size={11} color={colors.textMuted} />
+                                                            <Text style={styles.mapListInfoText}>EMI: {fmtDate(r.due_date)}</Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+
+                                                {/* Row 5: action buttons */}
+                                                <View style={styles.mapListActions}>
+                                                    <TouchableOpacity
+                                                        style={styles.mapNavBtn}
+                                                        onPress={() => navigateToCustomer(r)}
+                                                        activeOpacity={0.75}
+                                                    >
+                                                        <Icon name="navigation" size={13} color={colors.primary} />
+                                                        <Text style={styles.mapNavBtnText}>Navigate</Text>
+                                                    </TouchableOpacity>
+                                                    <TouchableOpacity
+                                                        style={styles.mapUpdateBtn}
+                                                        onPress={() => openUpdate(r)}
+                                                        activeOpacity={0.75}
+                                                    >
+                                                        <Icon name="edit-3" size={13} color="#fff" />
+                                                        <Text style={styles.mapUpdateBtnText}>Update</Text>
+                                                    </TouchableOpacity>
+                                                </View>
                                             </View>
-                                            <Text style={styles.mapListAmt}>{fmtCompact(r.amount_due)}</Text>
-                                            <TouchableOpacity
-                                                style={styles.mapNavBtn}
-                                                onPress={() => navigateToCustomer(r)}
-                                                activeOpacity={0.75}
-                                            >
-                                                <Icon name="navigation" size={14} color={colors.primary} />
-                                            </TouchableOpacity>
-                                            <TouchableOpacity
-                                                style={styles.mapChevronBtn}
-                                                onPress={() => openUpdate(r)}
-                                                activeOpacity={0.75}
-                                            >
-                                                <Icon name="chevron-right" size={14} color={colors.textMuted} />
-                                            </TouchableOpacity>
                                         </View>
                                     );
                                 })}
@@ -821,16 +867,27 @@ const styles = StyleSheet.create({
     mapDoneBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 },
     mapDoneBadgeText: { fontSize: 11, fontWeight: '600', color: colors.success },
     mapListCard: {
-        flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+        flexDirection: 'row', alignItems: 'stretch',
         backgroundColor: colors.surface, borderRadius: borderRadius.md,
-        paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
-        marginBottom: spacing.xs, borderWidth: 1, borderColor: colors.border,
+        marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border,
+        overflow: 'hidden',
     },
-    mapListDot: { width: 12, height: 12, borderRadius: 6 },
-    mapListName: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textDark },
-    mapListSub: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
-    mapListAmt: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
-    mapNavBtn: { padding: 7, borderRadius: 8, backgroundColor: colors.primaryLight || '#eff6ff', marginLeft: 4 },
+    mapListAccent: { width: 4, borderRadius: 0 },
+    mapListTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2, paddingTop: spacing.sm, paddingHorizontal: spacing.sm },
+    mapListRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: spacing.sm, marginBottom: 4 },
+    mapListInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, marginBottom: 3 },
+    mapListInfoText: { fontSize: 11, color: colors.textMuted, flex: 1 },
+    mapListBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: spacing.sm, flexWrap: 'wrap' },
+    mapListActions: { flexDirection: 'row', gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, paddingTop: 6 },
+    mapListName: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark, flex: 1 },
+    mapListSub: { fontSize: 11, color: colors.textMuted },
+    mapListAmt: { fontSize: 13, fontWeight: '700', color: colors.textDark, marginLeft: 8 },
+    mapStatusChip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
+    mapStatusChipText: { fontSize: 10, fontWeight: '600' },
+    mapNavBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, borderRadius: 8, backgroundColor: colors.primaryLight || '#eff6ff', borderWidth: 1, borderColor: colors.primary + '30' },
+    mapNavBtnText: { fontSize: 12, fontWeight: '600', color: colors.primary },
+    mapUpdateBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, borderRadius: 8, backgroundColor: colors.primary },
+    mapUpdateBtnText: { fontSize: 12, fontWeight: '600', color: '#fff' },
     mapChevronBtn: { padding: 6 },
     mapAllDone: { alignItems: 'center', paddingVertical: 32, gap: 8 },
     mapAllDoneText: { fontSize: typography.sizes.sm, color: colors.success, fontWeight: '600' },
