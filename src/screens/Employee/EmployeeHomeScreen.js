@@ -712,7 +712,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 {/* ── Collection Stats Widget ── */}
                 <CollectionWidget
                     stats={collectionStats}
-                    onPress={() => navigation.navigate('Collections')}
+                    onPress={() => navigation.navigate('EmployeeCollections')}
                 />
 
                 {/* ── Analytics Chart (Zoho) ── */}
