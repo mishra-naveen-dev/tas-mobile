@@ -13,7 +13,10 @@ import {
     Alert,
     ScrollView,
     StatusBar,
+    Dimensions,
 } from 'react-native';
+
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -87,14 +90,13 @@ const FilterChip = ({ label, color, count, active, onPress }) => (
 // ── Map tab ─────────────────────────────────────────────────────────────────
 const CollectionsMap = ({ records }) => {
     const mapRef = useRef(null);
+    const currentRegion = useRef(null);
 
-    // Only records that have a GPS pin from a visit
     const pinned = useMemo(
         () => records.filter(r => r.visit_latitude != null && r.visit_longitude != null),
         [records]
     );
 
-    // Polyline: visited records ordered by last_collection_date
     const routeCoords = useMemo(() => {
         const sorted = [...pinned]
             .filter(r => r.last_collection_date)
@@ -104,15 +106,42 @@ const CollectionsMap = ({ records }) => {
 
     const initialRegion = useMemo(() => {
         if (pinned.length > 0) {
-            return {
-                latitude: pinned[0].visit_latitude,
-                longitude: pinned[0].visit_longitude,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05,
-            };
+            return { latitude: pinned[0].visit_latitude, longitude: pinned[0].visit_longitude, latitudeDelta: 0.05, longitudeDelta: 0.05 };
         }
-        // Default to India center
         return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 15, longitudeDelta: 15 };
+    }, [pinned]);
+
+    const zoomIn = useCallback(() => {
+        const r = currentRegion.current || initialRegion;
+        const next = { ...r, latitudeDelta: Math.max(r.latitudeDelta / 2, 0.001), longitudeDelta: Math.max(r.longitudeDelta / 2, 0.001) };
+        mapRef.current?.animateToRegion(next, 200);
+        currentRegion.current = next;
+    }, [initialRegion]);
+
+    const zoomOut = useCallback(() => {
+        const r = currentRegion.current || initialRegion;
+        const next = { ...r, latitudeDelta: Math.min(r.latitudeDelta * 2, 90), longitudeDelta: Math.min(r.longitudeDelta * 2, 90) };
+        mapRef.current?.animateToRegion(next, 200);
+        currentRegion.current = next;
+    }, [initialRegion]);
+
+    const reCenter = useCallback(async () => {
+        try {
+            const loc = await LocationService.getCurrentLocation();
+            if (loc?.latitude && loc?.longitude && !loc?.error) {
+                const next = { latitude: loc.latitude, longitude: loc.longitude, latitudeDelta: 0.02, longitudeDelta: 0.02 };
+                mapRef.current?.animateToRegion(next, 600);
+                currentRegion.current = next;
+                return;
+            }
+        } catch (_) {}
+        // Fallback: fit all pinned markers
+        if (pinned.length > 0) {
+            mapRef.current?.fitToCoordinates(
+                pinned.map(r => ({ latitude: r.visit_latitude, longitude: r.visit_longitude })),
+                { edgePadding: { top: 60, right: 60, bottom: 60, left: 60 }, animated: true }
+            );
+        }
     }, [pinned]);
 
     if (pinned.length === 0) {
@@ -128,35 +157,51 @@ const CollectionsMap = ({ records }) => {
     }
 
     return (
-        <MapView
-            ref={mapRef}
-            provider={PROVIDER_GOOGLE}
-            style={styles.map}
-            initialRegion={initialRegion}
-            showsUserLocation
-            showsMyLocationButton
-        >
-            {/* Route polyline connecting visited customers in time order */}
-            {routeCoords.length > 1 && (
-                <Polyline
-                    coordinates={routeCoords}
-                    strokeColor={colors.primary}
-                    strokeWidth={3}
-                    lineDashPattern={[6, 3]}
-                />
-            )}
+        <View style={styles.mapWrapper}>
+            <MapView
+                ref={mapRef}
+                provider={PROVIDER_GOOGLE}
+                style={styles.map}
+                initialRegion={initialRegion}
+                onRegionChangeComplete={r => { currentRegion.current = r; }}
+                showsUserLocation
+                showsMyLocationButton={false}
+            >
+                {routeCoords.length > 1 && (
+                    <Polyline
+                        coordinates={routeCoords}
+                        strokeColor={colors.primary}
+                        strokeWidth={3}
+                        lineDashPattern={[6, 3]}
+                    />
+                )}
+                {pinned.map(r => (
+                    <Marker
+                        key={r.id}
+                        coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
+                        pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
+                        title={r.customer_name}
+                        description={`${r.loan_id} · ${STATUS_META[r.status]?.label || r.status} · ${fmtAmount(r.collected_amount || r.amount_due)}`}
+                    />
+                ))}
+            </MapView>
 
-            {/* Customer visit pins */}
-            {pinned.map(r => (
-                <Marker
-                    key={r.id}
-                    coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
-                    pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
-                    title={r.customer_name}
-                    description={`${r.loan_id} · ${STATUS_META[r.status]?.label || r.status} · ${fmtAmount(r.collected_amount || r.amount_due)}`}
-                />
-            ))}
-        </MapView>
+            {/* Zoom controls — right side panel */}
+            <View style={styles.zoomControls}>
+                <TouchableOpacity style={styles.zoomBtn} onPress={zoomIn} activeOpacity={0.75}>
+                    <Icon name="plus" size={18} color="#1e293b" />
+                </TouchableOpacity>
+                <View style={styles.zoomDivider} />
+                <TouchableOpacity style={styles.zoomBtn} onPress={zoomOut} activeOpacity={0.75}>
+                    <Icon name="minus" size={18} color="#1e293b" />
+                </TouchableOpacity>
+            </View>
+
+            {/* Recenter / redirect button */}
+            <TouchableOpacity style={styles.recenterBtn} onPress={reCenter} activeOpacity={0.75}>
+                <Icon name="crosshair" size={20} color={colors.primary} />
+            </TouchableOpacity>
+        </View>
     );
 };
 
@@ -401,8 +446,8 @@ const CollectionsScreen = () => {
 
             {/* ── Map view ── */}
             {view === 'map' ? (
-                <View style={styles.mapContainer}>
-                    {/* Map legend */}
+                <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+                    {/* Legend row */}
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.legendScroll} contentContainerStyle={styles.legendRow}>
                         {Object.entries(PIN_COLOR).filter(([k]) => k !== 'PENDING').map(([status, color]) => (
                             <View key={status} style={styles.legendItem}>
@@ -411,12 +456,40 @@ const CollectionsScreen = () => {
                             </View>
                         ))}
                         <View style={styles.legendItem}>
-                            <View style={[styles.legendLine]} />
+                            <View style={styles.legendLine} />
                             <Text style={styles.legendText}>Route</Text>
                         </View>
                     </ScrollView>
-                    <CollectionsMap records={records} />
-                </View>
+
+                    {/* Map — fixed height so list is visible below */}
+                    <View style={{ height: SCREEN_HEIGHT * 0.52 }}>
+                        <CollectionsMap records={records} />
+                    </View>
+
+                    {/* Scrollable customer list below the map */}
+                    <View style={styles.mapListSection}>
+                        <Text style={styles.mapListHeader}>{records.length} Customers</Text>
+                        {records.map(r => {
+                            const meta = STATUS_META[r.status] || STATUS_META.PENDING;
+                            return (
+                                <TouchableOpacity
+                                    key={r.id}
+                                    style={styles.mapListCard}
+                                    onPress={() => openUpdate(r)}
+                                    activeOpacity={0.75}
+                                >
+                                    <View style={[styles.mapListDot, { backgroundColor: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]} />
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.mapListName} numberOfLines={1}>{r.customer_name}</Text>
+                                        <Text style={styles.mapListSub}>{r.loan_id} · {meta.label}</Text>
+                                    </View>
+                                    <Text style={styles.mapListAmt}>{fmtCompact(r.amount_due)}</Text>
+                                    <Icon name="chevron-right" size={14} color={colors.textMuted} style={{ marginLeft: 4 }} />
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                </ScrollView>
             ) : (
                 <>
                     {/* ── Search ── */}
@@ -616,6 +689,7 @@ const styles = StyleSheet.create({
 
     // Map
     mapContainer: { flex: 1 },
+    mapWrapper: { flex: 1 },
     map: { flex: 1 },
     mapEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
     legendScroll: { maxHeight: 40 },
@@ -624,6 +698,41 @@ const styles = StyleSheet.create({
     legendDot: { width: 10, height: 10, borderRadius: 5 },
     legendLine: { width: 18, height: 3, backgroundColor: colors.primary, borderRadius: 2 },
     legendText: { fontSize: 11, color: colors.textMedium },
+
+    // Zoom controls (floating right side)
+    zoomControls: {
+        position: 'absolute', right: 12, top: 12,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 10,
+        elevation: 4,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4,
+        overflow: 'hidden',
+    },
+    zoomBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    zoomDivider: { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: 6 },
+
+    // Recenter / redirect button (floating right side below zoom)
+    recenterBtn: {
+        position: 'absolute', right: 12, top: 104,
+        width: 40, height: 40, borderRadius: 10,
+        backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+        elevation: 4,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4,
+    },
+
+    // Map mode customer list below the map
+    mapListSection: { paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: 120 },
+    mapListHeader: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark, marginBottom: spacing.sm },
+    mapListCard: {
+        flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+        backgroundColor: colors.surface, borderRadius: borderRadius.md,
+        paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+        marginBottom: spacing.xs, borderWidth: 1, borderColor: colors.border,
+    },
+    mapListDot: { width: 12, height: 12, borderRadius: 6 },
+    mapListName: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textDark },
+    mapListSub: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
+    mapListAmt: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
 
     // GPS indicator dot on card
     gpsDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4CAF50', marginLeft: 4 },
