@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Animated, Image } from 'react-native';
 import { colors, typography, spacing } from '../theme/tokens';
 
 const SplashScreen = () => {
@@ -34,9 +34,13 @@ const SplashScreen = () => {
                 ]}
             >
                 <View style={styles.logoContainer}>
-                    <Text style={styles.logoText}>TAS</Text>
+                    <Image
+                        source={require('../image/Namralogo.jpeg')}
+                        style={styles.logoImage}
+                        resizeMode="contain"
+                    />
                 </View>
-                <Text style={styles.title}>TAS Mobile</Text>
+                <Text style={styles.title}>Namracred</Text>
                 <Text style={styles.subtitle}>Traveling Allowance System</Text>
             </Animated.View>
 
@@ -58,19 +62,18 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     logoContainer: {
-        width: 100,
-        height: 100,
-        borderRadius: 24,
-        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+        width: 110,
+        height: 110,
+        borderRadius: 26,
+        backgroundColor: '#FFFFFF',
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: spacing.lg,
+        overflow: 'hidden',
     },
-    logoText: {
-        fontSize: 36,
-        fontWeight: 'bold',
-        color: '#FFFFFF',
-        letterSpacing: 4,
+    logoImage: {
+        width: 110,
+        height: 110,
     },
     title: {
         fontSize: typography.sizes.xxl,
