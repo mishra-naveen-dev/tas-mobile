@@ -14,12 +14,13 @@ import {
     ScrollView,
     StatusBar,
     Dimensions,
+    Animated,
 } from 'react-native';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Callout, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
@@ -88,18 +89,20 @@ const FilterChip = ({ label, color, count, active, onPress }) => (
 );
 
 // ── Map tab ─────────────────────────────────────────────────────────────────
-const CollectionsMap = ({ records }) => {
+const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
     const mapRef = useRef(null);
     const currentRegion = useRef(null);
 
+    // All customers with GPS (both pending and done — shows progress on map)
     const pinned = useMemo(
         () => records.filter(r => r.visit_latitude != null && r.visit_longitude != null),
         [records]
     );
 
+    // Route line: pending/partial customers sorted by visit time
     const routeCoords = useMemo(() => {
         const sorted = [...pinned]
-            .filter(r => r.last_collection_date)
+            .filter(r => r.last_collection_date && r.status !== 'COLLECTED')
             .sort((a, b) => new Date(a.last_collection_date) - new Date(b.last_collection_date));
         return sorted.map(r => ({ latitude: r.visit_latitude, longitude: r.visit_longitude }));
     }, [pinned]);
@@ -108,7 +111,7 @@ const CollectionsMap = ({ records }) => {
         if (pinned.length > 0) {
             return { latitude: pinned[0].visit_latitude, longitude: pinned[0].visit_longitude, latitudeDelta: 0.05, longitudeDelta: 0.05 };
         }
-        return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 15, longitudeDelta: 15 };
+        return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 8, longitudeDelta: 8 };
     }, [pinned]);
 
     const zoomIn = useCallback(() => {
@@ -135,7 +138,6 @@ const CollectionsMap = ({ records }) => {
                 return;
             }
         } catch (_) {}
-        // Fallback: fit all pinned markers
         if (pinned.length > 0) {
             mapRef.current?.fitToCoordinates(
                 pinned.map(r => ({ latitude: r.visit_latitude, longitude: r.visit_longitude })),
@@ -143,18 +145,6 @@ const CollectionsMap = ({ records }) => {
             );
         }
     }, [pinned]);
-
-    if (pinned.length === 0) {
-        return (
-            <View style={styles.mapEmpty}>
-                <Icon name="map" size={40} color={colors.textLight} />
-                <Text style={styles.emptyText}>No visited customers yet.</Text>
-                <Text style={[styles.emptyText, { fontSize: 12, marginTop: 4 }]}>
-                    Pins appear here after you update a customer's status in the field.
-                </Text>
-            </View>
-        );
-    }
 
     return (
         <View style={styles.mapWrapper}>
@@ -175,15 +165,42 @@ const CollectionsMap = ({ records }) => {
                         lineDashPattern={[6, 3]}
                     />
                 )}
-                {pinned.map(r => (
-                    <Marker
-                        key={r.id}
-                        coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
-                        pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
-                        title={r.customer_name}
-                        description={`${r.loan_id} · ${STATUS_META[r.status]?.label || r.status} · ${fmtAmount(r.collected_amount || r.amount_due)}`}
-                    />
-                ))}
+                {pinned.map(r => {
+                    const meta = STATUS_META[r.status] || STATUS_META.PENDING;
+                    const isDone = r.status === 'COLLECTED';
+                    return (
+                        <Marker
+                            key={r.id}
+                            coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
+                            pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
+                            opacity={isDone ? 0.5 : 1}
+                        >
+                            <Callout tooltip={false} style={styles.calloutBox}>
+                                <Text style={styles.calloutName} numberOfLines={1}>{r.customer_name}</Text>
+                                <Text style={styles.calloutSub}>{r.loan_id} · {meta.label}</Text>
+                                <Text style={styles.calloutAmt}>{fmtCompact(r.amount_due)}</Text>
+                                <View style={styles.calloutActions}>
+                                    <TouchableOpacity
+                                        style={[styles.calloutBtn, { backgroundColor: colors.primary }]}
+                                        onPress={() => navigateToCustomer(r)}
+                                    >
+                                        <Icon name="navigation" size={12} color="#fff" />
+                                        <Text style={styles.calloutBtnText}>Navigate</Text>
+                                    </TouchableOpacity>
+                                    {!isDone && (
+                                        <TouchableOpacity
+                                            style={[styles.calloutBtn, { backgroundColor: colors.success }]}
+                                            onPress={() => openUpdate(r)}
+                                        >
+                                            <Icon name="edit-3" size={12} color="#fff" />
+                                            <Text style={styles.calloutBtnText}>Update</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+                            </Callout>
+                        </Marker>
+                    );
+                })}
             </MapView>
 
             {/* Zoom controls — right side panel */}
@@ -204,6 +221,31 @@ const CollectionsMap = ({ records }) => {
         </View>
     );
 };
+
+// ── Animated list card wrapper ───────────────────────────────────────────────
+const AnimatedCard = React.memo(({ index, children }) => {
+    const shouldAnimate = index < 10;
+    const opacity = useRef(new Animated.Value(shouldAnimate ? 0 : 1)).current;
+    const translateY = useRef(new Animated.Value(shouldAnimate ? 32 : 0)).current;
+
+    useEffect(() => {
+        if (!shouldAnimate) return;
+        Animated.parallel([
+            Animated.timing(opacity, {
+                toValue: 1, duration: 340, delay: index * 55, useNativeDriver: true,
+            }),
+            Animated.spring(translateY, {
+                toValue: 0, tension: 65, friction: 9, delay: index * 55, useNativeDriver: true,
+            }),
+        ]).start();
+    }, []);
+
+    return (
+        <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+            {children}
+        </Animated.View>
+    );
+});
 
 // ── Main screen ──────────────────────────────────────────────────────────────
 const CollectionsScreen = () => {
@@ -281,6 +323,24 @@ const CollectionsScreen = () => {
         setModal({ open: true, record });
     };
 
+    const navigateToCustomer = useCallback((r) => {
+        // Prefer GPS coords (captured on prior visit); fall back to text address
+        if (r.visit_latitude && r.visit_longitude) {
+            const lat = r.visit_latitude;
+            const lng = r.visit_longitude;
+            Linking.openURL(`google.navigation:q=${lat},${lng}&mode=d`).catch(() =>
+                Linking.openURL(`https://maps.google.com/maps?daddr=${lat},${lng}`)
+            );
+            return;
+        }
+        const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
+        if (addr) {
+            Linking.openURL(`https://maps.google.com/maps?q=${encodeURIComponent(addr)}&mode=d`);
+        } else {
+            Alert.alert('No Location', 'No address or GPS data available for this customer.');
+        }
+    }, []);
+
     const save = async () => {
         setSaving(true);
         try {
@@ -310,11 +370,12 @@ const CollectionsScreen = () => {
         }
     };
 
-    const renderItem = ({ item }) => {
+    const renderItem = ({ item, index }) => {
         const meta = STATUS_META[item.status] || STATUS_META.PENDING;
         const fullAddress = [item.address, item.area, item.pincode && `PIN: ${item.pincode}`]
             .filter(Boolean).join(', ');
         return (
+            <AnimatedCard index={index}>
             <View style={styles.card}>
                 <View style={[styles.cardAccent, { backgroundColor: meta.color }]} />
                 <View style={styles.cardBody}>
@@ -389,7 +450,7 @@ const CollectionsScreen = () => {
                         )}
                         <TouchableOpacity
                             style={styles.iconBtn}
-                            onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`)}
+                            onPress={() => navigateToCustomer(item)}
                         >
                             <Icon name="navigation" size={16} color={colors.primary} />
                         </TouchableOpacity>
@@ -400,6 +461,7 @@ const CollectionsScreen = () => {
                     </View>
                 </View>
             </View>
+            </AnimatedCard>
         );
     };
 
@@ -463,32 +525,64 @@ const CollectionsScreen = () => {
 
                     {/* Map — fixed height so list is visible below */}
                     <View style={{ height: SCREEN_HEIGHT * 0.52 }}>
-                        <CollectionsMap records={records} />
+                        <CollectionsMap
+                            records={records}
+                            navigateToCustomer={navigateToCustomer}
+                            openUpdate={openUpdate}
+                        />
                     </View>
 
-                    {/* Scrollable customer list below the map */}
-                    <View style={styles.mapListSection}>
-                        <Text style={styles.mapListHeader}>{records.length} Customers</Text>
-                        {records.map(r => {
-                            const meta = STATUS_META[r.status] || STATUS_META.PENDING;
-                            return (
-                                <TouchableOpacity
-                                    key={r.id}
-                                    style={styles.mapListCard}
-                                    onPress={() => openUpdate(r)}
-                                    activeOpacity={0.75}
-                                >
-                                    <View style={[styles.mapListDot, { backgroundColor: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]} />
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={styles.mapListName} numberOfLines={1}>{r.customer_name}</Text>
-                                        <Text style={styles.mapListSub}>{r.loan_id} · {meta.label}</Text>
+                    {/* Scrollable customer list — only pending/partial/not-paid (done customers removed) */}
+                    {(() => {
+                        const pending = records.filter(r => r.status !== 'COLLECTED');
+                        const done = records.length - pending.length;
+                        return (
+                            <View style={styles.mapListSection}>
+                                <View style={styles.mapListHeaderRow}>
+                                    <Text style={styles.mapListHeader}>{pending.length} Remaining</Text>
+                                    {done > 0 && (
+                                        <View style={styles.mapDoneBadge}>
+                                            <Icon name="check-circle" size={12} color={colors.success} />
+                                            <Text style={styles.mapDoneBadgeText}>{done} done</Text>
+                                        </View>
+                                    )}
+                                </View>
+                                {pending.map(r => {
+                                    const meta = STATUS_META[r.status] || STATUS_META.PENDING;
+                                    return (
+                                        <View key={r.id} style={styles.mapListCard}>
+                                            <View style={[styles.mapListDot, { backgroundColor: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]} />
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={styles.mapListName} numberOfLines={1}>{r.customer_name}</Text>
+                                                <Text style={styles.mapListSub}>{r.loan_id} · {meta.label}</Text>
+                                            </View>
+                                            <Text style={styles.mapListAmt}>{fmtCompact(r.amount_due)}</Text>
+                                            <TouchableOpacity
+                                                style={styles.mapNavBtn}
+                                                onPress={() => navigateToCustomer(r)}
+                                                activeOpacity={0.75}
+                                            >
+                                                <Icon name="navigation" size={14} color={colors.primary} />
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                style={styles.mapChevronBtn}
+                                                onPress={() => openUpdate(r)}
+                                                activeOpacity={0.75}
+                                            >
+                                                <Icon name="chevron-right" size={14} color={colors.textMuted} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    );
+                                })}
+                                {pending.length === 0 && (
+                                    <View style={styles.mapAllDone}>
+                                        <Icon name="check-circle" size={32} color={colors.success} />
+                                        <Text style={styles.mapAllDoneText}>All collections done!</Text>
                                     </View>
-                                    <Text style={styles.mapListAmt}>{fmtCompact(r.amount_due)}</Text>
-                                    <Icon name="chevron-right" size={14} color={colors.textMuted} style={{ marginLeft: 4 }} />
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
+                                )}
+                            </View>
+                        );
+                    })()}
                 </ScrollView>
             ) : (
                 <>
@@ -722,7 +816,10 @@ const styles = StyleSheet.create({
 
     // Map mode customer list below the map
     mapListSection: { paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: 120 },
-    mapListHeader: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark, marginBottom: spacing.sm },
+    mapListHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+    mapListHeader: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
+    mapDoneBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 },
+    mapDoneBadgeText: { fontSize: 11, fontWeight: '600', color: colors.success },
     mapListCard: {
         flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
         backgroundColor: colors.surface, borderRadius: borderRadius.md,
@@ -733,6 +830,19 @@ const styles = StyleSheet.create({
     mapListName: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textDark },
     mapListSub: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
     mapListAmt: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
+    mapNavBtn: { padding: 7, borderRadius: 8, backgroundColor: colors.primaryLight || '#eff6ff', marginLeft: 4 },
+    mapChevronBtn: { padding: 6 },
+    mapAllDone: { alignItems: 'center', paddingVertical: 32, gap: 8 },
+    mapAllDoneText: { fontSize: typography.sizes.sm, color: colors.success, fontWeight: '600' },
+
+    // Map marker callout
+    calloutBox: { width: 200, padding: 10, borderRadius: 10 },
+    calloutName: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
+    calloutSub: { fontSize: 11, color: '#64748b', marginTop: 2 },
+    calloutAmt: { fontSize: 13, fontWeight: '600', color: '#1e293b', marginTop: 4 },
+    calloutActions: { flexDirection: 'row', gap: 6, marginTop: 8 },
+    calloutBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 6, borderRadius: 6 },
+    calloutBtnText: { fontSize: 11, fontWeight: '600', color: '#fff' },
 
     // GPS indicator dot on card
     gpsDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4CAF50', marginLeft: 4 },
