@@ -524,7 +524,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const statsData = useMemo(() => [
         { id: 'distance', icon: 'navigation', value: summary?.total_distance_today || 0, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km' },
         { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
-        { id: 'collected', icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
+        { id: 'collected', icon: 'dollar-sign', value: collectionStats?.today?.amount ?? summary?.total_collection ?? 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
         { id: 'disbursement', icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.danger, bgColor: colors.dangerLight, prefix: '₹' },
     ], [summary]);
 
