@@ -83,19 +83,6 @@ const KpiPill = ({ label, value, accent }) => (
     </View>
 );
 
-const FilterChip = ({ label, color, count, active, onPress }) => (
-    <TouchableOpacity
-        style={[styles.filterChip, active && { backgroundColor: color || colors.primary, borderColor: color || colors.primary }]}
-        onPress={onPress}
-        activeOpacity={0.8}
-    >
-        <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
-        <View style={[styles.filterCount, active && styles.filterCountActive]}>
-            <Text style={[styles.filterCountText, active && styles.filterChipTextActive]}>{count}</Text>
-        </View>
-    </TouchableOpacity>
-);
-
 // ── Map tab ─────────────────────────────────────────────────────────────────
 const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
     const mapRef = useRef(null);
@@ -277,6 +264,7 @@ const CollectionsScreen = () => {
     const [search, setSearch] = useState('');
     const [activeFilter, setActiveFilter] = useState('ALL');
     const [typeFilter, setTypeFilter] = useState('ALL');
+    const [filterModalVisible, setFilterModalVisible] = useState(false);
 
     const [view, setView] = useState('list'); // 'list' | 'map'
     const [mapSearch, setMapSearch] = useState('');
@@ -740,51 +728,107 @@ const CollectionsScreen = () => {
                         )}
                     </View>
 
-                    {/* ── Status filters ── */}
-                    <View>
-                        <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.filterRow}
+                    {/* ── Filter bar ── */}
+                    <View style={styles.filterBar}>
+                        <TouchableOpacity
+                            style={styles.filterBtn}
+                            onPress={() => setFilterModalVisible(true)}
+                            activeOpacity={0.85}
                         >
-                            <FilterChip
-                                label="All"
-                                count={stats.total}
-                                active={activeFilter === 'ALL'}
-                                onPress={() => setActiveFilter('ALL')}
-                            />
-                            {STATUS_OPTIONS.map(o => (
-                                <FilterChip
-                                    key={o.value}
-                                    label={o.label}
-                                    color={o.color}
-                                    count={stats.countBy[o.value] || 0}
-                                    active={activeFilter === o.value}
-                                    onPress={() => setActiveFilter(o.value)}
-                                />
-                            ))}
-                        </ScrollView>
-
-                        <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.typeRow}
-                        >
-                            {TYPE_OPTIONS.map(o => {
-                                const active = typeFilter === o.value;
-                                return (
-                                    <TouchableOpacity
-                                        key={o.value}
-                                        style={[styles.typeChip, active && { backgroundColor: (o.color || colors.textDark), borderColor: (o.color || colors.textDark) }]}
-                                        onPress={() => setTypeFilter(o.value)}
-                                        activeOpacity={0.8}
-                                    >
-                                        <Text style={[styles.typeChipText, active && styles.filterChipTextActive]}>{o.label}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </ScrollView>
+                            <Icon name="sliders" size={15} color={colors.primary} />
+                            <Text style={styles.filterBtnText}>Filters</Text>
+                            {(activeFilter !== 'ALL' || typeFilter !== 'ALL') && (
+                                <View style={styles.filterBadge}>
+                                    <Text style={styles.filterBadgeText}>
+                                        {(activeFilter !== 'ALL' ? 1 : 0) + (typeFilter !== 'ALL' ? 1 : 0)}
+                                    </Text>
+                                </View>
+                            )}
+                        </TouchableOpacity>
+                        <Text style={styles.filterSummary} numberOfLines={1}>
+                            {(activeFilter === 'ALL' ? 'All' : STATUS_META[activeFilter]?.label)}
+                            {'  ·  '}
+                            {(typeFilter === 'ALL' ? 'All Types' : TYPE_META[typeFilter]?.label)}
+                            {'  ·  '}{filtered.length} results
+                        </Text>
                     </View>
+
+                    {/* ── Filter modal: Status (parent) + Type (sub) ── */}
+                    <Modal
+                        visible={filterModalVisible}
+                        transparent
+                        animationType="slide"
+                        onRequestClose={() => setFilterModalVisible(false)}
+                    >
+                        <View style={styles.modalOverlay}>
+                            <View style={styles.modalContent}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>Filters</Text>
+                                    <TouchableOpacity onPress={() => setFilterModalVisible(false)}>
+                                        <Icon name="x" size={22} color={colors.textDark} />
+                                    </TouchableOpacity>
+                                </View>
+
+                                <Text style={styles.fieldLabel}>Status</Text>
+                                <View style={styles.statusGrid}>
+                                    <TouchableOpacity
+                                        style={[styles.statusOption, activeFilter === 'ALL' && { backgroundColor: colors.textDark, borderColor: colors.textDark }]}
+                                        onPress={() => setActiveFilter('ALL')}
+                                    >
+                                        <Text style={[styles.statusOptionText, activeFilter === 'ALL' && { color: '#FFFFFF' }]}>
+                                            All ({stats.total})
+                                        </Text>
+                                    </TouchableOpacity>
+                                    {STATUS_OPTIONS.map(o => {
+                                        const active = activeFilter === o.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={o.value}
+                                                style={[styles.statusOption, active && { backgroundColor: o.color, borderColor: o.color }]}
+                                                onPress={() => setActiveFilter(o.value)}
+                                            >
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>
+                                                    {o.label} ({stats.countBy[o.value] || 0})
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                <Text style={styles.fieldLabel}>Type</Text>
+                                <View style={styles.statusGrid}>
+                                    {TYPE_OPTIONS.map(o => {
+                                        const active = typeFilter === o.value;
+                                        const activeColor = o.color || colors.textDark;
+                                        return (
+                                            <TouchableOpacity
+                                                key={o.value}
+                                                style={[styles.statusOption, active && { backgroundColor: activeColor, borderColor: activeColor }]}
+                                                onPress={() => setTypeFilter(o.value)}
+                                            >
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+                                    <TouchableOpacity
+                                        style={[styles.saveBtn, styles.resetBtn, { flex: 1 }]}
+                                        onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); }}
+                                    >
+                                        <Text style={[styles.saveBtnText, { color: colors.textDark }]}>Reset</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.saveBtn, { flex: 1, marginTop: 0 }]}
+                                        onPress={() => setFilterModalVisible(false)}
+                                    >
+                                        <Text style={styles.saveBtnText}>Apply</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                    </Modal>
 
                     {loading ? (
                         <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
@@ -1104,25 +1148,25 @@ const styles = StyleSheet.create({
     searchInput: { flex: 1, paddingVertical: spacing.sm, fontSize: typography.sizes.sm, color: colors.textDark, marginLeft: spacing.xs },
 
     // Filters
-    filterRow: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.xs },
-    filterChip: {
-        flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
-        paddingHorizontal: spacing.md, paddingVertical: spacing.xs, marginRight: spacing.xs,
-        borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+    filterBar: {
+        flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+        paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     },
-    filterChipText: { fontSize: typography.sizes.xs, fontWeight: '600', color: colors.textMedium },
-    filterChipTextActive: { color: '#FFFFFF' },
-    filterCount: { backgroundColor: colors.background, borderRadius: borderRadius.full, paddingHorizontal: 6, paddingVertical: 1, marginLeft: 4 },
-    filterCountActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
-    filterCountText: { fontSize: 10, fontWeight: '700', color: colors.textMuted },
+    filterBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
+        borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.primary,
+        backgroundColor: colors.surface,
+    },
+    filterBtnText: { fontSize: typography.sizes.xs, fontWeight: '700', color: colors.primary },
+    filterBadge: {
+        backgroundColor: colors.primary, borderRadius: borderRadius.full,
+        minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+    },
+    filterBadgeText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
+    filterSummary: { flex: 1, fontSize: typography.sizes.xs, color: colors.textMuted },
+    resetBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
 
-    // Type filter row
-    typeRow: { paddingHorizontal: spacing.md, paddingBottom: spacing.sm, gap: spacing.xs },
-    typeChip: {
-        paddingHorizontal: spacing.md, paddingVertical: 5, marginRight: spacing.xs,
-        borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
-    },
-    typeChipText: { fontSize: 11, fontWeight: '600', color: colors.textMedium },
     loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2 },
     typeTag: { paddingHorizontal: spacing.xs, paddingVertical: 1, borderRadius: borderRadius.sm, marginLeft: spacing.xs },
     typeTagText: { fontSize: 10, fontWeight: '700' },
