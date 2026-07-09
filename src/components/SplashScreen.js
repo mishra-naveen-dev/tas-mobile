@@ -11,7 +11,7 @@ import {
 
 const { width } = Dimensions.get('window');
 
-const SplashScreen = () => {
+const SplashScreen = ({ onComplete }) => {
     // Individual animation values for staggered entrance
     const logoScale   = useRef(new Animated.Value(0.4)).current;
     const logoOpacity = useRef(new Animated.Value(0)).current;
@@ -27,81 +27,75 @@ const SplashScreen = () => {
 
     const footerFade  = useRef(new Animated.Value(0)).current;
 
+    // Whole-screen fade-out at the end
+    const screenOpacity = useRef(new Animated.Value(1)).current;
+
     // Looping shimmer on logo border
     const shimmer     = useRef(new Animated.Value(0)).current;
+    const shimmerLoop = useRef(null);
 
     useEffect(() => {
         StatusBar.setBarStyle('light-content');
         StatusBar.setBackgroundColor('#C62828');
 
+        shimmerLoop.current = Animated.loop(
+            Animated.sequence([
+                Animated.timing(shimmer, { toValue: 1, duration: 1800, useNativeDriver: true }),
+                Animated.timing(shimmer, { toValue: 0, duration: 1800, useNativeDriver: true }),
+            ])
+        );
+        shimmerLoop.current.start();
+
         Animated.sequence([
             // 1. Logo springs in
             Animated.parallel([
                 Animated.spring(logoScale, {
-                    toValue: 1,
-                    tension: 55,
-                    friction: 7,
-                    useNativeDriver: true,
+                    toValue: 1, tension: 55, friction: 7, useNativeDriver: true,
                 }),
                 Animated.timing(logoOpacity, {
-                    toValue: 1,
-                    duration: 400,
-                    useNativeDriver: true,
+                    toValue: 1, duration: 400, useNativeDriver: true,
                 }),
             ]),
             // 2. Company name slides up
             Animated.delay(80),
             Animated.parallel([
                 Animated.timing(nameFade, {
-                    toValue: 1,
-                    duration: 420,
-                    useNativeDriver: true,
+                    toValue: 1, duration: 420, useNativeDriver: true,
                 }),
                 Animated.spring(nameFadeY, {
-                    toValue: 0,
-                    tension: 70,
-                    friction: 9,
-                    useNativeDriver: true,
+                    toValue: 0, tension: 70, friction: 9, useNativeDriver: true,
                 }),
             ]),
             // 3. Divider expands
             Animated.delay(60),
             Animated.timing(dividerW, {
-                toValue: 1,
-                duration: 380,
-                useNativeDriver: false,
+                toValue: 1, duration: 380, useNativeDriver: false,
             }),
             // 4. Subsidiary text fades in
             Animated.delay(40),
             Animated.parallel([
                 Animated.timing(subFade, {
-                    toValue: 1,
-                    duration: 400,
-                    useNativeDriver: true,
+                    toValue: 1, duration: 400, useNativeDriver: true,
                 }),
                 Animated.spring(subFadeY, {
-                    toValue: 0,
-                    tension: 70,
-                    friction: 9,
-                    useNativeDriver: true,
+                    toValue: 0, tension: 70, friction: 9, useNativeDriver: true,
                 }),
             ]),
             // 5. Footer
             Animated.delay(80),
             Animated.timing(footerFade, {
-                toValue: 1,
-                duration: 350,
-                useNativeDriver: true,
+                toValue: 1, duration: 350, useNativeDriver: true,
             }),
-        ]).start();
-
-        // Continuous shimmer on logo ring
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(shimmer, { toValue: 1, duration: 1800, useNativeDriver: true }),
-                Animated.timing(shimmer, { toValue: 0, duration: 1800, useNativeDriver: true }),
-            ])
-        ).start();
+            // 6. Hold so the user can read the brand
+            Animated.delay(900),
+            // 7. Fade entire screen out to transition into app
+            Animated.timing(screenOpacity, {
+                toValue: 0, duration: 480, useNativeDriver: true,
+            }),
+        ]).start(() => {
+            shimmerLoop.current?.stop();
+            onComplete?.();
+        });
     }, []);
 
     const shimmerOpacity = shimmer.interpolate({
@@ -115,7 +109,7 @@ const SplashScreen = () => {
     });
 
     return (
-        <View style={styles.container}>
+        <Animated.View style={[styles.container, { opacity: screenOpacity }]}>
             <StatusBar barStyle="light-content" backgroundColor="#C62828" />
 
             {/* ── Radial glow behind logo ── */}
@@ -174,7 +168,7 @@ const SplashScreen = () => {
                 <Text style={styles.footerText}>Traveling Allowance System</Text>
                 <View style={styles.footerDot} />
             </Animated.View>
-        </View>
+        </Animated.View>
     );
 };
 
