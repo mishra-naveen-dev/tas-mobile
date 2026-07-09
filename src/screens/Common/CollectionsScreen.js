@@ -36,6 +36,12 @@ const STATUS_OPTIONS = [
     { value: 'NOT_PAID', label: 'Not Paid', color: colors.danger },
 ];
 
+const VISIT_REASON_OPTIONS = [
+    { value: 'OD_VISIT', label: 'OD Visit' },
+    { value: 'OTHER', label: 'Other' },
+];
+const VISIT_REASON_META = VISIT_REASON_OPTIONS.reduce((a, o) => { a[o.value] = o.label; return a; }, {});
+
 const STATUS_META = STATUS_OPTIONS.reduce((a, o) => { a[o.value] = o; return a; }, {});
 
 // Pin color for map markers per status
@@ -276,7 +282,7 @@ const CollectionsScreen = () => {
     const [mapSearch, setMapSearch] = useState('');
 
     const [modal, setModal] = useState({ open: false, record: null });
-    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null });
+    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null, visit_reason: '' });
     const [saving, setSaving] = useState(false);
     const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
@@ -355,6 +361,7 @@ const CollectionsScreen = () => {
             collected_amount: record.collected_amount != null ? String(record.collected_amount) : '',
             remarks: record.remarks || '',
             promise_date: record.promise_date ? new Date(record.promise_date) : null,
+            visit_reason: record.visit_reason || '',
         });
         setModal({ open: true, record });
     };
@@ -398,6 +405,7 @@ const CollectionsScreen = () => {
             payload.promise_date = form.status === 'PENDING' && form.promise_date
                 ? form.promise_date.toISOString().split('T')[0]
                 : null;
+            payload.visit_reason = form.status === 'VISITED' ? form.visit_reason : '';
 
             await api.updateCollectionStatus(modal.record.id, payload);
             setModal({ open: false, record: null });
@@ -478,6 +486,15 @@ const CollectionsScreen = () => {
                             <Icon name="clock" size={15} color={colors.warning} />
                             <Text style={[styles.rowText, { color: colors.warning }]}>
                                 Promised: {fmtDate(item.promise_date)}
+                            </Text>
+                        </View>
+                    )}
+
+                    {!!item.visit_reason && (
+                        <View style={styles.row}>
+                            <Icon name="info" size={15} color={colors.info} />
+                            <Text style={[styles.rowText, { color: colors.info }]}>
+                                Reason: {VISIT_REASON_META[item.visit_reason] || item.visit_reason}
                             </Text>
                         </View>
                     )}
@@ -830,6 +847,10 @@ const CollectionsScreen = () => {
                                             if (o.value !== 'PENDING') {
                                                 next.promise_date = null;
                                             }
+                                            // Clear visit reason when switching away from Visited
+                                            if (o.value !== 'VISITED') {
+                                                next.visit_reason = '';
+                                            }
                                             return next;
                                         })}
                                     >
@@ -867,6 +888,26 @@ const CollectionsScreen = () => {
                                         }}
                                     />
                                 )}
+                            </>
+                        )}
+
+                        {form.status === 'VISITED' && (
+                            <>
+                                <Text style={styles.fieldLabel}>Visit Reason</Text>
+                                <View style={styles.statusGrid}>
+                                    {VISIT_REASON_OPTIONS.map(o => {
+                                        const active = form.visit_reason === o.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={o.value}
+                                                style={[styles.statusOption, active && { backgroundColor: colors.info, borderColor: colors.info }]}
+                                                onPress={() => setForm(f => ({ ...f, visit_reason: o.value }))}
+                                            >
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
                             </>
                         )}
 
