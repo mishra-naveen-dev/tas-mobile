@@ -15,12 +15,14 @@ import {
     StatusBar,
     Dimensions,
     Animated,
+    Platform,
 } from 'react-native';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Callout, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
@@ -274,8 +276,9 @@ const CollectionsScreen = () => {
     const [mapSearch, setMapSearch] = useState('');
 
     const [modal, setModal] = useState({ open: false, record: null });
-    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '' });
+    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null });
     const [saving, setSaving] = useState(false);
+    const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
     const fetchRecords = useCallback(async () => {
         try {
@@ -351,6 +354,7 @@ const CollectionsScreen = () => {
             status: record.status || 'PENDING',
             collected_amount: record.collected_amount != null ? String(record.collected_amount) : '',
             remarks: record.remarks || '',
+            promise_date: record.promise_date ? new Date(record.promise_date) : null,
         });
         setModal({ open: true, record });
     };
@@ -391,6 +395,9 @@ const CollectionsScreen = () => {
 
             const payload = { status: form.status, remarks: form.remarks, ...gpsPayload };
             if (form.collected_amount !== '') payload.collected_amount = parseFloat(form.collected_amount);
+            payload.promise_date = form.status === 'PENDING' && form.promise_date
+                ? form.promise_date.toISOString().split('T')[0]
+                : null;
 
             await api.updateCollectionStatus(modal.record.id, payload);
             setModal({ open: false, record: null });
@@ -463,6 +470,15 @@ const CollectionsScreen = () => {
                         <View style={styles.row}>
                             <Icon name="calendar" size={15} color={colors.textMuted} />
                             <Text style={styles.rowText}>Planned: {fmtDate(item.due_date)}</Text>
+                        </View>
+                    )}
+
+                    {!!item.promise_date && (
+                        <View style={styles.row}>
+                            <Icon name="clock" size={15} color={colors.warning} />
+                            <Text style={[styles.rowText, { color: colors.warning }]}>
+                                Promised: {fmtDate(item.promise_date)}
+                            </Text>
                         </View>
                     )}
 
@@ -810,6 +826,10 @@ const CollectionsScreen = () => {
                                             if (o.value !== 'COLLECTED' && o.value !== 'PARTIALLY_COLLECTED') {
                                                 next.collected_amount = '';
                                             }
+                                            // Clear promise date when switching away from P2P
+                                            if (o.value !== 'PENDING') {
+                                                next.promise_date = null;
+                                            }
                                             return next;
                                         })}
                                     >
@@ -818,6 +838,37 @@ const CollectionsScreen = () => {
                                 );
                             })}
                         </View>
+
+                        {form.status === 'PENDING' && (
+                            <>
+                                <Text style={styles.fieldLabel}>Promise to Pay Date</Text>
+                                <TouchableOpacity
+                                    style={styles.input}
+                                    onPress={() => setShowPromiseDatePicker(true)}
+                                >
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                                        <Icon name="calendar" size={16} color={colors.textMuted} />
+                                        <Text style={{ color: form.promise_date ? colors.textDark : colors.textMuted }}>
+                                            {form.promise_date ? fmtDate(form.promise_date) : 'Select date customer will pay'}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+                                {showPromiseDatePicker && (
+                                    <DateTimePicker
+                                        value={form.promise_date || new Date()}
+                                        mode="date"
+                                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                        minimumDate={new Date()}
+                                        onChange={(event, selectedDate) => {
+                                            setShowPromiseDatePicker(Platform.OS === 'ios');
+                                            if (selectedDate) {
+                                                setForm(f => ({ ...f, promise_date: selectedDate }));
+                                            }
+                                        }}
+                                    />
+                                )}
+                            </>
+                        )}
 
                         {(form.status === 'COLLECTED' || form.status === 'PARTIALLY_COLLECTED') && (
                             <>
