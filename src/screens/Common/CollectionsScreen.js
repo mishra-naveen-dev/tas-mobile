@@ -65,6 +65,19 @@ const TYPE_META = {
     ADVANCE: { label: 'Advance', color: '#7b1fa2' },
 };
 
+// DPD (days past due) sub-buckets — only relevant when Type filter = OD
+const DPD_BUCKET_OPTIONS = [
+    { value: '0-30', label: '0-30', min: 0, max: 30 },
+    { value: '31-60', label: '31-60', min: 31, max: 60 },
+    { value: '61-90', label: '61-90', min: 61, max: 90 },
+    { value: '90+', label: '90+', min: 91, max: Infinity },
+];
+const matchesDpdBucket = (days, bucketValue) => {
+    if (days == null) return false;
+    const bucket = DPD_BUCKET_OPTIONS.find(b => b.value === bucketValue);
+    return bucket ? days >= bucket.min && days <= bucket.max : false;
+};
+
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const fmtAmount = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
@@ -264,6 +277,7 @@ const CollectionsScreen = () => {
     const [search, setSearch] = useState('');
     const [activeFilter, setActiveFilter] = useState('ALL');
     const [typeFilter, setTypeFilter] = useState('ALL');
+    const [dpdFilter, setDpdFilter] = useState('ALL');
     const [filterModalVisible, setFilterModalVisible] = useState(false);
 
     const [view, setView] = useState('list'); // 'list' | 'map'
@@ -315,6 +329,7 @@ const CollectionsScreen = () => {
         return records.filter(r => {
             if (activeFilter !== 'ALL' && r.status !== activeFilter) return false;
             if (typeFilter !== 'ALL' && (r.collection_type || 'REGULAR') !== typeFilter) return false;
+            if (typeFilter === 'OD' && dpdFilter !== 'ALL' && !matchesDpdBucket(r.dpd_days, dpdFilter)) return false;
             if (!q) return true;
             return (
                 (r.loan_id || '').toLowerCase().includes(q) ||
@@ -323,7 +338,7 @@ const CollectionsScreen = () => {
                 (r.pincode || '').toLowerCase().includes(q)
             );
         });
-    }, [records, activeFilter, typeFilter, search]);
+    }, [records, activeFilter, typeFilter, dpdFilter, search]);
 
     // Map view search — non-collected only, across name/address/area/loan/date
     const mapPending = useMemo(() => {
@@ -427,6 +442,13 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })()}
+                                {item.collection_type === 'OD' && item.dpd_days != null && (
+                                    <View style={[styles.typeTag, { backgroundColor: colors.danger + '1A' }]}>
+                                        <Text style={[styles.typeTagText, { color: colors.danger }]}>
+                                            DPD {item.dpd_days} ({item.dpd_bucket})
+                                        </Text>
+                                    </View>
+                                )}
                             </View>
                         </View>
                         <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
@@ -737,10 +759,10 @@ const CollectionsScreen = () => {
                         >
                             <Icon name="sliders" size={15} color={colors.primary} />
                             <Text style={styles.filterBtnText}>Filters</Text>
-                            {(activeFilter !== 'ALL' || typeFilter !== 'ALL') && (
+                            {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL') && (
                                 <View style={styles.filterBadge}>
                                     <Text style={styles.filterBadgeText}>
-                                        {(activeFilter !== 'ALL' ? 1 : 0) + (typeFilter !== 'ALL' ? 1 : 0)}
+                                        {(activeFilter !== 'ALL' ? 1 : 0) + (typeFilter !== 'ALL' ? 1 : 0) + (dpdFilter !== 'ALL' ? 1 : 0)}
                                     </Text>
                                 </View>
                             )}
@@ -749,6 +771,7 @@ const CollectionsScreen = () => {
                             {(activeFilter === 'ALL' ? 'All' : STATUS_META[activeFilter]?.label)}
                             {'  ·  '}
                             {(typeFilter === 'ALL' ? 'All Types' : TYPE_META[typeFilter]?.label)}
+                            {typeFilter === 'OD' && dpdFilter !== 'ALL' ? ` (DPD ${dpdFilter})` : ''}
                             {'  ·  '}{filtered.length} results
                         </Text>
                     </View>
@@ -804,7 +827,10 @@ const CollectionsScreen = () => {
                                             <TouchableOpacity
                                                 key={o.value}
                                                 style={[styles.statusOption, active && { backgroundColor: activeColor, borderColor: activeColor }]}
-                                                onPress={() => setTypeFilter(o.value)}
+                                                onPress={() => {
+                                                    setTypeFilter(o.value);
+                                                    if (o.value !== 'OD') setDpdFilter('ALL');
+                                                }}
                                             >
                                                 <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
                                             </TouchableOpacity>
@@ -812,10 +838,36 @@ const CollectionsScreen = () => {
                                     })}
                                 </View>
 
+                                {typeFilter === 'OD' && (
+                                    <>
+                                        <Text style={styles.fieldLabel}>DPD Range</Text>
+                                        <View style={styles.statusGrid}>
+                                            <TouchableOpacity
+                                                style={[styles.statusOption, dpdFilter === 'ALL' && { backgroundColor: colors.danger, borderColor: colors.danger }]}
+                                                onPress={() => setDpdFilter('ALL')}
+                                            >
+                                                <Text style={[styles.statusOptionText, dpdFilter === 'ALL' && { color: '#FFFFFF' }]}>All</Text>
+                                            </TouchableOpacity>
+                                            {DPD_BUCKET_OPTIONS.map(b => {
+                                                const active = dpdFilter === b.value;
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={b.value}
+                                                        style={[styles.statusOption, active && { backgroundColor: colors.danger, borderColor: colors.danger }]}
+                                                        onPress={() => setDpdFilter(b.value)}
+                                                    >
+                                                        <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{b.label}</Text>
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
+                                        </View>
+                                    </>
+                                )}
+
                                 <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
                                     <TouchableOpacity
                                         style={[styles.saveBtn, styles.resetBtn, { flex: 1 }]}
-                                        onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); }}
+                                        onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); }}
                                     >
                                         <Text style={[styles.saveBtnText, { color: colors.textDark }]}>Reset</Text>
                                     </TouchableOpacity>
