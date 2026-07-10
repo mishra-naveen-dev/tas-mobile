@@ -137,9 +137,9 @@ const EmployeePunchScreen = ({ navigation }) => {
     return `${lng - d},${lat - d},${lng + d},${lat + d}`;
   };
 
-  // ~100 m bounding box — used with bounded=1 for typed queries.
+  // ~200 m bounding box — used with bounded=1 for typed queries.
   const bbox100m = (lat, lng) => {
-    const d = 0.0009; // ~100 m
+    const d = 0.0018; // ~200 m
     return `${lng - d},${lat - d},${lng + d},${lat + d}`;
   };
 
