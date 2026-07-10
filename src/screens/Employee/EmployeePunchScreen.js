@@ -27,7 +27,7 @@ const REASON_PRESETS = [
   { value: 'Brch_Audit',    label: 'Brch Audit' },
   { value: 'P2P_JLG',       label: 'P2P JLG' },
   { value: 'Custil_Aud',    label: 'Custil Aud' },
-  { value: 'CusJLG_Aud',    label: 'CusJLG Aud' },
+  { value: 'CustJLG_Aud',    label: 'CustJLG Aud' },
   { value: 'Branch_Visit',  label: 'Branch Visit' },
 ];
 
@@ -131,9 +131,15 @@ const EmployeePunchScreen = ({ navigation }) => {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
-  // Bounding box ~250 m around a point (in decimal degrees).
+  // Bounding box ~250 m around a point — used for the on-focus nearby fetch.
   const bbox250m = (lat, lng) => {
     const d = 0.00225;
+    return `${lng - d},${lat - d},${lng + d},${lat + d}`;
+  };
+
+  // Wider bounding box ~50 km — used as a ranking bias when typing (not bounded).
+  const bbox50km = (lat, lng) => {
+    const d = 0.45;
     return `${lng - d},${lat - d},${lng + d},${lat + d}`;
   };
 
@@ -179,9 +185,11 @@ const EmployeePunchScreen = ({ navigation }) => {
         });
         setAddressSuggestions(list.slice(0, 6));
       } else {
-        // Typed query: search within the 250 m box.
+        // Typed query: wide search biased toward the user's area (no bounded
+        // restriction so "Sakar 3", "Main Road", etc. resolve correctly).
+        const wideBb = bbox50km(latitude, longitude);
         const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&bounded=1&viewbox=${bb}&countrycodes=in&limit=6`,
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&viewbox=${wideBb}&countrycodes=in&limit=8`,
           { headers }
         );
         const results = await res.json();
