@@ -62,7 +62,7 @@ const LoginScreen = ({ navigation }) => {
             'Contact Support',
             'How would you like to reach us?',
             [
-                { text: 'Email', onPress: () => Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=Need Help - TAS Mobile`) },
+                { text: 'Email', onPress: () => Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=Need Help - Namracred`) },
                 { text: 'Phone', onPress: () => Linking.openURL(`tel:${SUPPORT_PHONE}`) },
                 { text: 'Cancel', style: 'cancel' }
             ]
@@ -125,7 +125,7 @@ const LoginScreen = ({ navigation }) => {
             >
                 <View style={styles.inner}>
                     <View style={styles.header}>
-                        <Text style={styles.title}>TAS Mobile</Text>
+                        <Text style={styles.title}>Namracred</Text>
                         <Text style={styles.subtitle}>Traveling Allowance System</Text>
                     </View>
 

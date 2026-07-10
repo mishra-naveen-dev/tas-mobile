@@ -13,22 +13,34 @@ import {
     Alert,
     ScrollView,
     StatusBar,
+    Dimensions,
+    Animated,
+    Platform,
 } from 'react-native';
+
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Callout, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
 import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
 
 const STATUS_OPTIONS = [
-    { value: 'PENDING', label: 'Pending', color: colors.textMuted },
+    { value: 'PENDING', label: 'P2P', color: colors.textMuted },
     { value: 'VISITED', label: 'Visited', color: colors.info },
     { value: 'COLLECTED', label: 'Collected', color: colors.success },
     { value: 'PARTIALLY_COLLECTED', label: 'Partial', color: colors.warning },
     { value: 'NOT_PAID', label: 'Not Paid', color: colors.danger },
 ];
+
+const VISIT_REASON_OPTIONS = [
+    { value: 'OD_VISIT', label: 'OD Visit' },
+    { value: 'OTHER', label: 'Other' },
+];
+const VISIT_REASON_META = VISIT_REASON_OPTIONS.reduce((a, o) => { a[o.value] = o.label; return a; }, {});
 
 const STATUS_META = STATUS_OPTIONS.reduce((a, o) => { a[o.value] = o; return a; }, {});
 
@@ -53,6 +65,19 @@ const TYPE_META = {
     ADVANCE: { label: 'Advance', color: '#7b1fa2' },
 };
 
+// DPD (days past due) sub-buckets — only relevant when Type filter = OD
+const DPD_BUCKET_OPTIONS = [
+    { value: '0-30', label: '0-30', min: 0, max: 30 },
+    { value: '31-60', label: '31-60', min: 31, max: 60 },
+    { value: '61-90', label: '61-90', min: 61, max: 90 },
+    { value: '90+', label: '90+', min: 91, max: Infinity },
+];
+const matchesDpdBucket = (days, bucketValue) => {
+    if (days == null) return false;
+    const bucket = DPD_BUCKET_OPTIONS.find(b => b.value === bucketValue);
+    return bucket ? days >= bucket.min && days <= bucket.max : false;
+};
+
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const fmtAmount = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
@@ -71,94 +96,177 @@ const KpiPill = ({ label, value, accent }) => (
     </View>
 );
 
-const FilterChip = ({ label, color, count, active, onPress }) => (
-    <TouchableOpacity
-        style={[styles.filterChip, active && { backgroundColor: color || colors.primary, borderColor: color || colors.primary }]}
-        onPress={onPress}
-        activeOpacity={0.8}
-    >
-        <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
-        <View style={[styles.filterCount, active && styles.filterCountActive]}>
-            <Text style={[styles.filterCountText, active && styles.filterChipTextActive]}>{count}</Text>
-        </View>
-    </TouchableOpacity>
-);
-
 // ── Map tab ─────────────────────────────────────────────────────────────────
-const CollectionsMap = ({ records }) => {
+const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
     const mapRef = useRef(null);
+    const currentRegion = useRef(null);
 
-    // Only records that have a GPS pin from a visit
+    // All customers with GPS (both pending and done — shows progress on map)
     const pinned = useMemo(
         () => records.filter(r => r.visit_latitude != null && r.visit_longitude != null),
         [records]
     );
 
-    // Polyline: visited records ordered by last_collection_date
+    // Route line: pending/partial customers sorted by visit time
     const routeCoords = useMemo(() => {
         const sorted = [...pinned]
-            .filter(r => r.last_collection_date)
+            .filter(r => r.last_collection_date && r.status !== 'COLLECTED')
             .sort((a, b) => new Date(a.last_collection_date) - new Date(b.last_collection_date));
         return sorted.map(r => ({ latitude: r.visit_latitude, longitude: r.visit_longitude }));
     }, [pinned]);
 
     const initialRegion = useMemo(() => {
         if (pinned.length > 0) {
-            return {
-                latitude: pinned[0].visit_latitude,
-                longitude: pinned[0].visit_longitude,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05,
-            };
+            return { latitude: pinned[0].visit_latitude, longitude: pinned[0].visit_longitude, latitudeDelta: 0.05, longitudeDelta: 0.05 };
         }
-        // Default to India center
-        return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 15, longitudeDelta: 15 };
+        return { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 8, longitudeDelta: 8 };
+    }, [pinned]);
+
+    const zoomIn = useCallback(() => {
+        const r = currentRegion.current || initialRegion;
+        const next = { ...r, latitudeDelta: Math.max(r.latitudeDelta / 2, 0.001), longitudeDelta: Math.max(r.longitudeDelta / 2, 0.001) };
+        mapRef.current?.animateToRegion(next, 200);
+        currentRegion.current = next;
+    }, [initialRegion]);
+
+    const zoomOut = useCallback(() => {
+        const r = currentRegion.current || initialRegion;
+        const next = { ...r, latitudeDelta: Math.min(r.latitudeDelta * 2, 90), longitudeDelta: Math.min(r.longitudeDelta * 2, 90) };
+        mapRef.current?.animateToRegion(next, 200);
+        currentRegion.current = next;
+    }, [initialRegion]);
+
+    const reCenter = useCallback(async () => {
+        try {
+            const loc = await LocationService.getCurrentLocation();
+            if (loc?.latitude && loc?.longitude && !loc?.error) {
+                const next = { latitude: loc.latitude, longitude: loc.longitude, latitudeDelta: 0.02, longitudeDelta: 0.02 };
+                mapRef.current?.animateToRegion(next, 600);
+                currentRegion.current = next;
+                return;
+            }
+        } catch (_) {}
+        if (pinned.length > 0) {
+            mapRef.current?.fitToCoordinates(
+                pinned.map(r => ({ latitude: r.visit_latitude, longitude: r.visit_longitude })),
+                { edgePadding: { top: 60, right: 60, bottom: 60, left: 60 }, animated: true }
+            );
+        }
     }, [pinned]);
 
     if (pinned.length === 0) {
         return (
             <View style={styles.mapEmpty}>
-                <Icon name="map" size={40} color={colors.textLight} />
-                <Text style={styles.emptyText}>No visited customers yet.</Text>
-                <Text style={[styles.emptyText, { fontSize: 12, marginTop: 4 }]}>
-                    Pins appear here after you update a customer's status in the field.
+                <Icon name="map-pin" size={36} color={colors.textLight} />
+                <Text style={styles.mapEmptyTitle}>No location pins yet</Text>
+                <Text style={styles.mapEmptySub}>
+                    Pins appear after you update a customer status in the field.
+                    Use the Navigate buttons in the list below to get directions.
                 </Text>
             </View>
         );
     }
 
     return (
-        <MapView
-            ref={mapRef}
-            provider={PROVIDER_GOOGLE}
-            style={styles.map}
-            initialRegion={initialRegion}
-            showsUserLocation
-            showsMyLocationButton
-        >
-            {/* Route polyline connecting visited customers in time order */}
-            {routeCoords.length > 1 && (
-                <Polyline
-                    coordinates={routeCoords}
-                    strokeColor={colors.primary}
-                    strokeWidth={3}
-                    lineDashPattern={[6, 3]}
-                />
-            )}
+        <View style={styles.mapWrapper}>
+            <MapView
+                ref={mapRef}
+                provider={PROVIDER_GOOGLE}
+                style={styles.map}
+                initialRegion={initialRegion}
+                onRegionChangeComplete={r => { currentRegion.current = r; }}
+                showsUserLocation
+                showsMyLocationButton={false}
+            >
+                {routeCoords.length > 1 && (
+                    <Polyline
+                        coordinates={routeCoords}
+                        strokeColor={colors.primary}
+                        strokeWidth={3}
+                        lineDashPattern={[6, 3]}
+                    />
+                )}
+                {pinned.map(r => {
+                    const meta = STATUS_META[r.status] || STATUS_META.PENDING;
+                    const isDone = r.status === 'COLLECTED';
+                    return (
+                        <Marker
+                            key={r.id}
+                            coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
+                            pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
+                            opacity={isDone ? 0.5 : 1}
+                        >
+                            <Callout tooltip={false} style={styles.calloutBox}>
+                                <Text style={styles.calloutName} numberOfLines={1}>{r.customer_name}</Text>
+                                <Text style={styles.calloutSub}>{r.loan_id} · {meta.label}</Text>
+                                <Text style={styles.calloutAmt}>{fmtCompact(r.amount_due)}</Text>
+                                <View style={styles.calloutActions}>
+                                    <TouchableOpacity
+                                        style={[styles.calloutBtn, { backgroundColor: colors.primary }]}
+                                        onPress={() => navigateToCustomer(r)}
+                                    >
+                                        <Icon name="navigation" size={12} color="#fff" />
+                                        <Text style={styles.calloutBtnText}>Navigate</Text>
+                                    </TouchableOpacity>
+                                    {!isDone && (
+                                        <TouchableOpacity
+                                            style={[styles.calloutBtn, { backgroundColor: colors.success }]}
+                                            onPress={() => openUpdate(r)}
+                                        >
+                                            <Icon name="edit-3" size={12} color="#fff" />
+                                            <Text style={styles.calloutBtnText}>Update</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+                            </Callout>
+                        </Marker>
+                    );
+                })}
+            </MapView>
 
-            {/* Customer visit pins */}
-            {pinned.map(r => (
-                <Marker
-                    key={r.id}
-                    coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
-                    pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
-                    title={r.customer_name}
-                    description={`${r.loan_id} · ${STATUS_META[r.status]?.label || r.status} · ${fmtAmount(r.collected_amount || r.amount_due)}`}
-                />
-            ))}
-        </MapView>
+            {/* Zoom controls — floating right, above map layer */}
+            <View style={styles.zoomControls} pointerEvents="box-none">
+                <TouchableOpacity style={styles.zoomBtn} onPress={zoomIn} activeOpacity={0.75}>
+                    <Icon name="plus" size={18} color="#1e293b" />
+                </TouchableOpacity>
+                <View style={styles.zoomDivider} />
+                <TouchableOpacity style={styles.zoomBtn} onPress={zoomOut} activeOpacity={0.75}>
+                    <Icon name="minus" size={18} color="#1e293b" />
+                </TouchableOpacity>
+            </View>
+
+            {/* Recenter button */}
+            <TouchableOpacity style={styles.recenterBtn} onPress={reCenter} activeOpacity={0.75}>
+                <Icon name="crosshair" size={20} color={colors.primary} />
+            </TouchableOpacity>
+        </View>
     );
 };
+
+// ── Animated list card wrapper ───────────────────────────────────────────────
+const AnimatedCard = React.memo(({ index, children }) => {
+    const shouldAnimate = index < 10;
+    const opacity = useRef(new Animated.Value(shouldAnimate ? 0 : 1)).current;
+    const translateY = useRef(new Animated.Value(shouldAnimate ? 32 : 0)).current;
+
+    useEffect(() => {
+        if (!shouldAnimate) return;
+        Animated.parallel([
+            Animated.timing(opacity, {
+                toValue: 1, duration: 340, delay: index * 55, useNativeDriver: true,
+            }),
+            Animated.spring(translateY, {
+                toValue: 0, tension: 65, friction: 9, delay: index * 55, useNativeDriver: true,
+            }),
+        ]).start();
+    }, []);
+
+    return (
+        <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+            {children}
+        </Animated.View>
+    );
+});
 
 // ── Main screen ──────────────────────────────────────────────────────────────
 const CollectionsScreen = () => {
@@ -169,12 +277,16 @@ const CollectionsScreen = () => {
     const [search, setSearch] = useState('');
     const [activeFilter, setActiveFilter] = useState('ALL');
     const [typeFilter, setTypeFilter] = useState('ALL');
+    const [dpdFilter, setDpdFilter] = useState('ALL');
+    const [filterModalVisible, setFilterModalVisible] = useState(false);
 
     const [view, setView] = useState('list'); // 'list' | 'map'
+    const [mapSearch, setMapSearch] = useState('');
 
     const [modal, setModal] = useState({ open: false, record: null });
-    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '' });
+    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null, visit_reason: '' });
     const [saving, setSaving] = useState(false);
+    const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
     const fetchRecords = useCallback(async () => {
         try {
@@ -217,6 +329,7 @@ const CollectionsScreen = () => {
         return records.filter(r => {
             if (activeFilter !== 'ALL' && r.status !== activeFilter) return false;
             if (typeFilter !== 'ALL' && (r.collection_type || 'REGULAR') !== typeFilter) return false;
+            if (typeFilter === 'OD' && dpdFilter !== 'ALL' && !matchesDpdBucket(r.dpd_days, dpdFilter)) return false;
             if (!q) return true;
             return (
                 (r.loan_id || '').toLowerCase().includes(q) ||
@@ -225,16 +338,54 @@ const CollectionsScreen = () => {
                 (r.pincode || '').toLowerCase().includes(q)
             );
         });
-    }, [records, activeFilter, typeFilter, search]);
+    }, [records, activeFilter, typeFilter, dpdFilter, search]);
+
+    // Map view search — non-collected only, across name/address/area/loan/date
+    const mapPending = useMemo(() => {
+        const q = mapSearch.trim().toLowerCase();
+        return records.filter(r => {
+            if (r.status === 'COLLECTED') return false;
+            if (!q) return true;
+            const due = r.due_date ? new Date(r.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).toLowerCase() : '';
+            return (
+                (r.customer_name || '').toLowerCase().includes(q) ||
+                (r.loan_id || '').toLowerCase().includes(q) ||
+                (r.address || '').toLowerCase().includes(q) ||
+                (r.area || '').toLowerCase().includes(q) ||
+                (r.pincode || '').toLowerCase().includes(q) ||
+                due.includes(q)
+            );
+        });
+    }, [records, mapSearch]);
 
     const openUpdate = (record) => {
         setForm({
             status: record.status || 'PENDING',
             collected_amount: record.collected_amount != null ? String(record.collected_amount) : '',
             remarks: record.remarks || '',
+            promise_date: record.promise_date ? new Date(record.promise_date) : null,
+            visit_reason: record.visit_reason || '',
         });
         setModal({ open: true, record });
     };
+
+    const navigateToCustomer = useCallback((r) => {
+        // Prefer GPS coords (captured on prior visit); fall back to text address
+        if (r.visit_latitude && r.visit_longitude) {
+            const lat = r.visit_latitude;
+            const lng = r.visit_longitude;
+            Linking.openURL(`google.navigation:q=${lat},${lng}&mode=d`).catch(() =>
+                Linking.openURL(`https://maps.google.com/maps?daddr=${lat},${lng}`)
+            );
+            return;
+        }
+        const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
+        if (addr) {
+            Linking.openURL(`https://maps.google.com/maps?q=${encodeURIComponent(addr)}&mode=d`);
+        } else {
+            Alert.alert('No Location', 'No address or GPS data available for this customer.');
+        }
+    }, []);
 
     const save = async () => {
         setSaving(true);
@@ -254,6 +405,10 @@ const CollectionsScreen = () => {
 
             const payload = { status: form.status, remarks: form.remarks, ...gpsPayload };
             if (form.collected_amount !== '') payload.collected_amount = parseFloat(form.collected_amount);
+            payload.promise_date = form.status === 'PENDING' && form.promise_date
+                ? form.promise_date.toISOString().split('T')[0]
+                : null;
+            payload.visit_reason = form.status === 'VISITED' ? form.visit_reason : '';
 
             await api.updateCollectionStatus(modal.record.id, payload);
             setModal({ open: false, record: null });
@@ -265,11 +420,12 @@ const CollectionsScreen = () => {
         }
     };
 
-    const renderItem = ({ item }) => {
+    const renderItem = ({ item, index }) => {
         const meta = STATUS_META[item.status] || STATUS_META.PENDING;
         const fullAddress = [item.address, item.area, item.pincode && `PIN: ${item.pincode}`]
             .filter(Boolean).join(', ');
         return (
+            <AnimatedCard index={index}>
             <View style={styles.card}>
                 <View style={[styles.cardAccent, { backgroundColor: meta.color }]} />
                 <View style={styles.cardBody}>
@@ -286,6 +442,13 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })()}
+                                {item.collection_type === 'OD' && item.dpd_days != null && (
+                                    <View style={[styles.typeTag, { backgroundColor: colors.danger + '1A' }]}>
+                                        <Text style={[styles.typeTagText, { color: colors.danger }]}>
+                                            DPD {item.dpd_days} ({item.dpd_bucket})
+                                        </Text>
+                                    </View>
+                                )}
                             </View>
                         </View>
                         <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
@@ -328,6 +491,24 @@ const CollectionsScreen = () => {
                         </View>
                     )}
 
+                    {!!item.promise_date && (
+                        <View style={styles.row}>
+                            <Icon name="clock" size={15} color={colors.warning} />
+                            <Text style={[styles.rowText, { color: colors.warning }]}>
+                                Promised: {fmtDate(item.promise_date)}
+                            </Text>
+                        </View>
+                    )}
+
+                    {!!item.visit_reason && (
+                        <View style={styles.row}>
+                            <Icon name="info" size={15} color={colors.info} />
+                            <Text style={[styles.rowText, { color: colors.info }]}>
+                                Reason: {VISIT_REASON_META[item.visit_reason] || item.visit_reason}
+                            </Text>
+                        </View>
+                    )}
+
                     <View style={styles.row}>
                         <Icon name="clock" size={15} color={colors.textMuted} />
                         <Text style={styles.rowText}>Last collection: {fmtDate(item.last_collection_date)}</Text>
@@ -344,7 +525,7 @@ const CollectionsScreen = () => {
                         )}
                         <TouchableOpacity
                             style={styles.iconBtn}
-                            onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`)}
+                            onPress={() => navigateToCustomer(item)}
                         >
                             <Icon name="navigation" size={16} color={colors.primary} />
                         </TouchableOpacity>
@@ -355,6 +536,7 @@ const CollectionsScreen = () => {
                     </View>
                 </View>
             </View>
+            </AnimatedCard>
         );
     };
 
@@ -401,8 +583,8 @@ const CollectionsScreen = () => {
 
             {/* ── Map view ── */}
             {view === 'map' ? (
-                <View style={styles.mapContainer}>
-                    {/* Map legend */}
+                <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+                    {/* Legend row */}
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.legendScroll} contentContainerStyle={styles.legendRow}>
                         {Object.entries(PIN_COLOR).filter(([k]) => k !== 'PENDING').map(([status, color]) => (
                             <View key={status} style={styles.legendItem}>
@@ -411,12 +593,144 @@ const CollectionsScreen = () => {
                             </View>
                         ))}
                         <View style={styles.legendItem}>
-                            <View style={[styles.legendLine]} />
+                            <View style={styles.legendLine} />
                             <Text style={styles.legendText}>Route</Text>
                         </View>
                     </ScrollView>
-                    <CollectionsMap records={records} />
-                </View>
+
+                    {/* Map — fixed height so list is visible below */}
+                    <View style={{ height: SCREEN_HEIGHT * 0.52 }}>
+                        <CollectionsMap
+                            records={records}
+                            navigateToCustomer={navigateToCustomer}
+                            openUpdate={openUpdate}
+                        />
+                    </View>
+
+                    {/* Scrollable customer list — pending only, with search */}
+                    {(() => {
+                        const allPending = records.filter(r => r.status !== 'COLLECTED');
+                        const done = records.length - allPending.length;
+                        const pending = mapPending;
+                        return (
+                            <View style={styles.mapListSection}>
+                                {/* Search bar */}
+                                <View style={styles.mapSearchWrap}>
+                                    <Icon name="search" size={15} color={colors.textMuted} />
+                                    <TextInput
+                                        style={styles.mapSearchInput}
+                                        placeholder="Search name, loan ID, address, area, date…"
+                                        placeholderTextColor={colors.textMuted}
+                                        value={mapSearch}
+                                        onChangeText={setMapSearch}
+                                        returnKeyType="search"
+                                    />
+                                    {!!mapSearch && (
+                                        <TouchableOpacity onPress={() => setMapSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                            <Icon name="x-circle" size={15} color={colors.textMuted} />
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+
+                                <View style={styles.mapListHeaderRow}>
+                                    <Text style={styles.mapListHeader}>
+                                        {mapSearch ? `${pending.length} results` : `${allPending.length} Remaining`}
+                                    </Text>
+                                    {done > 0 && !mapSearch && (
+                                        <View style={styles.mapDoneBadge}>
+                                            <Icon name="check-circle" size={12} color={colors.success} />
+                                            <Text style={styles.mapDoneBadgeText}>{done} done</Text>
+                                        </View>
+                                    )}
+                                </View>
+                                {pending.map(r => {
+                                    const meta = STATUS_META[r.status] || STATUS_META.PENDING;
+                                    const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
+                                    return (
+                                        <View key={r.id} style={styles.mapListCard}>
+                                            {/* Status accent bar on left */}
+                                            <View style={[styles.mapListAccent, { backgroundColor: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]} />
+
+                                            <View style={{ flex: 1, paddingRight: 4 }}>
+                                                {/* Row 1: name + amount */}
+                                                <View style={styles.mapListTopRow}>
+                                                    <Text style={styles.mapListName} numberOfLines={1}>{r.customer_name}</Text>
+                                                    <Text style={styles.mapListAmt}>{fmtCompact(r.amount_due)}</Text>
+                                                </View>
+
+                                                {/* Row 2: loan ID + status chip */}
+                                                <View style={styles.mapListRow}>
+                                                    <Text style={styles.mapListSub}>{r.loan_id}</Text>
+                                                    <View style={[styles.mapStatusChip, { backgroundColor: (PIN_COLOR[r.status] || PIN_COLOR.PENDING) + '20' }]}>
+                                                        <Text style={[styles.mapStatusChipText, { color: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]}>{meta.label}</Text>
+                                                    </View>
+                                                </View>
+
+                                                {/* Row 3: address */}
+                                                {!!addr && (
+                                                    <View style={styles.mapListInfoRow}>
+                                                        <Icon name="map-pin" size={11} color={colors.textMuted} />
+                                                        <Text style={styles.mapListInfoText} numberOfLines={1}>{addr}</Text>
+                                                    </View>
+                                                )}
+
+                                                {/* Row 4: phone + EMI date */}
+                                                <View style={styles.mapListBottomRow}>
+                                                    {!!r.customer_phone && (
+                                                        <TouchableOpacity
+                                                            style={styles.mapListInfoRow}
+                                                            onPress={() => Linking.openURL(`tel:${r.customer_phone}`)}
+                                                        >
+                                                            <Icon name="phone" size={11} color={colors.primary} />
+                                                            <Text style={[styles.mapListInfoText, { color: colors.primary }]}>{r.customer_phone}</Text>
+                                                        </TouchableOpacity>
+                                                    )}
+                                                    {!!r.due_date && (
+                                                        <View style={styles.mapListInfoRow}>
+                                                            <Icon name="calendar" size={11} color={colors.textMuted} />
+                                                            <Text style={styles.mapListInfoText}>EMI: {fmtDate(r.due_date)}</Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+
+                                                {/* Row 5: action buttons */}
+                                                <View style={styles.mapListActions}>
+                                                    <TouchableOpacity
+                                                        style={styles.mapNavBtn}
+                                                        onPress={() => navigateToCustomer(r)}
+                                                        activeOpacity={0.75}
+                                                    >
+                                                        <Icon name="navigation" size={13} color={colors.primary} />
+                                                        <Text style={styles.mapNavBtnText}>Navigate</Text>
+                                                    </TouchableOpacity>
+                                                    <TouchableOpacity
+                                                        style={styles.mapUpdateBtn}
+                                                        onPress={() => openUpdate(r)}
+                                                        activeOpacity={0.75}
+                                                    >
+                                                        <Icon name="edit-3" size={13} color="#fff" />
+                                                        <Text style={styles.mapUpdateBtnText}>Update</Text>
+                                                    </TouchableOpacity>
+                                                </View>
+                                            </View>
+                                        </View>
+                                    );
+                                })}
+                                {pending.length === 0 && mapSearch ? (
+                                    <View style={styles.mapAllDone}>
+                                        <Icon name="search" size={28} color={colors.textLight} />
+                                        <Text style={[styles.mapAllDoneText, { color: colors.textMuted }]}>No customers match your search</Text>
+                                    </View>
+                                ) : pending.length === 0 ? (
+                                    <View style={styles.mapAllDone}>
+                                        <Icon name="check-circle" size={32} color={colors.success} />
+                                        <Text style={styles.mapAllDoneText}>All collections done!</Text>
+                                    </View>
+                                ) : null}
+                            </View>
+                        );
+                    })()}
+                </ScrollView>
             ) : (
                 <>
                     {/* ── Search ── */}
@@ -436,51 +750,137 @@ const CollectionsScreen = () => {
                         )}
                     </View>
 
-                    {/* ── Status filters ── */}
-                    <View>
-                        <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.filterRow}
+                    {/* ── Filter bar ── */}
+                    <View style={styles.filterBar}>
+                        <TouchableOpacity
+                            style={styles.filterBtn}
+                            onPress={() => setFilterModalVisible(true)}
+                            activeOpacity={0.85}
                         >
-                            <FilterChip
-                                label="All"
-                                count={stats.total}
-                                active={activeFilter === 'ALL'}
-                                onPress={() => setActiveFilter('ALL')}
-                            />
-                            {STATUS_OPTIONS.map(o => (
-                                <FilterChip
-                                    key={o.value}
-                                    label={o.label}
-                                    color={o.color}
-                                    count={stats.countBy[o.value] || 0}
-                                    active={activeFilter === o.value}
-                                    onPress={() => setActiveFilter(o.value)}
-                                />
-                            ))}
-                        </ScrollView>
-
-                        <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.typeRow}
-                        >
-                            {TYPE_OPTIONS.map(o => {
-                                const active = typeFilter === o.value;
-                                return (
-                                    <TouchableOpacity
-                                        key={o.value}
-                                        style={[styles.typeChip, active && { backgroundColor: (o.color || colors.textDark), borderColor: (o.color || colors.textDark) }]}
-                                        onPress={() => setTypeFilter(o.value)}
-                                        activeOpacity={0.8}
-                                    >
-                                        <Text style={[styles.typeChipText, active && styles.filterChipTextActive]}>{o.label}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </ScrollView>
+                            <Icon name="sliders" size={15} color={colors.primary} />
+                            <Text style={styles.filterBtnText}>Filters</Text>
+                            {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL') && (
+                                <View style={styles.filterBadge}>
+                                    <Text style={styles.filterBadgeText}>
+                                        {(activeFilter !== 'ALL' ? 1 : 0) + (typeFilter !== 'ALL' ? 1 : 0) + (dpdFilter !== 'ALL' ? 1 : 0)}
+                                    </Text>
+                                </View>
+                            )}
+                        </TouchableOpacity>
+                        <Text style={styles.filterSummary} numberOfLines={1}>
+                            {(activeFilter === 'ALL' ? 'All' : STATUS_META[activeFilter]?.label)}
+                            {'  ·  '}
+                            {(typeFilter === 'ALL' ? 'All Types' : TYPE_META[typeFilter]?.label)}
+                            {typeFilter === 'OD' && dpdFilter !== 'ALL' ? ` (DPD ${dpdFilter})` : ''}
+                            {'  ·  '}{filtered.length} results
+                        </Text>
                     </View>
+
+                    {/* ── Filter modal: Status (parent) + Type (sub) ── */}
+                    <Modal
+                        visible={filterModalVisible}
+                        transparent
+                        animationType="slide"
+                        onRequestClose={() => setFilterModalVisible(false)}
+                    >
+                        <View style={styles.modalOverlay}>
+                            <View style={styles.modalContent}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>Filters</Text>
+                                    <TouchableOpacity onPress={() => setFilterModalVisible(false)}>
+                                        <Icon name="x" size={22} color={colors.textDark} />
+                                    </TouchableOpacity>
+                                </View>
+
+                                <Text style={styles.fieldLabel}>Status</Text>
+                                <View style={styles.statusGrid}>
+                                    <TouchableOpacity
+                                        style={[styles.statusOption, activeFilter === 'ALL' && { backgroundColor: colors.textDark, borderColor: colors.textDark }]}
+                                        onPress={() => setActiveFilter('ALL')}
+                                    >
+                                        <Text style={[styles.statusOptionText, activeFilter === 'ALL' && { color: '#FFFFFF' }]}>
+                                            All ({stats.total})
+                                        </Text>
+                                    </TouchableOpacity>
+                                    {STATUS_OPTIONS.map(o => {
+                                        const active = activeFilter === o.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={o.value}
+                                                style={[styles.statusOption, active && { backgroundColor: o.color, borderColor: o.color }]}
+                                                onPress={() => setActiveFilter(o.value)}
+                                            >
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>
+                                                    {o.label} ({stats.countBy[o.value] || 0})
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                <Text style={styles.fieldLabel}>Type</Text>
+                                <View style={styles.statusGrid}>
+                                    {TYPE_OPTIONS.map(o => {
+                                        const active = typeFilter === o.value;
+                                        const activeColor = o.color || colors.textDark;
+                                        return (
+                                            <TouchableOpacity
+                                                key={o.value}
+                                                style={[styles.statusOption, active && { backgroundColor: activeColor, borderColor: activeColor }]}
+                                                onPress={() => {
+                                                    setTypeFilter(o.value);
+                                                    if (o.value !== 'OD') setDpdFilter('ALL');
+                                                }}
+                                            >
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+
+                                {typeFilter === 'OD' && (
+                                    <>
+                                        <Text style={styles.fieldLabel}>DPD Range</Text>
+                                        <View style={styles.statusGrid}>
+                                            <TouchableOpacity
+                                                style={[styles.statusOption, dpdFilter === 'ALL' && { backgroundColor: colors.danger, borderColor: colors.danger }]}
+                                                onPress={() => setDpdFilter('ALL')}
+                                            >
+                                                <Text style={[styles.statusOptionText, dpdFilter === 'ALL' && { color: '#FFFFFF' }]}>All</Text>
+                                            </TouchableOpacity>
+                                            {DPD_BUCKET_OPTIONS.map(b => {
+                                                const active = dpdFilter === b.value;
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={b.value}
+                                                        style={[styles.statusOption, active && { backgroundColor: colors.danger, borderColor: colors.danger }]}
+                                                        onPress={() => setDpdFilter(b.value)}
+                                                    >
+                                                        <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{b.label}</Text>
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
+                                        </View>
+                                    </>
+                                )}
+
+                                <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+                                    <TouchableOpacity
+                                        style={[styles.saveBtn, styles.resetBtn, { flex: 1 }]}
+                                        onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); }}
+                                    >
+                                        <Text style={[styles.saveBtnText, { color: colors.textDark }]}>Reset</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.saveBtn, { flex: 1, marginTop: 0 }]}
+                                        onPress={() => setFilterModalVisible(false)}
+                                    >
+                                        <Text style={styles.saveBtnText}>Apply</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </View>
+                    </Modal>
 
                     {loading ? (
                         <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
@@ -528,7 +928,27 @@ const CollectionsScreen = () => {
                                     <TouchableOpacity
                                         key={o.value}
                                         style={[styles.statusOption, active && { backgroundColor: o.color, borderColor: o.color }]}
-                                        onPress={() => setForm(f => ({ ...f, status: o.value }))}
+                                        onPress={() => setForm(f => {
+                                            const next = { ...f, status: o.value };
+                                            // Auto-fill full EMI amount when "Collected" is selected
+                                            if (o.value === 'COLLECTED') {
+                                                const emi = modal.record?.amount_due;
+                                                if (emi != null) next.collected_amount = String(emi);
+                                            }
+                                            // Clear amount when switching away from collection statuses
+                                            if (o.value !== 'COLLECTED' && o.value !== 'PARTIALLY_COLLECTED') {
+                                                next.collected_amount = '';
+                                            }
+                                            // Clear promise date when switching away from P2P
+                                            if (o.value !== 'PENDING') {
+                                                next.promise_date = null;
+                                            }
+                                            // Clear visit reason when switching away from Visited
+                                            if (o.value !== 'VISITED') {
+                                                next.visit_reason = '';
+                                            }
+                                            return next;
+                                        })}
                                     >
                                         <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
                                     </TouchableOpacity>
@@ -536,9 +956,68 @@ const CollectionsScreen = () => {
                             })}
                         </View>
 
+                        {form.status === 'PENDING' && (
+                            <>
+                                <Text style={styles.fieldLabel}>Promise to Pay Date</Text>
+                                <TouchableOpacity
+                                    style={styles.input}
+                                    onPress={() => setShowPromiseDatePicker(true)}
+                                >
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                                        <Icon name="calendar" size={16} color={colors.textMuted} />
+                                        <Text style={{ color: form.promise_date ? colors.textDark : colors.textMuted }}>
+                                            {form.promise_date ? fmtDate(form.promise_date) : 'Select date customer will pay'}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+                                {showPromiseDatePicker && (
+                                    <DateTimePicker
+                                        value={form.promise_date || new Date()}
+                                        mode="date"
+                                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                        minimumDate={new Date()}
+                                        onChange={(event, selectedDate) => {
+                                            setShowPromiseDatePicker(Platform.OS === 'ios');
+                                            if (selectedDate) {
+                                                setForm(f => ({ ...f, promise_date: selectedDate }));
+                                            }
+                                        }}
+                                    />
+                                )}
+                            </>
+                        )}
+
+                        {form.status === 'VISITED' && (
+                            <>
+                                <Text style={styles.fieldLabel}>Visit Reason</Text>
+                                <View style={styles.statusGrid}>
+                                    {VISIT_REASON_OPTIONS.map(o => {
+                                        const active = form.visit_reason === o.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={o.value}
+                                                style={[styles.statusOption, active && { backgroundColor: colors.info, borderColor: colors.info }]}
+                                                onPress={() => setForm(f => ({ ...f, visit_reason: o.value }))}
+                                            >
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </>
+                        )}
+
                         {(form.status === 'COLLECTED' || form.status === 'PARTIALLY_COLLECTED') && (
                             <>
-                                <Text style={styles.fieldLabel}>Collected Amount (₹)</Text>
+                                <View style={styles.amountLabelRow}>
+                                    <Text style={styles.fieldLabel}>Collected Amount (₹)</Text>
+                                    {form.status === 'COLLECTED' && modal.record?.amount_due != null && (
+                                        <View style={styles.emiHint}>
+                                            <Icon name="zap" size={11} color={colors.success} />
+                                            <Text style={styles.emiHintText}>Auto-filled from EMI</Text>
+                                        </View>
+                                    )}
+                                </View>
                                 <TextInput
                                     style={styles.input}
                                     keyboardType="numeric"
@@ -547,6 +1026,11 @@ const CollectionsScreen = () => {
                                     placeholder="0"
                                     placeholderTextColor={colors.textMuted}
                                 />
+                                {form.status === 'COLLECTED' && modal.record?.amount_due != null && (
+                                    <Text style={styles.emiSub}>
+                                        EMI due: ₹{Number(modal.record.amount_due).toLocaleString('en-IN')} — edit if different
+                                    </Text>
+                                )}
                             </>
                         )}
 
@@ -616,6 +1100,7 @@ const styles = StyleSheet.create({
 
     // Map
     mapContainer: { flex: 1 },
+    mapWrapper: { flex: 1 },
     map: { flex: 1 },
     mapEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
     legendScroll: { maxHeight: 40 },
@@ -624,6 +1109,83 @@ const styles = StyleSheet.create({
     legendDot: { width: 10, height: 10, borderRadius: 5 },
     legendLine: { width: 18, height: 3, backgroundColor: colors.primary, borderRadius: 2 },
     legendText: { fontSize: 11, color: colors.textMedium },
+
+    // Zoom controls (floating right side, above map layer)
+    zoomControls: {
+        position: 'absolute', right: 12, top: 60,
+        zIndex: 10, elevation: 10,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 10,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 5,
+        overflow: 'hidden',
+    },
+    zoomBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+    zoomDivider: { height: 1, backgroundColor: '#E2E8F0', marginHorizontal: 6 },
+
+    // Recenter button (floating right side below zoom)
+    recenterBtn: {
+        position: 'absolute', right: 12, top: 168,
+        zIndex: 10, elevation: 10,
+        width: 42, height: 42, borderRadius: 10,
+        backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 5,
+    },
+
+    // Map empty state
+    mapEmptyTitle: { fontSize: typography.sizes.md, fontWeight: '700', color: colors.textDark, marginTop: spacing.md, textAlign: 'center' },
+    mapEmptySub: { fontSize: typography.sizes.sm, color: colors.textMuted, textAlign: 'center', marginTop: spacing.xs, lineHeight: 20 },
+
+    // Map mode customer list below the map
+    mapListSection: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: 120 },
+    mapSearchWrap: {
+        flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+        backgroundColor: colors.surface, borderRadius: borderRadius.md,
+        borderWidth: 1, borderColor: colors.border,
+        paddingHorizontal: spacing.sm, paddingVertical: 9,
+        marginBottom: spacing.sm,
+    },
+    mapSearchInput: {
+        flex: 1, fontSize: typography.sizes.sm, color: colors.textDark,
+        marginLeft: 4, paddingVertical: 0,
+    },
+    mapListHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+    mapListHeader: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
+    mapDoneBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 },
+    mapDoneBadgeText: { fontSize: 11, fontWeight: '600', color: colors.success },
+    mapListCard: {
+        flexDirection: 'row', alignItems: 'stretch',
+        backgroundColor: colors.surface, borderRadius: borderRadius.md,
+        marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border,
+        overflow: 'hidden',
+    },
+    mapListAccent: { width: 4, borderRadius: 0 },
+    mapListTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2, paddingTop: spacing.sm, paddingHorizontal: spacing.sm },
+    mapListRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: spacing.sm, marginBottom: 4 },
+    mapListInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, marginBottom: 3 },
+    mapListInfoText: { fontSize: 11, color: colors.textMuted, flex: 1 },
+    mapListBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: spacing.sm, flexWrap: 'wrap' },
+    mapListActions: { flexDirection: 'row', gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, paddingTop: 6 },
+    mapListName: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark, flex: 1 },
+    mapListSub: { fontSize: 11, color: colors.textMuted },
+    mapListAmt: { fontSize: 13, fontWeight: '700', color: colors.textDark, marginLeft: 8 },
+    mapStatusChip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
+    mapStatusChipText: { fontSize: 10, fontWeight: '600' },
+    mapNavBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, borderRadius: 8, backgroundColor: colors.primaryLight || '#eff6ff', borderWidth: 1, borderColor: colors.primary + '30' },
+    mapNavBtnText: { fontSize: 12, fontWeight: '600', color: colors.primary },
+    mapUpdateBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, borderRadius: 8, backgroundColor: colors.primary },
+    mapUpdateBtnText: { fontSize: 12, fontWeight: '600', color: '#fff' },
+    mapChevronBtn: { padding: 6 },
+    mapAllDone: { alignItems: 'center', paddingVertical: 32, gap: 8 },
+    mapAllDoneText: { fontSize: typography.sizes.sm, color: colors.success, fontWeight: '600' },
+
+    // Map marker callout
+    calloutBox: { width: 200, padding: 10, borderRadius: 10 },
+    calloutName: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
+    calloutSub: { fontSize: 11, color: '#64748b', marginTop: 2 },
+    calloutAmt: { fontSize: 13, fontWeight: '600', color: '#1e293b', marginTop: 4 },
+    calloutActions: { flexDirection: 'row', gap: 6, marginTop: 8 },
+    calloutBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 6, borderRadius: 6 },
+    calloutBtnText: { fontSize: 11, fontWeight: '600', color: '#fff' },
 
     // GPS indicator dot on card
     gpsDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4CAF50', marginLeft: 4 },
@@ -638,25 +1200,25 @@ const styles = StyleSheet.create({
     searchInput: { flex: 1, paddingVertical: spacing.sm, fontSize: typography.sizes.sm, color: colors.textDark, marginLeft: spacing.xs },
 
     // Filters
-    filterRow: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.xs },
-    filterChip: {
-        flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
-        paddingHorizontal: spacing.md, paddingVertical: spacing.xs, marginRight: spacing.xs,
-        borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+    filterBar: {
+        flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+        paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     },
-    filterChipText: { fontSize: typography.sizes.xs, fontWeight: '600', color: colors.textMedium },
-    filterChipTextActive: { color: '#FFFFFF' },
-    filterCount: { backgroundColor: colors.background, borderRadius: borderRadius.full, paddingHorizontal: 6, paddingVertical: 1, marginLeft: 4 },
-    filterCountActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
-    filterCountText: { fontSize: 10, fontWeight: '700', color: colors.textMuted },
+    filterBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
+        borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.primary,
+        backgroundColor: colors.surface,
+    },
+    filterBtnText: { fontSize: typography.sizes.xs, fontWeight: '700', color: colors.primary },
+    filterBadge: {
+        backgroundColor: colors.primary, borderRadius: borderRadius.full,
+        minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+    },
+    filterBadgeText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
+    filterSummary: { flex: 1, fontSize: typography.sizes.xs, color: colors.textMuted },
+    resetBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
 
-    // Type filter row
-    typeRow: { paddingHorizontal: spacing.md, paddingBottom: spacing.sm, gap: spacing.xs },
-    typeChip: {
-        paddingHorizontal: spacing.md, paddingVertical: 5, marginRight: spacing.xs,
-        borderRadius: borderRadius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
-    },
-    typeChipText: { fontSize: 11, fontWeight: '600', color: colors.textMedium },
     loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2 },
     typeTag: { paddingHorizontal: spacing.xs, paddingVertical: 1, borderRadius: borderRadius.sm, marginLeft: spacing.xs },
     typeTagText: { fontSize: 10, fontWeight: '700' },
@@ -704,6 +1266,10 @@ const styles = StyleSheet.create({
     modalTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     modalSub: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4, marginBottom: spacing.sm },
     fieldLabel: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textMedium, marginTop: spacing.sm, marginBottom: spacing.xs },
+    amountLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm, marginBottom: spacing.xs },
+    emiHint: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+    emiHintText: { fontSize: 10, fontWeight: '600', color: colors.success },
+    emiSub: { fontSize: 11, color: colors.textMuted, marginTop: 4, marginBottom: 2 },
     statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
     statusOption: {
         paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,

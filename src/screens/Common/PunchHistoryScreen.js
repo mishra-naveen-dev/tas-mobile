@@ -72,14 +72,19 @@ const getQuickRange = (key) => {
 };
 
 // ─── Summary bar (shown above list) ──────────────────────────────────────────
-const SummaryBar = ({ punches }) => {
-    const stats = useMemo(() => ({
-        total:      punches.length,
-        punchIns:   punches.filter(p => p.punch_type === 'PUNCH_IN').length,
-        punchOuts:  punches.filter(p => p.punch_type === 'PUNCH_OUT').length,
-        collection: punches.filter(p => ['COLLECTION', 'DISBURSEMENT'].includes(p.punch_type))
-                           .reduce((s, p) => s + parseFloat(p.amount || 0), 0),
-    }), [punches]);
+const SummaryBar = ({ punches, collectionTotal }) => {
+    const stats = useMemo(() => {
+        const punchCollected = punches
+            .filter(p => ['COLLECTION', 'DISBURSEMENT'].includes(p.punch_type))
+            .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+        return {
+            total:      punches.length,
+            punchIns:   punches.filter(p => p.punch_type === 'PUNCH_IN').length,
+            punchOuts:  punches.filter(p => p.punch_type === 'PUNCH_OUT').length,
+            // Authoritative source: collections API amount; fall back to punch-record sum
+            collection: collectionTotal !== null ? collectionTotal : punchCollected,
+        };
+    }, [punches, collectionTotal]);
 
     if (punches.length === 0) return null;
 
@@ -263,6 +268,7 @@ const pc = StyleSheet.create({
 // ─── Main screen ──────────────────────────────────────────────────────────────
 const PunchHistoryScreen = ({ navigation }) => {
     const [punches, setPunches]           = useState([]);
+    const [collectionTotal, setCollectionTotal] = useState(null);
     const [isLoading, setIsLoading]       = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [hasError, setHasError]         = useState(false);
@@ -284,13 +290,23 @@ const PunchHistoryScreen = ({ navigation }) => {
             setHasError(false);
             setErrorMsg('');
             if (isRefresh) setIsRefreshing(true);
-            else { setIsLoading(true); setPunches([]); }
+            else { setIsLoading(true); setPunches([]); setCollectionTotal(null); }
 
-            const response = await api.getPunchHistory(params);
+            const [response, collRes] = await Promise.all([
+                api.getPunchHistory(params),
+                api.getCollections(params).catch(() => null),
+            ]);
+
             const data = Array.isArray(response.data)
                 ? response.data
                 : (response.data?.results || []);
             setPunches(data.sort((a, b) => new Date(b.punched_at) - new Date(a.punched_at)));
+
+            const collList = Array.isArray(collRes?.data)
+                ? collRes.data
+                : (collRes?.data?.results || []);
+            const total = collList.reduce((sum, c) => sum + parseFloat(c.amount || 0), 0);
+            setCollectionTotal(total);
         } catch (err) {
             setHasError(true);
             const { message } = parseApiError(err);
@@ -430,7 +446,7 @@ const PunchHistoryScreen = ({ navigation }) => {
                                     </TouchableOpacity>
                                 </View>
                             )}
-                            <SummaryBar punches={punches} />
+                            <SummaryBar punches={punches} collectionTotal={collectionTotal} />
                         </>
                     }
                     ListEmptyComponent={

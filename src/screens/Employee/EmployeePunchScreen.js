@@ -118,6 +118,128 @@ const EmployeePunchScreen = ({ navigation }) => {
     vehicle_number: '',
   });
 
+  // ── Address proximity helpers ──────────────────────────────────────────────
+  // Haversine distance between two GPS points, returns metres.
+  const haversineMeters = (lat1, lon1, lat2, lon2) => {
+    const R = 6371000;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+
+  // Bounding box ~250 m around a point (in decimal degrees).
+  const bbox250m = (lat, lng) => {
+    const d = 0.00225;
+    return `${lng - d},${lat - d},${lng + d},${lat + d}`;
+  };
+
+  // Nearby address suggestions (OpenStreetMap Nominatim — no API key needed).
+  const [addressSuggestions, setAddressSuggestions] = useState([]);
+  const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
+  const [addressVerified, setAddressVerified] = useState(false);
+  const [addressLoading, setAddressLoading] = useState(false);
+  const [addressWarn, setAddressWarn] = useState('');
+  const addressDebounceRef = useRef(null);
+
+  const fetchNearbyAddresses = useCallback(async (query = '') => {
+    if (!localLocation) return;
+    setAddressLoading(true);
+    try {
+      const { latitude, longitude } = localLocation;
+      const bb = bbox250m(latitude, longitude);
+      const headers = { 'User-Agent': 'TAS-Enterprise/1.0 (field-operations)' };
+
+      if (!query || query.length < 2) {
+        // On focus: reverse-geocode current position + nearby places.
+        const [revRes, nearRes] = await Promise.all([
+          fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1&zoom=18`,
+            { headers }
+          ),
+          fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&bounded=1&viewbox=${bb}&limit=6&countrycodes=in`,
+            { headers }
+          ),
+        ]);
+        const rev = await revRes.json();
+        const near = await nearRes.json();
+
+        const list = [];
+        if (rev?.display_name) {
+          list.push({ id: '__current__', label: rev.display_name, lat: latitude, lng: longitude, isCurrent: true });
+        }
+        (near || []).forEach((p, i) => {
+          if (p.display_name !== rev?.display_name) {
+            list.push({ id: `n${i}`, label: p.display_name, lat: parseFloat(p.lat), lng: parseFloat(p.lon) });
+          }
+        });
+        setAddressSuggestions(list.slice(0, 6));
+      } else {
+        // Typed query: search within the 250 m box.
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&bounded=1&viewbox=${bb}&countrycodes=in&limit=6`,
+          { headers }
+        );
+        const results = await res.json();
+        setAddressSuggestions(
+          (results || []).map((p, i) => ({
+            id: `s${i}`,
+            label: p.display_name,
+            lat: parseFloat(p.lat),
+            lng: parseFloat(p.lon),
+          }))
+        );
+      }
+      setShowAddressSuggestions(true);
+    } catch {
+      setAddressSuggestions([]);
+    } finally {
+      setAddressLoading(false);
+    }
+  }, [localLocation]);
+
+  const applyAddressSuggestion = (s) => {
+    updateForm('customer_address', s.label);
+    setAddressVerified(true);
+    setAddressWarn('');
+    setShowAddressSuggestions(false);
+    setAddressSuggestions([]);
+  };
+
+  // Called on submit: geocode a manually typed address and verify proximity.
+  const verifyAddressOnSubmit = useCallback(async () => {
+    if (!localLocation || !form.customer_address || addressVerified) return true;
+    try {
+      const { latitude, longitude } = localLocation;
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(form.customer_address)}&format=json&limit=1&countrycodes=in`,
+        { headers: { 'User-Agent': 'TAS-Enterprise/1.0' } }
+      );
+      const results = await res.json();
+      if (!results?.length) return true; // Can't geocode → allow, no data
+      const dist = haversineMeters(latitude, longitude, parseFloat(results[0].lat), parseFloat(results[0].lon));
+      if (dist > 250) {
+        return await new Promise((resolve) =>
+          Alert.alert(
+            'Address Out of Range',
+            `The address you entered is ~${Math.round(dist)} m from your GPS location (limit 250 m). It may be incorrect.\n\nProceed anyway?`,
+            [
+              { text: 'Fix Address', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Proceed', style: 'destructive', onPress: () => resolve(true) },
+            ]
+          )
+        );
+      }
+      return true;
+    } catch {
+      return true; // Network error → allow
+    }
+  }, [localLocation, form.customer_address, addressVerified]);
+
   // Loan ID autocomplete from the employee's uploaded collection records.
   const [loanSuggestions, setLoanSuggestions] = useState([]);
   const [showLoanSuggestions, setShowLoanSuggestions] = useState(false);
@@ -287,6 +409,10 @@ const EmployeePunchScreen = ({ navigation }) => {
       Alert.alert('Error', 'Location not captured');
       return;
     }
+    if (form.customer_address) {
+      const ok = await verifyAddressOnSubmit();
+      if (!ok) return;
+    }
 
     const locationData = {
       ...localLocation,
@@ -314,6 +440,10 @@ const EmployeePunchScreen = ({ navigation }) => {
         vehicle_number: '',
       });
       setLocalLocation(null);
+      setAddressVerified(false);
+      setAddressWarn('');
+      setAddressSuggestions([]);
+      setShowAddressSuggestions(false);
       resetForm();
       Alert.alert('Success', 'Punch recorded! Add another punch or tap close.');
     }
@@ -703,7 +833,100 @@ const EmployeePunchScreen = ({ navigation }) => {
               )}
 
               <Text style={styles.label}>Customer Address</Text>
-              <TextInput style={styles.input} value={form.customer_address} onChangeText={(t) => updateForm('customer_address', t)} placeholder="Customer Address" placeholderTextColor={colors.textMuted} />
+              {/* Smart address input — shows nearby addresses (within 250 m of GPS) */}
+              <View style={{ position: 'relative', zIndex: 50 }}>
+                <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', paddingVertical: 0, paddingHorizontal: 0 }]}>
+                  <TextInput
+                    style={{ flex: 1, color: colors.text, fontSize: 14, paddingVertical: 10, paddingHorizontal: 12 }}
+                    value={form.customer_address}
+                    onChangeText={(t) => {
+                      updateForm('customer_address', t);
+                      setAddressVerified(false);
+                      setAddressWarn('');
+                      if (addressDebounceRef.current) clearTimeout(addressDebounceRef.current);
+                      addressDebounceRef.current = setTimeout(() => fetchNearbyAddresses(t), 400);
+                    }}
+                    onFocus={() => fetchNearbyAddresses('')}
+                    onBlur={() => { setTimeout(() => setShowAddressSuggestions(false), 250); }}
+                    placeholder="Tap to see nearby addresses…"
+                    placeholderTextColor={colors.textMuted}
+                    multiline={false}
+                  />
+                  {addressLoading
+                    ? <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 10 }} />
+                    : addressVerified
+                      ? <Icon name="check-circle" size={16} color="#16a34a" style={{ marginRight: 10 }} />
+                      : <Icon name="map-pin" size={16} color={colors.textMuted} style={{ marginRight: 10 }} />
+                  }
+                </View>
+
+                {/* GPS-verified badge */}
+                {addressVerified && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3, marginLeft: 2, gap: 4 }}>
+                    <Icon name="shield" size={10} color="#16a34a" />
+                    <Text style={{ fontSize: 10, color: '#16a34a', fontWeight: '700', letterSpacing: 0.3 }}>
+                      GPS VERIFIED · WITHIN 250 m
+                    </Text>
+                  </View>
+                )}
+
+                {/* Out-of-range warning */}
+                {!!addressWarn && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3, marginLeft: 2, gap: 4 }}>
+                    <Icon name="alert-triangle" size={10} color="#d97706" />
+                    <Text style={{ fontSize: 10, color: '#d97706', fontWeight: '600' }}>{addressWarn}</Text>
+                  </View>
+                )}
+
+                {/* Nearby suggestions dropdown */}
+                {showAddressSuggestions && addressSuggestions.length > 0 && (
+                  <View style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 999,
+                    backgroundColor: colors.surface || '#fff',
+                    borderRadius: 10,
+                    borderWidth: 1, borderColor: colors.border || '#e5e7eb',
+                    elevation: 12,
+                    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.18, shadowRadius: 10,
+                    maxHeight: 240, overflow: 'hidden',
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', padding: 8, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: colors.border || '#f3f4f6' }}>
+                      <Icon name="map-pin" size={11} color={colors.primary} />
+                      <Text style={{ fontSize: 10, color: colors.primary, fontWeight: '700', marginLeft: 4, letterSpacing: 0.4 }}>
+                        NEARBY ADDRESSES · 250 m RADIUS
+                      </Text>
+                    </View>
+                    <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                      {addressSuggestions.map((s) => (
+                        <TouchableOpacity
+                          key={s.id}
+                          style={{
+                            flexDirection: 'row', alignItems: 'flex-start',
+                            paddingHorizontal: 12, paddingVertical: 10,
+                            borderBottomWidth: 1, borderBottomColor: colors.border || '#f3f4f6', gap: 8,
+                          }}
+                          onPress={() => applyAddressSuggestion(s)}
+                        >
+                          <Icon
+                            name={s.isCurrent ? 'crosshair' : 'map'}
+                            size={13}
+                            color={s.isCurrent ? colors.primary : colors.textMuted}
+                            style={{ marginTop: 1 }}
+                          />
+                          <Text style={{ flex: 1, fontSize: 12, color: colors.text, lineHeight: 16 }} numberOfLines={3}>
+                            {s.label}
+                          </Text>
+                          {s.isCurrent && (
+                            <View style={{ backgroundColor: (colors.primary || '#dc2626') + '18', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' }}>
+                              <Text style={{ fontSize: 9, color: colors.primary, fontWeight: '800', letterSpacing: 0.3 }}>YOU</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
 
               <Text style={styles.label}>Travel With</Text>
               <View style={styles.chips}>
