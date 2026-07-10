@@ -541,7 +541,15 @@ const EmployeeHomeScreen = ({ navigation }) => {
         return [
             { id: 'distance', icon: 'navigation', value: distanceValue, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km' },
             { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
-            { id: 'collected', icon: 'dollar-sign', value: collectionStats?.today?.amount ?? summary?.total_collection ?? 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
+            {
+                id: 'collected', icon: 'dollar-sign', label: 'Collected',
+                iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹',
+                // Combined: collection-record updates + direct punch collections.
+                // Fall back to the attendance daily_summary when dashboard_stats not yet loaded.
+                value: collectionStats
+                    ? (collectionStats.today?.amount ?? 0)
+                    : (summary?.total_collection ?? 0),
+            },
             { id: 'disbursement', icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.danger, bgColor: colors.dangerLight, prefix: '₹' },
         ];
     }, [summary, isActive, isTracking, liveDistance, collectionStats]);
