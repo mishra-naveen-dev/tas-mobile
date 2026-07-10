@@ -442,13 +442,20 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })()}
-                                {item.collection_type === 'OD' && item.dpd_days != null && (
-                                    <View style={[styles.typeTag, { backgroundColor: colors.danger + '1A' }]}>
-                                        <Text style={[styles.typeTagText, { color: colors.danger }]}>
-                                            DPD {item.dpd_days} ({item.dpd_bucket})
-                                        </Text>
-                                    </View>
-                                )}
+                                {item.dpd_days != null && item.dpd_days > 0 && (() => {
+                                    const d = item.dpd_days;
+                                    const c = d > 90 ? '#7f1d1d'
+                                            : d > 60 ? '#b91c1c'
+                                            : d > 30 ? '#d97706'
+                                            : '#f59e0b';
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: c + '22' }]}>
+                                            <Text style={[styles.typeTagText, { color: c, fontWeight: '800' }]}>
+                                                DPD {d}
+                                            </Text>
+                                        </View>
+                                    );
+                                })()}
                             </View>
                         </View>
                         <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
@@ -483,6 +490,27 @@ const CollectionsScreen = () => {
                             {item.collected_amount != null ? `  ·  Collected: ${fmtAmount(item.collected_amount)}` : ''}
                         </Text>
                     </View>
+
+                    {item.dpd_days != null && (
+                        <View style={styles.row}>
+                            {(() => {
+                                const d = item.dpd_days;
+                                const c = d === 0 ? colors.success
+                                        : d > 90 ? '#7f1d1d'
+                                        : d > 60 ? '#b91c1c'
+                                        : d > 30 ? '#d97706'
+                                        : '#f59e0b';
+                                return (
+                                    <>
+                                        <Icon name="alert-circle" size={15} color={c} />
+                                        <Text style={[styles.rowText, { color: c, fontWeight: d > 0 ? '700' : '400' }]}>
+                                            DPD: {d} days{item.dpd_bucket ? ` (${item.dpd_bucket})` : ''}
+                                        </Text>
+                                    </>
+                                );
+                            })()}
+                        </View>
+                    )}
 
                     {!!item.due_date && (
                         <View style={styles.row}>
