@@ -137,11 +137,9 @@ const EmployeePunchScreen = ({ navigation }) => {
     return `${lng - d},${lat - d},${lng + d},${lat + d}`;
   };
 
-  // ~100 km bounding box — used with bounded=1 for typed queries.
-  // 100 km covers any realistic field-officer work area while keeping
-  // results within the same state (MP is 300+ km from Gujarat).
-  const bbox100km = (lat, lng) => {
-    const d = 0.9;
+  // ~100 m bounding box — used with bounded=1 for typed queries.
+  const bbox100m = (lat, lng) => {
+    const d = 0.0009; // ~100 m
     return `${lng - d},${lat - d},${lng + d},${lat + d}`;
   };
 
@@ -189,7 +187,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       } else {
         // Typed query: wide search biased toward the user's area (no bounded
         // restriction so "Sakar 3", "Main Road", etc. resolve correctly).
-        const wideBb = bbox100km(latitude, longitude);
+        const wideBb = bbox100m(latitude, longitude);
         const res = await fetch(
           `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&bounded=1&viewbox=${wideBb}&countrycodes=in&limit=8`,
           { headers }
