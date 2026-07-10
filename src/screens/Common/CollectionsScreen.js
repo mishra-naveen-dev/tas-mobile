@@ -70,7 +70,7 @@ const DPD_BUCKET_OPTIONS = [
     { value: '0-30', label: '0-30', min: 0, max: 30 },
     { value: '31-60', label: '31-60', min: 31, max: 60 },
     { value: '61-90', label: '61-90', min: 61, max: 90 },
-    { value: '90+', label: '90+', min: 91, max: Infinity },
+    { value: '91+', label: '91+', min: 91, max: Infinity },
 ];
 const matchesDpdBucket = (days, bucketValue) => {
     if (days == null) return false;
