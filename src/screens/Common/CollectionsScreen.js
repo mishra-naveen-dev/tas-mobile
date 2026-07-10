@@ -329,7 +329,7 @@ const CollectionsScreen = () => {
         return records.filter(r => {
             if (activeFilter !== 'ALL' && r.status !== activeFilter) return false;
             if (typeFilter !== 'ALL' && (r.collection_type || 'REGULAR') !== typeFilter) return false;
-            if (typeFilter === 'OD' && dpdFilter !== 'ALL' && !matchesDpdBucket(r.dpd_days, dpdFilter)) return false;
+            if (typeFilter === 'OD' && dpdFilter !== 'ALL' && r.dpd_bucket !== dpdFilter) return false;
             if (!q) return true;
             return (
                 (r.loan_id || '').toLowerCase().includes(q) ||
