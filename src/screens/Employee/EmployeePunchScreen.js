@@ -150,6 +150,7 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [addressLoading, setAddressLoading] = useState(false);
   const [addressWarn, setAddressWarn] = useState('');
   const addressDebounceRef = useRef(null);
+  const selectingAddressRef = useRef(false);
 
   const fetchNearbyAddresses = useCallback(async (query = '') => {
     if (!localLocation) return;
@@ -211,6 +212,7 @@ const EmployeePunchScreen = ({ navigation }) => {
   }, [localLocation]);
 
   const applyAddressSuggestion = (s) => {
+    selectingAddressRef.current = false;
     updateForm('customer_address', s.label);
     setAddressVerified(true);
     setAddressWarn('');
@@ -672,7 +674,7 @@ const EmployeePunchScreen = ({ navigation }) => {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
               {localLocation && (
                 <View style={[styles.locCard, { backgroundColor: isMockLocation ? colors.warningLight : colors.successLight }]}>
                   <Icon name={isMockLocation ? 'smartphone' : 'map-pin'} size={18} color={isMockLocation ? colors.warning : colors.success} />
@@ -855,7 +857,11 @@ const EmployeePunchScreen = ({ navigation }) => {
                       addressDebounceRef.current = setTimeout(() => fetchNearbyAddresses(t), 400);
                     }}
                     onFocus={() => fetchNearbyAddresses('')}
-                    onBlur={() => { setTimeout(() => setShowAddressSuggestions(false), 250); }}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        if (!selectingAddressRef.current) setShowAddressSuggestions(false);
+                      }, 300);
+                    }}
                     placeholder="Tap to see nearby addresses…"
                     placeholderTextColor={colors.textMuted}
                     multiline={false}
@@ -913,7 +919,9 @@ const EmployeePunchScreen = ({ navigation }) => {
                             paddingHorizontal: 12, paddingVertical: 10,
                             borderBottomWidth: 1, borderBottomColor: colors.border || '#f3f4f6', gap: 8,
                           }}
+                          onPressIn={() => { selectingAddressRef.current = true; }}
                           onPress={() => applyAddressSuggestion(s)}
+                          onPressOut={() => { if (!selectingAddressRef.current) return; }}
                         >
                           <Icon
                             name={s.isCurrent ? 'crosshair' : 'map'}
