@@ -802,6 +802,16 @@ const CollectionsScreen = () => {
                             {typeFilter === 'OD' && dpdFilter !== 'ALL' ? ` (DPD ${dpdFilter})` : ''}
                             {'  ·  '}{filtered.length} results
                         </Text>
+                        {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL') && (
+                            <TouchableOpacity
+                                style={styles.resetIconBtn}
+                                onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); }}
+                                activeOpacity={0.75}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                                <Icon name="rotate-ccw" size={15} color={colors.primary} />
+                            </TouchableOpacity>
+                        )}
                     </View>
 
                     {/* ── Filter modal: Status (parent) + Type (sub) ── */}
@@ -1245,6 +1255,12 @@ const styles = StyleSheet.create({
     },
     filterBadgeText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
     filterSummary: { flex: 1, fontSize: typography.sizes.xs, color: colors.textMuted },
+    resetIconBtn: {
+        width: 30, height: 30, borderRadius: 15,
+        borderWidth: 1, borderColor: colors.primary + '50',
+        backgroundColor: colors.primary + '12',
+        alignItems: 'center', justifyContent: 'center',
+    },
     resetBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
 
     loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2 },
