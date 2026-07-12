@@ -23,15 +23,33 @@ const IS_DEV = __DEV__;
  */
 
 const CONFIG = {
-  pingIntervalMs: 10 * 1000,   // capture a fresh fix every 10 seconds (per spec)
-  fixTimeoutMs: 9 * 1000,      // per-fix GPS timeout — must be < pingIntervalMs
-  syncIntervalMs: 60 * 1000,   // flush queued pings to server once a minute (low server load)
-  maxBatchSize: 6,             // ...or sooner once this many are queued (~60s)
-  maxQueueRetained: 2000,      // safety cap on the in-memory/persisted queue
-  maxAccuracyMetres: 100,      // ignore fixes worse than 100 m — drops WiFi/cell noise
+  pingIntervalMs:    10 * 1000,  // capture a fresh fix every 10 seconds (per spec)
+  fixTimeoutMs:       9 * 1000,  // per-fix GPS timeout — must be < pingIntervalMs
+  syncIntervalMs:    60 * 1000,  // flush queued pings to server once a minute (low server load)
+  maxBatchSize:               6, // ...or sooner once this many are queued (~60s)
+  maxQueueRetained:        2000, // safety cap on the in-memory/persisted queue
+  maxAccuracyMetres:         80, // reject fixes worse than 80 m (server also checks this)
+  maxSpeedKmh:              200, // reject device-reported speed above this
+  duplicateDistMetres:        3, // suppress if < 3 m from last queued fix…
+  duplicateTimeSecs:         10, // …within 10 seconds
+  stationaryDistMetres:       5, // suppress if < 5 m from last queued fix…
+  stationaryWindowSecs:      60, // …and we already queued a fix within this window
 };
 
 const QUEUE_KEY = '@tas_live_tracking_queue';
+
+// Haversine distance between two coordinates in metres (client-side copy)
+function _distanceM(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.asin(Math.sqrt(Math.min(1, a)));
+}
 
 class LiveTrackingService {
   static sessionId = null;
@@ -40,6 +58,12 @@ class LiveTrackingService {
   static pingTimer = null;
   static syncTimer = null;
   static lastBattery = null;
+
+  // Client-side state for pre-queue validation
+  static _lastQueuedLat = null;
+  static _lastQueuedLng = null;
+  static _lastQueuedTs  = null;       // Date.now() ms
+  static _lastStationaryKeepTs = null; // Date.now() ms
 
   static async start(battery_level = null) {
     // An employee can punch in many times a day. If a session is still running
@@ -131,7 +155,11 @@ class LiveTrackingService {
     }
 
     this.sessionId = null;
-    this.queue = [];
+    this.queue     = [];
+    this._lastQueuedLat       = null;
+    this._lastQueuedLng       = null;
+    this._lastQueuedTs        = null;
+    this._lastStationaryKeepTs = null;
     try { await AsyncStorage.removeItem(QUEUE_KEY); } catch {}
 
     if (IS_DEV) console.log('[Live] Stopped');
@@ -166,24 +194,63 @@ class LiveTrackingService {
     const { latitude, longitude, accuracy, speed, altitude, heading } = coords;
     if (!this._isValidCoord(latitude, longitude)) return;
 
-    // Reject low-quality fixes (WiFi positioning, indoors) — same 100 m threshold
-    // used by LocationService so route points are always GPS-quality.
+    // 1 — Accuracy gate (matches server threshold)
     if (accuracy != null && accuracy > CONFIG.maxAccuracyMetres) {
       if (IS_DEV) console.log('[Live] Skipped low-accuracy fix:', accuracy.toFixed(0), 'm');
       return;
     }
 
+    const speedKmh = speed != null ? speed * 3.6 : null; // m/s → km/h
+
+    // 2 — Speed gate
+    if (speedKmh != null && speedKmh > CONFIG.maxSpeedKmh) {
+      if (IS_DEV) console.log('[Live] Skipped high-speed fix:', speedKmh.toFixed(0), 'km/h');
+      return;
+    }
+
     const now = Date.now();
+
+    // 3 — Duplicate & stationary suppression (client-side, reduces data volume)
+    if (this._lastQueuedLat != null) {
+      const distM = _distanceM(
+        this._lastQueuedLat, this._lastQueuedLng, latitude, longitude,
+      );
+      const deltaS = (now - this._lastQueuedTs) / 1000;
+
+      // Exact duplicate — same spot within 10 s
+      if (distM < CONFIG.duplicateDistMetres && deltaS < CONFIG.duplicateTimeSecs) {
+        if (IS_DEV) console.log('[Live] Skipped duplicate fix:', distM.toFixed(1), 'm');
+        return;
+      }
+
+      // Stationary — barely moved within the stationary window
+      if (distM < CONFIG.stationaryDistMetres) {
+        const lastKeepAge = this._lastStationaryKeepTs != null
+          ? (now - this._lastStationaryKeepTs) / 1000
+          : Infinity;
+        if (lastKeepAge < CONFIG.stationaryWindowSecs) {
+          if (IS_DEV) console.log('[Live] Skipped stationary fix:', distM.toFixed(1), 'm');
+          return;
+        }
+        this._lastStationaryKeepTs = now;
+      } else {
+        this._lastStationaryKeepTs = null;
+      }
+    }
+
+    this._lastQueuedLat = latitude;
+    this._lastQueuedLng = longitude;
+    this._lastQueuedTs  = now;
 
     this.queue.push({
       latitude,
       longitude,
-      accuracy: accuracy ?? null,
-      speed: speed != null ? speed * 3.6 : null, // m/s -> km/h
-      altitude: altitude ?? null,
-      heading: heading ?? null,
+      accuracy:      accuracy ?? null,
+      speed:         speedKmh,
+      altitude:      altitude ?? null,
+      heading:       heading ?? null,
       battery_level: this.lastBattery,
-      timestamp: new Date(position.timestamp || now).toISOString(),
+      timestamp:     new Date(position.timestamp || now).toISOString(),
     });
 
     if (this.queue.length > CONFIG.maxQueueRetained) {

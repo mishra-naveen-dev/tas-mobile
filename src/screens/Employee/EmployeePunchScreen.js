@@ -27,7 +27,7 @@ const REASON_PRESETS = [
   { value: 'Brch_Audit',    label: 'Brch Audit' },
   { value: 'P2P_JLG',       label: 'P2P JLG' },
   { value: 'Custil_Aud',    label: 'Custil Aud' },
-  { value: 'CusJLG_Aud',    label: 'CusJLG Aud' },
+  { value: 'CustJLG_Aud',    label: 'CustJLG Aud' },
   { value: 'Branch_Visit',  label: 'Branch Visit' },
 ];
 
@@ -131,9 +131,15 @@ const EmployeePunchScreen = ({ navigation }) => {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
-  // Bounding box ~250 m around a point (in decimal degrees).
+  // Bounding box ~250 m around a point — used for the on-focus nearby fetch.
   const bbox250m = (lat, lng) => {
     const d = 0.00225;
+    return `${lng - d},${lat - d},${lng + d},${lat + d}`;
+  };
+
+  // ~200 m bounding box — used with bounded=1 for typed queries.
+  const bbox100m = (lat, lng) => {
+    const d = 0.0018; // ~200 m
     return `${lng - d},${lat - d},${lng + d},${lat + d}`;
   };
 
@@ -144,6 +150,7 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [addressLoading, setAddressLoading] = useState(false);
   const [addressWarn, setAddressWarn] = useState('');
   const addressDebounceRef = useRef(null);
+  const selectingAddressRef = useRef(false);
 
   const fetchNearbyAddresses = useCallback(async (query = '') => {
     if (!localLocation) return;
@@ -179,9 +186,11 @@ const EmployeePunchScreen = ({ navigation }) => {
         });
         setAddressSuggestions(list.slice(0, 6));
       } else {
-        // Typed query: search within the 250 m box.
+        // Typed query: wide search biased toward the user's area (no bounded
+        // restriction so "Sakar 3", "Main Road", etc. resolve correctly).
+        const wideBb = bbox100m(latitude, longitude);
         const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&bounded=1&viewbox=${bb}&countrycodes=in&limit=6`,
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&bounded=1&viewbox=${wideBb}&countrycodes=in&limit=8`,
           { headers }
         );
         const results = await res.json();
@@ -203,6 +212,7 @@ const EmployeePunchScreen = ({ navigation }) => {
   }, [localLocation]);
 
   const applyAddressSuggestion = (s) => {
+    selectingAddressRef.current = false;
     updateForm('customer_address', s.label);
     setAddressVerified(true);
     setAddressWarn('');
@@ -664,7 +674,7 @@ const EmployeePunchScreen = ({ navigation }) => {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
               {localLocation && (
                 <View style={[styles.locCard, { backgroundColor: isMockLocation ? colors.warningLight : colors.successLight }]}>
                   <Icon name={isMockLocation ? 'smartphone' : 'map-pin'} size={18} color={isMockLocation ? colors.warning : colors.success} />
@@ -847,7 +857,11 @@ const EmployeePunchScreen = ({ navigation }) => {
                       addressDebounceRef.current = setTimeout(() => fetchNearbyAddresses(t), 400);
                     }}
                     onFocus={() => fetchNearbyAddresses('')}
-                    onBlur={() => { setTimeout(() => setShowAddressSuggestions(false), 250); }}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        if (!selectingAddressRef.current) setShowAddressSuggestions(false);
+                      }, 300);
+                    }}
                     placeholder="Tap to see nearby addresses…"
                     placeholderTextColor={colors.textMuted}
                     multiline={false}
@@ -905,7 +919,9 @@ const EmployeePunchScreen = ({ navigation }) => {
                             paddingHorizontal: 12, paddingVertical: 10,
                             borderBottomWidth: 1, borderBottomColor: colors.border || '#f3f4f6', gap: 8,
                           }}
+                          onPressIn={() => { selectingAddressRef.current = true; }}
                           onPress={() => applyAddressSuggestion(s)}
+                          onPressOut={() => { if (!selectingAddressRef.current) return; }}
                         >
                           <Icon
                             name={s.isCurrent ? 'crosshair' : 'map'}

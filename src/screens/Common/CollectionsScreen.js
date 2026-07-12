@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Component } from 'react';
 import {
     View,
     Text,
@@ -70,13 +70,44 @@ const DPD_BUCKET_OPTIONS = [
     { value: '0-30', label: '0-30', min: 0, max: 30 },
     { value: '31-60', label: '31-60', min: 31, max: 60 },
     { value: '61-90', label: '61-90', min: 61, max: 90 },
-    { value: '90+', label: '90+', min: 91, max: Infinity },
+    { value: '91+', label: '91+', min: 91, max: Infinity },
 ];
 const matchesDpdBucket = (days, bucketValue) => {
     if (days == null) return false;
     const bucket = DPD_BUCKET_OPTIONS.find(b => b.value === bucketValue);
     return bucket ? days >= bucket.min && days <= bucket.max : false;
 };
+
+// ── Map error boundary — prevents a MapView crash from killing the whole screen ──
+class MapErrorBoundary extends Component {
+    state = { crashed: false };
+    static getDerivedStateFromError() { return { crashed: true }; }
+    componentDidCatch(err) { console.warn('[CollectionsMap] crash caught:', err?.message); }
+    render() {
+        if (this.state.crashed) {
+            return (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                    <Icon name="alert-triangle" size={32} color="#d97706" />
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#92400e', marginTop: 12, textAlign: 'center' }}>
+                        Map unavailable
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#b45309', marginTop: 4, textAlign: 'center' }}>
+                        Could not load the map. Check your connection or try again.
+                    </Text>
+                    <TouchableOpacity
+                        onPress={() => this.setState({ crashed: false })}
+                        style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#fef3c7', borderRadius: 8, borderWidth: 1, borderColor: '#fbbf24' }}
+                    >
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400e' }}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+const PAGE_SIZE = 20;
 
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -101,9 +132,15 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
     const mapRef = useRef(null);
     const currentRegion = useRef(null);
 
-    // All customers with GPS (both pending and done — shows progress on map)
+    // All customers with valid GPS — always parse to float to avoid MapView crash
     const pinned = useMemo(
-        () => records.filter(r => r.visit_latitude != null && r.visit_longitude != null),
+        () => records
+            .map(r => ({
+                ...r,
+                visit_latitude:  parseFloat(r.visit_latitude),
+                visit_longitude: parseFloat(r.visit_longitude),
+            }))
+            .filter(r => !isNaN(r.visit_latitude) && !isNaN(r.visit_longitude)),
         [records]
     );
 
@@ -169,6 +206,7 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
 
     return (
         <View style={styles.mapWrapper}>
+          <MapErrorBoundary>
             <MapView
                 ref={mapRef}
                 provider={PROVIDER_GOOGLE}
@@ -239,6 +277,7 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
             <TouchableOpacity style={styles.recenterBtn} onPress={reCenter} activeOpacity={0.75}>
                 <Icon name="crosshair" size={20} color={colors.primary} />
             </TouchableOpacity>
+          </MapErrorBoundary>
         </View>
     );
 };
@@ -273,6 +312,9 @@ const CollectionsScreen = () => {
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const [pageLoading, setPageLoading] = useState(false);
 
     const [search, setSearch] = useState('');
     const [activeFilter, setActiveFilter] = useState('ALL');
@@ -288,21 +330,39 @@ const CollectionsScreen = () => {
     const [saving, setSaving] = useState(false);
     const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
-    const fetchRecords = useCallback(async () => {
+    // Fetch a single page; pass reset=true on refresh/filter-change to clear existing records
+    const fetchRecords = useCallback(async (pageNum = 1, reset = false) => {
+        if (pageNum === 1) reset = true;
+        if (pageNum > 1) setPageLoading(true);
+        else if (reset) setLoading(true);
         try {
-            const res = await api.getCollections();
-            setRecords(res.data.results || res.data || []);
-        } catch (e) {
-            Alert.alert('Error', 'Could not load your collections.');
+            const res = await api.getCollections({ page: pageNum, page_size: PAGE_SIZE });
+            const data   = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
+            const total  = res.data?.count   ?? data.length;
+            setRecords(prev => reset ? data : [...prev, ...data]);
+            setPage(pageNum);
+            setHasMore(records.length + data.length < total || !!res.data?.next);
+        } catch {
+            if (pageNum === 1) Alert.alert('Error', 'Could not load your collections.');
         } finally {
             setLoading(false);
             setRefreshing(false);
+            setPageLoading(false);
         }
-    }, []);
+    }, [records.length]);
 
-    useEffect(() => { fetchRecords(); }, [fetchRecords]);
+    useEffect(() => { fetchRecords(1, true); }, []);
 
-    const onRefresh = () => { setRefreshing(true); fetchRecords(); };
+    const onRefresh = useCallback(() => {
+        setRefreshing(true);
+        fetchRecords(1, true);
+    }, [fetchRecords]);
+
+    const onEndReached = useCallback(() => {
+        if (!pageLoading && !loading && hasMore) {
+            fetchRecords(page + 1, false);
+        }
+    }, [pageLoading, loading, hasMore, page, fetchRecords]);
 
     // ── Derived stats & filtering ─────────────────────────────────────────
     const stats = useMemo(() => {
@@ -329,7 +389,7 @@ const CollectionsScreen = () => {
         return records.filter(r => {
             if (activeFilter !== 'ALL' && r.status !== activeFilter) return false;
             if (typeFilter !== 'ALL' && (r.collection_type || 'REGULAR') !== typeFilter) return false;
-            if (typeFilter === 'OD' && dpdFilter !== 'ALL' && !matchesDpdBucket(r.dpd_days, dpdFilter)) return false;
+            if (typeFilter === 'OD' && dpdFilter !== 'ALL' && r.dpd_bucket !== dpdFilter) return false;
             if (!q) return true;
             return (
                 (r.loan_id || '').toLowerCase().includes(q) ||
@@ -442,13 +502,20 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })()}
-                                {item.collection_type === 'OD' && item.dpd_days != null && (
-                                    <View style={[styles.typeTag, { backgroundColor: colors.danger + '1A' }]}>
-                                        <Text style={[styles.typeTagText, { color: colors.danger }]}>
-                                            DPD {item.dpd_days} ({item.dpd_bucket})
-                                        </Text>
-                                    </View>
-                                )}
+                                {item.dpd_days != null && item.dpd_days > 0 && (() => {
+                                    const d = item.dpd_days;
+                                    const c = d > 90 ? '#7f1d1d'
+                                            : d > 60 ? '#b91c1c'
+                                            : d > 30 ? '#d97706'
+                                            : '#f59e0b';
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: c + '22' }]}>
+                                            <Text style={[styles.typeTagText, { color: c, fontWeight: '800' }]}>
+                                                DPD {d}
+                                            </Text>
+                                        </View>
+                                    );
+                                })()}
                             </View>
                         </View>
                         <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
@@ -483,6 +550,27 @@ const CollectionsScreen = () => {
                             {item.collected_amount != null ? `  ·  Collected: ${fmtAmount(item.collected_amount)}` : ''}
                         </Text>
                     </View>
+
+                    {item.dpd_days != null && (
+                        <View style={styles.row}>
+                            {(() => {
+                                const d = item.dpd_days;
+                                const c = d === 0 ? colors.success
+                                        : d > 90 ? '#7f1d1d'
+                                        : d > 60 ? '#b91c1c'
+                                        : d > 30 ? '#d97706'
+                                        : '#f59e0b';
+                                return (
+                                    <>
+                                        <Icon name="alert-circle" size={15} color={c} />
+                                        <Text style={[styles.rowText, { color: c, fontWeight: d > 0 ? '700' : '400' }]}>
+                                            DPD: {d} days{item.dpd_bucket ? ` (${item.dpd_bucket})` : ''}
+                                        </Text>
+                                    </>
+                                );
+                            })()}
+                        </View>
+                    )}
 
                     {!!item.due_date && (
                         <View style={styles.row}>
@@ -607,13 +695,66 @@ const CollectionsScreen = () => {
                         />
                     </View>
 
-                    {/* Scrollable customer list — pending only, with search */}
+                    {/* Pending list below map — FlatList for virtualization */}
                     {(() => {
                         const allPending = records.filter(r => r.status !== 'COLLECTED');
                         const done = records.length - allPending.length;
                         const pending = mapPending;
+
+                        const renderMapItem = ({ item: r }) => {
+                            const meta = STATUS_META[r.status] || STATUS_META.PENDING;
+                            const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
+                            return (
+                                <View style={styles.mapListCard}>
+                                    <View style={[styles.mapListAccent, { backgroundColor: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]} />
+                                    <View style={{ flex: 1, paddingRight: 4 }}>
+                                        <View style={styles.mapListTopRow}>
+                                            <Text style={styles.mapListName} numberOfLines={1}>{r.customer_name}</Text>
+                                            <Text style={styles.mapListAmt}>{fmtCompact(r.amount_due)}</Text>
+                                        </View>
+                                        <View style={styles.mapListRow}>
+                                            <Text style={styles.mapListSub}>{r.loan_id}</Text>
+                                            <View style={[styles.mapStatusChip, { backgroundColor: (PIN_COLOR[r.status] || PIN_COLOR.PENDING) + '20' }]}>
+                                                <Text style={[styles.mapStatusChipText, { color: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]}>{meta.label}</Text>
+                                            </View>
+                                        </View>
+                                        {!!addr && (
+                                            <View style={styles.mapListInfoRow}>
+                                                <Icon name="map-pin" size={11} color={colors.textMuted} />
+                                                <Text style={styles.mapListInfoText} numberOfLines={1}>{addr}</Text>
+                                            </View>
+                                        )}
+                                        <View style={styles.mapListBottomRow}>
+                                            {!!r.customer_phone && (
+                                                <TouchableOpacity style={styles.mapListInfoRow} onPress={() => Linking.openURL(`tel:${r.customer_phone}`)}>
+                                                    <Icon name="phone" size={11} color={colors.primary} />
+                                                    <Text style={[styles.mapListInfoText, { color: colors.primary }]}>{r.customer_phone}</Text>
+                                                </TouchableOpacity>
+                                            )}
+                                            {!!r.due_date && (
+                                                <View style={styles.mapListInfoRow}>
+                                                    <Icon name="calendar" size={11} color={colors.textMuted} />
+                                                    <Text style={styles.mapListInfoText}>EMI: {fmtDate(r.due_date)}</Text>
+                                                </View>
+                                            )}
+                                        </View>
+                                        <View style={styles.mapListActions}>
+                                            <TouchableOpacity style={styles.mapNavBtn} onPress={() => navigateToCustomer(r)} activeOpacity={0.75}>
+                                                <Icon name="navigation" size={13} color={colors.primary} />
+                                                <Text style={styles.mapNavBtnText}>Navigate</Text>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity style={styles.mapUpdateBtn} onPress={() => openUpdate(r)} activeOpacity={0.75}>
+                                                <Icon name="edit-3" size={13} color="#fff" />
+                                                <Text style={styles.mapUpdateBtnText}>Update</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+                                </View>
+                            );
+                        };
+
                         return (
-                            <View style={styles.mapListSection}>
+                            <View style={[styles.mapListSection, { minHeight: 120 }]}>
                                 {/* Search bar */}
                                 <View style={styles.mapSearchWrap}>
                                     <Icon name="search" size={15} color={colors.textMuted} />
@@ -643,90 +784,25 @@ const CollectionsScreen = () => {
                                         </View>
                                     )}
                                 </View>
-                                {pending.map(r => {
-                                    const meta = STATUS_META[r.status] || STATUS_META.PENDING;
-                                    const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
-                                    return (
-                                        <View key={r.id} style={styles.mapListCard}>
-                                            {/* Status accent bar on left */}
-                                            <View style={[styles.mapListAccent, { backgroundColor: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]} />
 
-                                            <View style={{ flex: 1, paddingRight: 4 }}>
-                                                {/* Row 1: name + amount */}
-                                                <View style={styles.mapListTopRow}>
-                                                    <Text style={styles.mapListName} numberOfLines={1}>{r.customer_name}</Text>
-                                                    <Text style={styles.mapListAmt}>{fmtCompact(r.amount_due)}</Text>
-                                                </View>
-
-                                                {/* Row 2: loan ID + status chip */}
-                                                <View style={styles.mapListRow}>
-                                                    <Text style={styles.mapListSub}>{r.loan_id}</Text>
-                                                    <View style={[styles.mapStatusChip, { backgroundColor: (PIN_COLOR[r.status] || PIN_COLOR.PENDING) + '20' }]}>
-                                                        <Text style={[styles.mapStatusChipText, { color: PIN_COLOR[r.status] || PIN_COLOR.PENDING }]}>{meta.label}</Text>
-                                                    </View>
-                                                </View>
-
-                                                {/* Row 3: address */}
-                                                {!!addr && (
-                                                    <View style={styles.mapListInfoRow}>
-                                                        <Icon name="map-pin" size={11} color={colors.textMuted} />
-                                                        <Text style={styles.mapListInfoText} numberOfLines={1}>{addr}</Text>
-                                                    </View>
-                                                )}
-
-                                                {/* Row 4: phone + EMI date */}
-                                                <View style={styles.mapListBottomRow}>
-                                                    {!!r.customer_phone && (
-                                                        <TouchableOpacity
-                                                            style={styles.mapListInfoRow}
-                                                            onPress={() => Linking.openURL(`tel:${r.customer_phone}`)}
-                                                        >
-                                                            <Icon name="phone" size={11} color={colors.primary} />
-                                                            <Text style={[styles.mapListInfoText, { color: colors.primary }]}>{r.customer_phone}</Text>
-                                                        </TouchableOpacity>
-                                                    )}
-                                                    {!!r.due_date && (
-                                                        <View style={styles.mapListInfoRow}>
-                                                            <Icon name="calendar" size={11} color={colors.textMuted} />
-                                                            <Text style={styles.mapListInfoText}>EMI: {fmtDate(r.due_date)}</Text>
-                                                        </View>
-                                                    )}
-                                                </View>
-
-                                                {/* Row 5: action buttons */}
-                                                <View style={styles.mapListActions}>
-                                                    <TouchableOpacity
-                                                        style={styles.mapNavBtn}
-                                                        onPress={() => navigateToCustomer(r)}
-                                                        activeOpacity={0.75}
-                                                    >
-                                                        <Icon name="navigation" size={13} color={colors.primary} />
-                                                        <Text style={styles.mapNavBtnText}>Navigate</Text>
-                                                    </TouchableOpacity>
-                                                    <TouchableOpacity
-                                                        style={styles.mapUpdateBtn}
-                                                        onPress={() => openUpdate(r)}
-                                                        activeOpacity={0.75}
-                                                    >
-                                                        <Icon name="edit-3" size={13} color="#fff" />
-                                                        <Text style={styles.mapUpdateBtnText}>Update</Text>
-                                                    </TouchableOpacity>
-                                                </View>
-                                            </View>
+                                <FlatList
+                                    data={pending}
+                                    keyExtractor={r => String(r.id)}
+                                    renderItem={renderMapItem}
+                                    scrollEnabled={false}
+                                    initialNumToRender={8}
+                                    maxToRenderPerBatch={8}
+                                    windowSize={5}
+                                    removeClippedSubviews
+                                    ListEmptyComponent={
+                                        <View style={styles.mapAllDone}>
+                                            {mapSearch
+                                                ? <><Icon name="search" size={28} color={colors.textLight} /><Text style={[styles.mapAllDoneText, { color: colors.textMuted }]}>No customers match your search</Text></>
+                                                : <><Icon name="check-circle" size={32} color={colors.success} /><Text style={styles.mapAllDoneText}>All collections done!</Text></>
+                                            }
                                         </View>
-                                    );
-                                })}
-                                {pending.length === 0 && mapSearch ? (
-                                    <View style={styles.mapAllDone}>
-                                        <Icon name="search" size={28} color={colors.textLight} />
-                                        <Text style={[styles.mapAllDoneText, { color: colors.textMuted }]}>No customers match your search</Text>
-                                    </View>
-                                ) : pending.length === 0 ? (
-                                    <View style={styles.mapAllDone}>
-                                        <Icon name="check-circle" size={32} color={colors.success} />
-                                        <Text style={styles.mapAllDoneText}>All collections done!</Text>
-                                    </View>
-                                ) : null}
+                                    }
+                                />
                             </View>
                         );
                     })()}
@@ -774,6 +850,16 @@ const CollectionsScreen = () => {
                             {typeFilter === 'OD' && dpdFilter !== 'ALL' ? ` (DPD ${dpdFilter})` : ''}
                             {'  ·  '}{filtered.length} results
                         </Text>
+                        {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL') && (
+                            <TouchableOpacity
+                                style={styles.resetIconBtn}
+                                onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); }}
+                                activeOpacity={0.75}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                                <Icon name="rotate-ccw" size={15} color={colors.primary} />
+                            </TouchableOpacity>
+                        )}
                     </View>
 
                     {/* ── Filter modal: Status (parent) + Type (sub) ── */}
@@ -891,6 +977,24 @@ const CollectionsScreen = () => {
                             renderItem={renderItem}
                             contentContainerStyle={{ padding: spacing.md, paddingBottom: 120 }}
                             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                            onEndReached={onEndReached}
+                            onEndReachedThreshold={0.3}
+                            initialNumToRender={10}
+                            maxToRenderPerBatch={10}
+                            windowSize={7}
+                            removeClippedSubviews
+                            ListFooterComponent={
+                                pageLoading
+                                    ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                                          <ActivityIndicator size="small" color={colors.primary} />
+                                          <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>Loading more…</Text>
+                                      </View>
+                                    : !hasMore && records.length > 0
+                                        ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                                              <Text style={{ fontSize: 11, color: colors.textMuted }}>All {records.length} records loaded</Text>
+                                          </View>
+                                        : null
+                            }
                             ListEmptyComponent={
                                 <View style={styles.center}>
                                     <Icon name="inbox" size={40} color={colors.textLight} />
@@ -1217,6 +1321,12 @@ const styles = StyleSheet.create({
     },
     filterBadgeText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
     filterSummary: { flex: 1, fontSize: typography.sizes.xs, color: colors.textMuted },
+    resetIconBtn: {
+        width: 30, height: 30, borderRadius: 15,
+        borderWidth: 1, borderColor: colors.primary + '50',
+        backgroundColor: colors.primary + '12',
+        alignItems: 'center', justifyContent: 'center',
+    },
     resetBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
 
     loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2 },
