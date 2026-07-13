@@ -387,6 +387,9 @@ const CollectionsScreen = () => {
     const [userLocation, setUserLocation] = useState(null);
     const [nearMeLoading, setNearMeLoading] = useState(false);
 
+    const [listError, setListError] = useState(false);
+    const productsLoadedRef = useRef(false);
+
     // Debounce the search box so every keystroke doesn't trigger a network call.
     useEffect(() => {
         const t = setTimeout(() => setDebouncedSearch(search.trim()), 400);
@@ -438,15 +441,19 @@ const CollectionsScreen = () => {
     const fetchRecords = useCallback(async (pageNum = 1, reset = false) => {
         if (pageNum === 1) reset = true;
         if (pageNum > 1) setPageLoading(true);
-        else if (reset) setLoading(true);
+        else if (reset) { setLoading(true); setListError(false); }
         try {
             const res = await api.getCollections({ page: pageNum, page_size: PAGE_SIZE, ...buildFilterParams() });
             const data = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
             setRecords(prev => reset ? data : [...prev, ...data]);
             setPage(pageNum);
             setHasMore(!!res.data?.next);
+            setListError(false);
         } catch {
-            if (pageNum === 1) Alert.alert('Error', 'Could not load your collections.');
+            if (pageNum === 1) {
+                setListError(true);
+                setHasMore(false); // prevent onEndReached from looping on an empty error state
+            }
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -498,11 +505,14 @@ const CollectionsScreen = () => {
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
-    // Load distinct product IDs once on mount for the product filter picker
-    useEffect(() => {
+    // Products are lazy-loaded when the filter modal is first opened so they
+    // don't race with the initial collections fetch on mount.
+    const loadProducts = useCallback(() => {
+        if (productsLoadedRef.current) return;
+        productsLoadedRef.current = true;
         api.getDistinctProducts()
             .then(res => setProducts(Array.isArray(res.data) ? res.data : []))
-            .catch(() => {});
+            .catch(() => { productsLoadedRef.current = false; }); // allow retry on next open
     }, []);
 
     useEffect(() => {
@@ -514,16 +524,21 @@ const CollectionsScreen = () => {
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
+        setListError(false);
+        setHasMore(true);
         fetchRecords(1, true);
         fetchSummary();
         if (view === 'map') fetchMapRecords();
     }, [fetchRecords, fetchSummary, fetchMapRecords, view]);
 
     const onEndReached = useCallback(() => {
-        if (!pageLoading && !loading && hasMore) {
+        // Guard: records.length > 0 prevents an immediate page-2 fetch when
+        // the list is empty after a failed page-1 load (hasMore stays true
+        // after an error; we reset it above, but belt-and-suspenders here).
+        if (!pageLoading && !loading && hasMore && records.length > 0) {
             fetchRecords(page + 1, false);
         }
-    }, [pageLoading, loading, hasMore, page, fetchRecords]);
+    }, [pageLoading, loading, hasMore, records.length, page, fetchRecords]);
 
     // ── Derived stats & filtering ─────────────────────────────────────────
     // When Near Me is OFF: server-side filtering/pagination via `records`.
@@ -1043,7 +1058,7 @@ const CollectionsScreen = () => {
                     <View style={styles.filterBar}>
                         <TouchableOpacity
                             style={styles.filterBtn}
-                            onPress={() => setFilterModalVisible(true)}
+                            onPress={() => { setFilterModalVisible(true); loadProducts(); }}
                             activeOpacity={0.85}
                         >
                             <Icon name="sliders" size={15} color={colors.primary} />
@@ -1210,6 +1225,22 @@ const CollectionsScreen = () => {
 
                     {(nearMeEnabled ? (mapLoading && mapRecords.length === 0) : loading) ? (
                         <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+                    ) : listError ? (
+                        /* ── Inline error state: no alert, always retryable ── */
+                        <View style={styles.center}>
+                            <Icon name="wifi-off" size={40} color={colors.textLight} />
+                            <Text style={[styles.emptyText, { marginTop: spacing.sm }]}>
+                                Could not load collections.{'\n'}Check your connection and try again.
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.retryBtn}
+                                onPress={() => { setListError(false); setHasMore(true); fetchRecords(1, true); }}
+                                activeOpacity={0.8}
+                            >
+                                <Icon name="refresh-cw" size={14} color="#fff" />
+                                <Text style={styles.retryBtnText}>Retry</Text>
+                            </TouchableOpacity>
+                        </View>
                     ) : (
                         <FlatList
                             data={filtered}
@@ -1416,7 +1447,13 @@ const CollectionsScreen = () => {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     center: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xxxl },
-    emptyText: { marginTop: spacing.sm, color: colors.textMuted, fontSize: typography.sizes.sm, textAlign: 'center' },
+    emptyText: { marginTop: spacing.sm, color: colors.textMuted, fontSize: typography.sizes.sm, textAlign: 'center', lineHeight: 20 },
+    retryBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+        backgroundColor: colors.primary, borderRadius: borderRadius.full,
+    },
+    retryBtnText: { color: '#fff', fontWeight: '700', fontSize: typography.sizes.sm },
 
     // Header
     header: {
