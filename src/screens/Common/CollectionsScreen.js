@@ -109,6 +109,8 @@ class MapErrorBoundary extends Component {
 
 const PAGE_SIZE = 20;
 const NEAR_ME_AUTO_OFF_MS = 10 * 60 * 1000; // Near Me auto-disables after 10 minutes
+const NEAR_ME_RADIUS_OPTIONS_KM = [1, 2, 3, 4, 5];
+const NEAR_ME_DEFAULT_RADIUS_KM = 1;
 
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -387,6 +389,8 @@ const CollectionsScreen = () => {
     const [nearMeEnabled, setNearMeEnabled] = useState(false);
     const [userLocation, setUserLocation] = useState(null);
     const [nearMeLoading, setNearMeLoading] = useState(false);
+    const [nearMeRadiusKm, setNearMeRadiusKm] = useState(NEAR_ME_DEFAULT_RADIUS_KM);
+    const [radiusPickerVisible, setRadiusPickerVisible] = useState(false);
     const nearMeTimerRef = useRef(null);
 
     const [listError, setListError] = useState(false);
@@ -423,11 +427,20 @@ const CollectionsScreen = () => {
         setUserLocation(null);
     }, []);
 
-    const toggleNearMe = useCallback(async () => {
+    // Tapping Near Me while OFF opens the radius picker; tapping while ON
+    // turns it off directly (no picker) — matches the existing quick-toggle feel.
+    const toggleNearMe = useCallback(() => {
         if (nearMeEnabled) {
             disableNearMe();
             return;
         }
+        setRadiusPickerVisible(true);
+    }, [nearMeEnabled, disableNearMe]);
+
+    // Fetches location and turns Near Me on, scoped to the chosen radius.
+    const activateNearMe = useCallback(async (radiusKm) => {
+        setRadiusPickerVisible(false);
+        setNearMeRadiusKm(radiusKm);
         setNearMeLoading(true);
         try {
             const loc = await LocationService.getCurrentLocation();
@@ -450,7 +463,7 @@ const CollectionsScreen = () => {
         } finally {
             setNearMeLoading(false);
         }
-    }, [nearMeEnabled, mapRecords.length, mapLoading, fetchMapRecords, disableNearMe]);
+    }, [mapRecords.length, mapLoading, fetchMapRecords, disableNearMe]);
 
     // Clear the auto-off timer if the screen unmounts while Near Me is active.
     useEffect(() => {
@@ -604,14 +617,13 @@ const CollectionsScreen = () => {
             return { ...r, distance_km: Math.sqrt(dlat * dlat + dlng * dlng) };
         });
 
-        // Sort: customers with known location first (nearest → farthest), unknown last
-        return withDist.sort((a, b) => {
-            if (a.distance_km == null && b.distance_km == null) return 0;
-            if (a.distance_km == null) return 1;
-            if (b.distance_km == null) return -1;
-            return a.distance_km - b.distance_km;
-        });
-    }, [nearMeEnabled, userLocation, records, mapRecords, activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
+        // Only customers within the chosen radius, with a known location — an
+        // unknown location can't be confirmed as "within range" so it's excluded
+        // here (unlike the plain distance-sort, which puts unknowns last instead).
+        const withinRadius = withDist.filter(r => r.distance_km != null && r.distance_km <= nearMeRadiusKm);
+
+        return withinRadius.sort((a, b) => a.distance_km - b.distance_km);
+    }, [nearMeEnabled, userLocation, nearMeRadiusKm, records, mapRecords, activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
 
     // Map view search — non-collected only, across name/address/area/loan/date.
     // Uses mapRecords (its own dedicated fetch), not the List's filtered `records`,
@@ -898,7 +910,9 @@ const CollectionsScreen = () => {
                                 ? <ActivityIndicator size="small" color="#fff" />
                                 : <Icon name="navigation" size={13} color={nearMeEnabled ? colors.primary : 'rgba(255,255,255,0.9)'} />
                             }
-                            <Text style={[styles.nearMeHeaderBtnText, nearMeEnabled && { color: colors.primary }]}>Near Me</Text>
+                            <Text style={[styles.nearMeHeaderBtnText, nearMeEnabled && { color: colors.primary }]}>
+                                {nearMeEnabled ? `Near Me · ${nearMeRadiusKm}km` : 'Near Me'}
+                            </Text>
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
                             <Icon name="refresh-cw" size={18} color="#FFFFFF" />
@@ -1245,6 +1259,42 @@ const CollectionsScreen = () => {
                         </View>
                     </Modal>
 
+                    {/* ── Near Me radius picker ── */}
+                    <Modal
+                        visible={radiusPickerVisible}
+                        transparent
+                        animationType="slide"
+                        onRequestClose={() => setRadiusPickerVisible(false)}
+                    >
+                        <View style={styles.modalOverlay}>
+                            <View style={styles.modalContent}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>Near Me</Text>
+                                    <TouchableOpacity onPress={() => setRadiusPickerVisible(false)}>
+                                        <Icon name="x" size={22} color={colors.textDark} />
+                                    </TouchableOpacity>
+                                </View>
+                                <Text style={styles.modalSub}>
+                                    Show only customers within this distance of your current location.
+                                </Text>
+
+                                <Text style={styles.fieldLabel}>Radius</Text>
+                                <View style={styles.statusGrid}>
+                                    {NEAR_ME_RADIUS_OPTIONS_KM.map(km => (
+                                        <TouchableOpacity
+                                            key={km}
+                                            style={styles.statusOption}
+                                            onPress={() => activateNearMe(km)}
+                                            disabled={nearMeLoading}
+                                        >
+                                            <Text style={styles.statusOptionText}>{km} km</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            </View>
+                        </View>
+                    </Modal>
+
                     {(nearMeEnabled ? (mapLoading && mapRecords.length === 0) : loading) ? (
                         <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
                     ) : listError ? (
@@ -1282,7 +1332,7 @@ const CollectionsScreen = () => {
                                         ? <View style={{ paddingVertical: 14, alignItems: 'center', gap: 3 }}>
                                               <Icon name="navigation" size={13} color={colors.primary} />
                                               <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
-                                                  {filtered.filter(r => r.distance_km != null).length} of {filtered.length} customers sorted by distance
+                                                  {filtered.length} customer{filtered.length === 1 ? '' : 's'} within {nearMeRadiusKm} km, nearest first
                                               </Text>
                                           </View>
                                         : null
@@ -1301,7 +1351,11 @@ const CollectionsScreen = () => {
                                 <View style={styles.center}>
                                     <Icon name="inbox" size={40} color={colors.textLight} />
                                     <Text style={styles.emptyText}>
-                                        {(summary?.total_assigned || 0) === 0 ? 'No customers assigned to you yet.' : 'No records match this filter.'}
+                                        {(summary?.total_assigned || 0) === 0
+                                            ? 'No customers assigned to you yet.'
+                                            : nearMeEnabled
+                                                ? `No customers within ${nearMeRadiusKm} km. Try a larger radius.`
+                                                : 'No records match this filter.'}
                                     </Text>
                                 </View>
                             }
