@@ -395,6 +395,13 @@ const CollectionsScreen = () => {
 
     const [listError, setListError] = useState(false);
     const productsLoadedRef = useRef(false);
+    // Bumped on every fetchRecords/fetchMapRecords call; a response is only
+    // applied if it's still the latest request in flight. Without this, rapid
+    // filter/search changes can fire overlapping requests, and a slower older
+    // one resolving after a newer one would silently overwrite correct results
+    // with stale data.
+    const fetchSeqRef = useRef(0);
+    const mapFetchSeqRef = useRef(0);
 
     // Debounce the search box so every keystroke doesn't trigger a network call.
     useEffect(() => {
@@ -475,24 +482,29 @@ const CollectionsScreen = () => {
     // Fetch a single page; pass reset=true on refresh/filter-change to clear existing records
     const fetchRecords = useCallback(async (pageNum = 1, reset = false) => {
         if (pageNum === 1) reset = true;
+        const seq = ++fetchSeqRef.current;
         if (pageNum > 1) setPageLoading(true);
         else if (reset) { setLoading(true); setListError(false); }
         try {
             const res = await api.getCollections({ page: pageNum, page_size: PAGE_SIZE, ...buildFilterParams() });
+            if (seq !== fetchSeqRef.current) return; // superseded by a newer request — drop this stale response
             const data = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
             setRecords(prev => reset ? data : [...prev, ...data]);
             setPage(pageNum);
             setHasMore(!!res.data?.next);
             setListError(false);
         } catch {
+            if (seq !== fetchSeqRef.current) return;
             if (pageNum === 1) {
                 setListError(true);
                 setHasMore(false); // prevent onEndReached from looping on an empty error state
             }
         } finally {
-            setLoading(false);
-            setRefreshing(false);
-            setPageLoading(false);
+            if (seq === fetchSeqRef.current) {
+                setLoading(false);
+                setRefreshing(false);
+                setPageLoading(false);
+            }
         }
     }, [buildFilterParams]);
 
@@ -511,6 +523,7 @@ const CollectionsScreen = () => {
     // The Map tab plots the working set on its own, independent fetch so an
     // active List-view Status/Type filter can't empty the map out.
     const fetchMapRecords = useCallback(async () => {
+        const seq = ++mapFetchSeqRef.current;
         setMapLoading(true);
         try {
             let all = [];
@@ -519,15 +532,16 @@ const CollectionsScreen = () => {
             // single employee/branch would realistically have assigned.
             for (; pageNum <= 3; pageNum += 1) {
                 const res = await api.getCollections({ page: pageNum, page_size: 200 });
+                if (seq !== mapFetchSeqRef.current) return; // superseded — abandon this run
                 const data = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
                 all = all.concat(data);
                 if (!res.data?.next) break;
             }
-            setMapRecords(all);
+            if (seq === mapFetchSeqRef.current) setMapRecords(all);
         } catch {
             // Non-critical — map just stays empty until the next refresh.
         } finally {
-            setMapLoading(false);
+            if (seq === mapFetchSeqRef.current) setMapLoading(false);
         }
     }, []);
 
