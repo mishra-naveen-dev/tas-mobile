@@ -33,6 +33,13 @@ const normalizeUser = (userData) => {
         tracking_enabled: userData.tracking_enabled !== undefined
             ? userData.tracking_enabled
             : (String(userData.role || userData.role_name || '').toUpperCase() === 'EMPLOYEE'),
+        // Whether the Collections "Near Me" distance filter is shown (Super
+        // Admin can extend it to other roles/users via Feature Assignment;
+        // defaults ON for employees, matching the backend's fallback, so
+        // older cached logins behave correctly before their next refresh).
+        near_me_enabled: userData.near_me_enabled !== undefined
+            ? userData.near_me_enabled
+            : (String(userData.role || userData.role_name || '').toUpperCase() === 'EMPLOYEE'),
     };
 };
 

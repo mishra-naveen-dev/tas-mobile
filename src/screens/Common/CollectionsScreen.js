@@ -27,6 +27,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
 import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
+import { useAuth } from '../../context/AuthContext';
 
 const STATUS_OPTIONS = [
     { value: 'PENDING', label: 'P2P', color: colors.textMuted },
@@ -355,6 +356,11 @@ const AnimatedCard = React.memo(({ index, children }) => {
 
 // ── Main screen ──────────────────────────────────────────────────────────────
 const CollectionsScreen = () => {
+    const { user } = useAuth();
+    // Super Admin controls this per role/user via Feature Assignment
+    // (APP_NEAR_ME_COLLECTIONS) — defaults ON for employees.
+    const nearMeFeatureEnabled = !!user?.near_me_enabled;
+
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -916,21 +922,23 @@ const CollectionsScreen = () => {
                                 <Icon name="map" size={16} color={view === 'map' ? colors.primary : 'rgba(255,255,255,0.7)'} />
                             </TouchableOpacity>
                         </View>
-                        {/* Near Me toggle */}
-                        <TouchableOpacity
-                            style={[styles.nearMeHeaderBtn, nearMeEnabled && styles.nearMeHeaderBtnActive]}
-                            onPress={toggleNearMe}
-                            disabled={nearMeLoading}
-                            activeOpacity={0.8}
-                        >
-                            {nearMeLoading
-                                ? <ActivityIndicator size="small" color="#fff" />
-                                : <Icon name="navigation" size={13} color={nearMeEnabled ? colors.primary : 'rgba(255,255,255,0.9)'} />
-                            }
-                            <Text style={[styles.nearMeHeaderBtnText, nearMeEnabled && { color: colors.primary }]}>
-                                {nearMeEnabled ? `Near Me · ${nearMeRadiusKm}km` : 'Near Me'}
-                            </Text>
-                        </TouchableOpacity>
+                        {/* Near Me toggle — Feature-gated (APP_NEAR_ME_COLLECTIONS) */}
+                        {nearMeFeatureEnabled && (
+                            <TouchableOpacity
+                                style={[styles.nearMeHeaderBtn, nearMeEnabled && styles.nearMeHeaderBtnActive]}
+                                onPress={toggleNearMe}
+                                disabled={nearMeLoading}
+                                activeOpacity={0.8}
+                            >
+                                {nearMeLoading
+                                    ? <ActivityIndicator size="small" color="#fff" />
+                                    : <Icon name="navigation" size={13} color={nearMeEnabled ? colors.primary : 'rgba(255,255,255,0.9)'} />
+                                }
+                                <Text style={[styles.nearMeHeaderBtnText, nearMeEnabled && { color: colors.primary }]}>
+                                    {nearMeEnabled ? `Near Me · ${nearMeRadiusKm}km` : 'Near Me'}
+                                </Text>
+                            </TouchableOpacity>
+                        )}
                         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
                             <Icon name="refresh-cw" size={18} color="#FFFFFF" />
                         </TouchableOpacity>
