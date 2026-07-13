@@ -128,7 +128,7 @@ const KpiPill = ({ label, value, accent }) => (
 );
 
 // ── Map tab ─────────────────────────────────────────────────────────────────
-const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
+const CollectionsMap = ({ records, navigateToCustomer, openUpdate, userLocation }) => {
     const mapRef = useRef(null);
     const currentRegion = useRef(null);
 
@@ -143,6 +143,32 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
             .filter(r => !isNaN(r.visit_latitude) && !isNaN(r.visit_longitude)),
         [records]
     );
+
+    // Nearest uncollected customer to user's GPS (equirectangular approx)
+    const nearest = useMemo(() => {
+        if (!userLocation) return null;
+        let closest = null;
+        let minDist = Infinity;
+        const cosLat = Math.cos(userLocation.latitude * Math.PI / 180);
+        for (const r of pinned) {
+            if (r.status === 'COLLECTED') continue;
+            const dlat = (r.visit_latitude - userLocation.latitude) * 111;
+            const dlng = (r.visit_longitude - userLocation.longitude) * 111 * cosLat;
+            const dist = Math.sqrt(dlat * dlat + dlng * dlng);
+            if (dist < minDist) { minDist = dist; closest = r; }
+        }
+        return closest;
+    }, [pinned, userLocation]);
+
+    const goToNearest = useCallback(() => {
+        if (!nearest) return;
+        mapRef.current?.animateToRegion({
+            latitude: nearest.visit_latitude,
+            longitude: nearest.visit_longitude,
+            latitudeDelta: 0.008,
+            longitudeDelta: 0.008,
+        }, 600);
+    }, [nearest]);
 
     // Route line: pending/partial customers sorted by visit time
     const routeCoords = useMemo(() => {
@@ -227,14 +253,21 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
                 {pinned.map(r => {
                     const meta = STATUS_META[r.status] || STATUS_META.PENDING;
                     const isDone = r.status === 'COLLECTED';
+                    const isNearest = nearest && r.id === nearest.id;
                     return (
                         <Marker
                             key={r.id}
                             coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
-                            pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
+                            pinColor={isNearest ? '#F59E0B' : (PIN_COLOR[r.status] || PIN_COLOR.PENDING)}
                             opacity={isDone ? 0.5 : 1}
                         >
                             <Callout tooltip={false} style={styles.calloutBox}>
+                                {isNearest && (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4, backgroundColor: '#FEF3C7', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                                        <Icon name="star" size={10} color="#D97706" />
+                                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#92400E' }}>NEAREST</Text>
+                                    </View>
+                                )}
                                 <Text style={styles.calloutName} numberOfLines={1}>{r.customer_name}</Text>
                                 <Text style={styles.calloutSub}>{r.loan_id} · {meta.label}</Text>
                                 <Text style={styles.calloutAmt}>{fmtCompact(r.amount_due)}</Text>
@@ -277,6 +310,16 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
             <TouchableOpacity style={styles.recenterBtn} onPress={reCenter} activeOpacity={0.75}>
                 <Icon name="crosshair" size={20} color={colors.primary} />
             </TouchableOpacity>
+
+            {/* Go to Nearest — shown when Near Me is active */}
+            {nearest && (
+                <View style={{ position: 'absolute', bottom: 14, left: 0, right: 0, alignItems: 'center' }} pointerEvents="box-none">
+                    <TouchableOpacity style={styles.nearestFloatBtn} onPress={goToNearest} activeOpacity={0.8}>
+                        <Icon name="star" size={13} color="#fff" />
+                        <Text style={styles.nearestFloatBtnText}>Go to Nearest</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
           </MapErrorBoundary>
         </View>
     );
@@ -338,6 +381,10 @@ const CollectionsScreen = () => {
     const [saving, setSaving] = useState(false);
     const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
+    const [nearMeEnabled, setNearMeEnabled] = useState(false);
+    const [userLocation, setUserLocation] = useState(null);
+    const [nearMeLoading, setNearMeLoading] = useState(false);
+
     // Debounce the search box so every keystroke doesn't trigger a network call.
     useEffect(() => {
         const t = setTimeout(() => setDebouncedSearch(search.trim()), 400);
@@ -354,8 +401,35 @@ const CollectionsScreen = () => {
         if (typeFilter !== 'ALL') params.collection_type = typeFilter;
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
         if (debouncedSearch) params.search = debouncedSearch;
+        if (nearMeEnabled && userLocation) {
+            params.sort_by_distance = 1;
+            params.user_lat = userLocation.latitude;
+            params.user_lng = userLocation.longitude;
+        }
         return params;
-    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
+    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch, nearMeEnabled, userLocation]);
+
+    const toggleNearMe = useCallback(async () => {
+        if (nearMeEnabled) {
+            setNearMeEnabled(false);
+            setUserLocation(null);
+            return;
+        }
+        setNearMeLoading(true);
+        try {
+            const loc = await LocationService.getCurrentLocation();
+            if (loc?.latitude && loc?.longitude && !loc?.error) {
+                setUserLocation({ latitude: loc.latitude, longitude: loc.longitude });
+                setNearMeEnabled(true);
+            } else {
+                Alert.alert('Location needed', 'Could not detect your location. Please enable location permissions and try again.');
+            }
+        } catch (_) {
+            Alert.alert('Location needed', 'Could not detect your location. Please enable location permissions and try again.');
+        } finally {
+            setNearMeLoading(false);
+        }
+    }, [nearMeEnabled]);
 
     // Fetch a single page; pass reset=true on refresh/filter-change to clear existing records
     const fetchRecords = useCallback(async (pageNum = 1, reset = false) => {
@@ -416,7 +490,7 @@ const CollectionsScreen = () => {
     useEffect(() => {
         fetchRecords(1, true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
+    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch, nearMeEnabled, userLocation]);
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
@@ -568,10 +642,22 @@ const CollectionsScreen = () => {
                                 })()}
                             </View>
                         </View>
-                        <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
-                            <Text style={[styles.statusChipText, { color: meta.color }]}>
-                                {item.status_display || meta.label}
-                            </Text>
+                        <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                            <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
+                                <Text style={[styles.statusChipText, { color: meta.color }]}>
+                                    {item.status_display || meta.label}
+                                </Text>
+                            </View>
+                            {nearMeEnabled && item.distance_km != null && (
+                                <View style={styles.distanceBadge}>
+                                    <Icon name="navigation" size={10} color={colors.primary} />
+                                    <Text style={styles.distanceBadgeText}>
+                                        {item.distance_km < 1
+                                            ? `${Math.round(item.distance_km * 1000)} m`
+                                            : `${item.distance_km.toFixed(1)} km`}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
                     </View>
 
@@ -705,6 +791,19 @@ const CollectionsScreen = () => {
                                 <Icon name="map" size={16} color={view === 'map' ? colors.primary : 'rgba(255,255,255,0.7)'} />
                             </TouchableOpacity>
                         </View>
+                        {/* Near Me toggle */}
+                        <TouchableOpacity
+                            style={[styles.nearMeHeaderBtn, nearMeEnabled && styles.nearMeHeaderBtnActive]}
+                            onPress={toggleNearMe}
+                            disabled={nearMeLoading}
+                            activeOpacity={0.8}
+                        >
+                            {nearMeLoading
+                                ? <ActivityIndicator size="small" color="#fff" />
+                                : <Icon name="navigation" size={13} color={nearMeEnabled ? colors.primary : 'rgba(255,255,255,0.9)'} />
+                            }
+                            <Text style={[styles.nearMeHeaderBtnText, nearMeEnabled && { color: colors.primary }]}>Near Me</Text>
+                        </TouchableOpacity>
                         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
                             <Icon name="refresh-cw" size={18} color="#FFFFFF" />
                         </TouchableOpacity>
@@ -745,6 +844,7 @@ const CollectionsScreen = () => {
                                 records={mapRecords}
                                 navigateToCustomer={navigateToCustomer}
                                 openUpdate={openUpdate}
+                                userLocation={nearMeEnabled ? userLocation : null}
                             />
                         )}
                     </View>
@@ -1455,6 +1555,34 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.md, alignItems: 'center', marginTop: spacing.sm,
     },
     saveBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: typography.sizes.md },
+
+    // Near Me — header toggle button
+    nearMeHeaderBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: borderRadius.md,
+        paddingHorizontal: spacing.sm, paddingVertical: spacing.xs + 2,
+    },
+    nearMeHeaderBtnActive: { backgroundColor: '#FFFFFF' },
+    nearMeHeaderBtnText: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.9)' },
+
+    // Distance badge on list card
+    distanceBadge: {
+        flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: colors.primary + '12', borderRadius: 8,
+        paddingHorizontal: 6, paddingVertical: 2,
+        borderWidth: 1, borderColor: colors.primary + '30',
+    },
+    distanceBadgeText: { fontSize: 10, fontWeight: '700', color: colors.primary },
+
+    // "Go to Nearest" floating button on map
+    nearestFloatBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20,
+        backgroundColor: colors.primary,
+        elevation: 10,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.22, shadowRadius: 4,
+    },
+    nearestFloatBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
 });
 
 export default CollectionsScreen;
