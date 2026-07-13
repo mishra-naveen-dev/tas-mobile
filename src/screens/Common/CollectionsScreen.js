@@ -528,10 +528,13 @@ const CollectionsScreen = () => {
         try {
             let all = [];
             let pageNum = 1;
-            // Safety cap: 3 pages @ 200 = 600 records is far beyond what a
-            // single employee/branch would realistically have assigned.
-            for (; pageNum <= 3; pageNum += 1) {
-                const res = await api.getCollections({ page: pageNum, page_size: 200 });
+            // Safety cap: 6 pages @ 100 (backend's page-size ceiling) = 600
+            // records, far beyond what a single employee/branch would
+            // realistically have assigned. Requesting more than the backend's
+            // max_page_size is silently clamped, not rejected, so the page
+            // count here must match that ceiling to keep the same total reach.
+            for (; pageNum <= 6; pageNum += 1) {
+                const res = await api.getCollections({ page: pageNum, page_size: 100 });
                 if (seq !== mapFetchSeqRef.current) return; // superseded — abandon this run
                 const data = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
                 all = all.concat(data);
