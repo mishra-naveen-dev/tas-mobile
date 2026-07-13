@@ -317,18 +317,45 @@ const CollectionsScreen = () => {
     const [pageLoading, setPageLoading] = useState(false);
 
     const [search, setSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [activeFilter, setActiveFilter] = useState('ALL');
     const [typeFilter, setTypeFilter] = useState('ALL');
     const [dpdFilter, setDpdFilter] = useState('ALL');
     const [filterModalVisible, setFilterModalVisible] = useState(false);
 
+    // Aggregate counts (all assigned records, independent of the paginated/
+    // filtered list below) — powers the header KPIs and the filter-sheet counts
+    // so they stay accurate no matter which page/filter is currently loaded.
+    const [summary, setSummary] = useState(null);
+
     const [view, setView] = useState('list'); // 'list' | 'map'
     const [mapSearch, setMapSearch] = useState('');
+    const [mapRecords, setMapRecords] = useState([]);
+    const [mapLoading, setMapLoading] = useState(false);
 
     const [modal, setModal] = useState({ open: false, record: null });
     const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null, visit_reason: '' });
     const [saving, setSaving] = useState(false);
     const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
+
+    // Debounce the search box so every keystroke doesn't trigger a network call.
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedSearch(search.trim()), 400);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    // Status/Type/DPD/search are applied server-side (the backend already
+    // supports all of them via CollectionRecordFilter) so filtering works
+    // across the FULL assigned set, not just whatever page happens to be
+    // loaded client-side.
+    const buildFilterParams = useCallback(() => {
+        const params = {};
+        if (activeFilter !== 'ALL') params.status = activeFilter;
+        if (typeFilter !== 'ALL') params.collection_type = typeFilter;
+        if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
+        if (debouncedSearch) params.search = debouncedSearch;
+        return params;
+    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
 
     // Fetch a single page; pass reset=true on refresh/filter-change to clear existing records
     const fetchRecords = useCallback(async (pageNum = 1, reset = false) => {
@@ -336,12 +363,11 @@ const CollectionsScreen = () => {
         if (pageNum > 1) setPageLoading(true);
         else if (reset) setLoading(true);
         try {
-            const res = await api.getCollections({ page: pageNum, page_size: PAGE_SIZE });
-            const data   = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
-            const total  = res.data?.count   ?? data.length;
+            const res = await api.getCollections({ page: pageNum, page_size: PAGE_SIZE, ...buildFilterParams() });
+            const data = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
             setRecords(prev => reset ? data : [...prev, ...data]);
             setPage(pageNum);
-            setHasMore(records.length + data.length < total || !!res.data?.next);
+            setHasMore(!!res.data?.next);
         } catch {
             if (pageNum === 1) Alert.alert('Error', 'Could not load your collections.');
         } finally {
@@ -349,14 +375,64 @@ const CollectionsScreen = () => {
             setRefreshing(false);
             setPageLoading(false);
         }
-    }, [records.length]);
+    }, [buildFilterParams]);
 
-    useEffect(() => { fetchRecords(1, true); }, []);
+    // Unfiltered aggregate (all assigned records) — decoupled from the list's
+    // active filters/pagination so header KPIs and filter-option counts never
+    // go stale or zero out just because a filter is applied.
+    const fetchSummary = useCallback(async () => {
+        try {
+            const res = await api.getCollectionDashboardStats();
+            setSummary(res.data || null);
+        } catch {
+            // Non-critical — header falls back to zeros until the next refresh.
+        }
+    }, []);
+
+    // The Map tab plots the working set on its own, independent fetch so an
+    // active List-view Status/Type filter can't empty the map out.
+    const fetchMapRecords = useCallback(async () => {
+        setMapLoading(true);
+        try {
+            let all = [];
+            let pageNum = 1;
+            // Safety cap: 3 pages @ 200 = 600 records is far beyond what a
+            // single employee/branch would realistically have assigned.
+            for (; pageNum <= 3; pageNum += 1) {
+                const res = await api.getCollections({ page: pageNum, page_size: 200 });
+                const data = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
+                all = all.concat(data);
+                if (!res.data?.next) break;
+            }
+            setMapRecords(all);
+        } catch {
+            // Non-critical — map just stays empty until the next refresh.
+        } finally {
+            setMapLoading(false);
+        }
+    }, []);
+
+    // Refetch page 1 whenever a filter changes (also fires on mount).
+    useEffect(() => {
+        fetchRecords(1, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
+
+    useEffect(() => { fetchSummary(); }, [fetchSummary]);
+
+    useEffect(() => {
+        if (view === 'map' && mapRecords.length === 0 && !mapLoading) {
+            fetchMapRecords();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view]);
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
         fetchRecords(1, true);
-    }, [fetchRecords]);
+        fetchSummary();
+        if (view === 'map') fetchMapRecords();
+    }, [fetchRecords, fetchSummary, fetchMapRecords, view]);
 
     const onEndReached = useCallback(() => {
         if (!pageLoading && !loading && hasMore) {
@@ -365,45 +441,19 @@ const CollectionsScreen = () => {
     }, [pageLoading, loading, hasMore, page, fetchRecords]);
 
     // ── Derived stats & filtering ─────────────────────────────────────────
-    const stats = useMemo(() => {
-        const countBy = {};
-        let totalDue = 0;
-        let totalCollected = 0;
-        records.forEach(r => {
-            countBy[r.status] = (countBy[r.status] || 0) + 1;
-            totalDue += Number(r.amount_due || 0);
-            totalCollected += Number(r.collected_amount || 0);
-        });
-        return {
-            total: records.length,
-            countBy,
-            pending: countBy.PENDING || 0,
-            collected: (countBy.COLLECTED || 0) + (countBy.PARTIALLY_COLLECTED || 0),
-            totalDue,
-            totalCollected,
-        };
-    }, [records]);
+    // `records` is now filtered server-side (status/type/dpd/search all applied
+    // as query params in fetchRecords), so no client-side re-filtering here —
+    // that used to silently limit filters to whatever page had been paginated
+    // in, and double-filtering on a non-debounced `search` would flicker/hide
+    // valid address-matched results the server already found.
+    const filtered = records;
 
-    const filtered = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        return records.filter(r => {
-            if (activeFilter !== 'ALL' && r.status !== activeFilter) return false;
-            if (typeFilter !== 'ALL' && (r.collection_type || 'REGULAR') !== typeFilter) return false;
-            if (typeFilter === 'OD' && dpdFilter !== 'ALL' && r.dpd_bucket !== dpdFilter) return false;
-            if (!q) return true;
-            return (
-                (r.loan_id || '').toLowerCase().includes(q) ||
-                (r.customer_name || '').toLowerCase().includes(q) ||
-                (r.customer_phone || '').toLowerCase().includes(q) ||
-                (r.pincode || '').toLowerCase().includes(q)
-            );
-        });
-    }, [records, activeFilter, typeFilter, dpdFilter, search]);
-
-    // Map view search — non-collected only, across name/address/area/loan/date
+    // Map view search — non-collected only, across name/address/area/loan/date.
+    // Uses mapRecords (its own dedicated fetch), not the List's filtered `records`,
+    // so an active Status/Type filter on the List tab can't empty the map out.
     const mapPending = useMemo(() => {
         const q = mapSearch.trim().toLowerCase();
-        return records.filter(r => {
+        return mapRecords.filter(r => {
             if (r.status === 'COLLECTED') return false;
             if (!q) return true;
             const due = r.due_date ? new Date(r.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).toLowerCase() : '';
@@ -416,7 +466,7 @@ const CollectionsScreen = () => {
                 due.includes(q)
             );
         });
-    }, [records, mapSearch]);
+    }, [mapRecords, mapSearch]);
 
     const openUpdate = (record) => {
         setForm({
@@ -637,7 +687,7 @@ const CollectionsScreen = () => {
                 <View style={styles.headerTopRow}>
                     <View>
                         <Text style={styles.headerTitle}>My Collections</Text>
-                        <Text style={styles.headerSub}>{stats.total} assigned · {stats.pending} pending</Text>
+                        <Text style={styles.headerSub}>{summary?.total_assigned || 0} assigned · {summary?.pending || 0} pending</Text>
                     </View>
                     <View style={styles.headerActions}>
                         {/* List / Map toggle */}
@@ -662,10 +712,10 @@ const CollectionsScreen = () => {
                 </View>
 
                 <View style={styles.kpiRow}>
-                    <KpiPill label="To Collect" value={fmtCompact(stats.totalDue)} />
-                    <KpiPill label="Collected" value={fmtCompact(stats.totalCollected)} accent={colors.successLight} />
-                    <KpiPill label="Pending" value={stats.pending} />
-                    <KpiPill label="Done" value={stats.collected} />
+                    <KpiPill label="To Collect" value={fmtCompact(summary?.total_due_amount || 0)} />
+                    <KpiPill label="Collected" value={fmtCompact(summary?.total_collected_amount || 0)} accent={colors.successLight} />
+                    <KpiPill label="Pending" value={summary?.pending || 0} />
+                    <KpiPill label="Done" value={(summary?.collected || 0) + (summary?.partially_collected || 0)} />
                 </View>
             </View>
 
@@ -688,17 +738,21 @@ const CollectionsScreen = () => {
 
                     {/* Map — fixed height so list is visible below */}
                     <View style={{ height: SCREEN_HEIGHT * 0.52 }}>
-                        <CollectionsMap
-                            records={records}
-                            navigateToCustomer={navigateToCustomer}
-                            openUpdate={openUpdate}
-                        />
+                        {mapLoading && mapRecords.length === 0 ? (
+                            <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+                        ) : (
+                            <CollectionsMap
+                                records={mapRecords}
+                                navigateToCustomer={navigateToCustomer}
+                                openUpdate={openUpdate}
+                            />
+                        )}
                     </View>
 
                     {/* Pending list below map — FlatList for virtualization */}
                     {(() => {
-                        const allPending = records.filter(r => r.status !== 'COLLECTED');
-                        const done = records.length - allPending.length;
+                        const allPending = mapRecords.filter(r => r.status !== 'COLLECTED');
+                        const done = mapRecords.length - allPending.length;
                         const pending = mapPending;
 
                         const renderMapItem = ({ item: r }) => {
@@ -814,7 +868,7 @@ const CollectionsScreen = () => {
                         <Icon name="search" size={18} color={colors.textMuted} />
                         <TextInput
                             style={styles.searchInput}
-                            placeholder="Search name, loan id, phone, pincode…"
+                            placeholder="Search name, loan id, phone, address, pincode…"
                             placeholderTextColor={colors.textMuted}
                             value={search}
                             onChangeText={setSearch}
@@ -885,7 +939,7 @@ const CollectionsScreen = () => {
                                         onPress={() => setActiveFilter('ALL')}
                                     >
                                         <Text style={[styles.statusOptionText, activeFilter === 'ALL' && { color: '#FFFFFF' }]}>
-                                            All ({stats.total})
+                                            All ({summary?.total_assigned || 0})
                                         </Text>
                                     </TouchableOpacity>
                                     {STATUS_OPTIONS.map(o => {
@@ -897,7 +951,7 @@ const CollectionsScreen = () => {
                                                 onPress={() => setActiveFilter(o.value)}
                                             >
                                                 <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>
-                                                    {o.label} ({stats.countBy[o.value] || 0})
+                                                    {o.label} ({summary?.status_counts?.[o.value] || 0})
                                                 </Text>
                                             </TouchableOpacity>
                                         );
@@ -999,7 +1053,7 @@ const CollectionsScreen = () => {
                                 <View style={styles.center}>
                                     <Icon name="inbox" size={40} color={colors.textLight} />
                                     <Text style={styles.emptyText}>
-                                        {records.length === 0 ? 'No customers assigned to you yet.' : 'No records match this filter.'}
+                                        {(summary?.total_assigned || 0) === 0 ? 'No customers assigned to you yet.' : 'No records match this filter.'}
                                     </Text>
                                 </View>
                             }

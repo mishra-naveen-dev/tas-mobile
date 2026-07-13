@@ -1,9 +1,14 @@
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { GOOGLE_MAPS_API_KEY } from '@env';
 import { logger } from '../core/monitoring/Logger';
 
-const GOOGLE_API_KEY = 'AIzaSyDM0WAR3vYxXNqSklb868wEmtDftQvYDkQ';
+// Sourced from .env (gitignored) at build time — see .env.example for setup.
+const GOOGLE_API_KEY = GOOGLE_MAPS_API_KEY;
 export { GOOGLE_API_KEY };
+if (!GOOGLE_API_KEY) {
+  logger.warn('[GeocodingService] GOOGLE_MAPS_API_KEY is not set — copy .env.example to .env and add it.');
+}
 const GEOCODE_CACHE_PREFIX = '@geocode_cache_';
 const CACHE_DURATION = 24 * 60 * 60 * 1000;
 

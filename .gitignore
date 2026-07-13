@@ -53,8 +53,11 @@ yarn-error.log
 **/fastlane/screenshots
 **/fastlane/test_output
 
-# Bundle artifact
+# Bundle artifact — generated fresh by the release build; committing it also
+# bakes whatever secrets were in .env at bundle-time into a tracked binary.
 *.jsbundle
+android/app/src/main/assets/index.android.bundle
+android/app/src/main/res/index.android.bundle
 
 # Ruby / CocoaPods
 **/Pods/
@@ -76,5 +79,12 @@ yarn-error.log
 
 # APK builds (do not commit built APKs)
 *.apk
+*.aab
 app-debug.apk
 app-release*.apk
+
+# Secrets — real API keys live only in .env (untracked). Commit .env.example
+# instead, with placeholder values, as the template for other machines.
+.env
+.env.local
+.env.*.local
