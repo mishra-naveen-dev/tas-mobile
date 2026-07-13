@@ -108,6 +108,7 @@ class MapErrorBoundary extends Component {
 }
 
 const PAGE_SIZE = 20;
+const NEAR_ME_AUTO_OFF_MS = 10 * 60 * 1000; // Near Me auto-disables after 10 minutes
 
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -386,6 +387,7 @@ const CollectionsScreen = () => {
     const [nearMeEnabled, setNearMeEnabled] = useState(false);
     const [userLocation, setUserLocation] = useState(null);
     const [nearMeLoading, setNearMeLoading] = useState(false);
+    const nearMeTimerRef = useRef(null);
 
     const [listError, setListError] = useState(false);
     const productsLoadedRef = useRef(false);
@@ -411,10 +413,19 @@ const CollectionsScreen = () => {
         return params;
     }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
 
+    // Shared "turn off" path for both the manual toggle and the auto-off timer.
+    const disableNearMe = useCallback(() => {
+        if (nearMeTimerRef.current) {
+            clearTimeout(nearMeTimerRef.current);
+            nearMeTimerRef.current = null;
+        }
+        setNearMeEnabled(false);
+        setUserLocation(null);
+    }, []);
+
     const toggleNearMe = useCallback(async () => {
         if (nearMeEnabled) {
-            setNearMeEnabled(false);
-            setUserLocation(null);
+            disableNearMe();
             return;
         }
         setNearMeLoading(true);
@@ -423,6 +434,10 @@ const CollectionsScreen = () => {
             if (loc?.latitude && loc?.longitude && !loc?.error) {
                 setUserLocation({ latitude: loc.latitude, longitude: loc.longitude });
                 setNearMeEnabled(true);
+                // Auto-disable after a fixed window so Near Me doesn't stay on
+                // (and keep sorting by a now-stale location) if the user forgets
+                // to turn it off — they can always re-tap to refresh and restart it.
+                nearMeTimerRef.current = setTimeout(disableNearMe, NEAR_ME_AUTO_OFF_MS);
                 // Pre-load the full record set for client-side distance sort if not already available
                 if (mapRecords.length === 0 && !mapLoading) {
                     fetchMapRecords();
@@ -435,7 +450,14 @@ const CollectionsScreen = () => {
         } finally {
             setNearMeLoading(false);
         }
-    }, [nearMeEnabled, mapRecords.length, mapLoading, fetchMapRecords]);
+    }, [nearMeEnabled, mapRecords.length, mapLoading, fetchMapRecords, disableNearMe]);
+
+    // Clear the auto-off timer if the screen unmounts while Near Me is active.
+    useEffect(() => {
+        return () => {
+            if (nearMeTimerRef.current) clearTimeout(nearMeTimerRef.current);
+        };
+    }, []);
 
     // Fetch a single page; pass reset=true on refresh/filter-change to clear existing records
     const fetchRecords = useCallback(async (pageNum = 1, reset = false) => {
