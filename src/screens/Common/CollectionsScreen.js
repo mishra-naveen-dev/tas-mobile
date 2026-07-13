@@ -401,13 +401,9 @@ const CollectionsScreen = () => {
         if (typeFilter !== 'ALL') params.collection_type = typeFilter;
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
         if (debouncedSearch) params.search = debouncedSearch;
-        if (nearMeEnabled && userLocation) {
-            params.sort_by_distance = 1;
-            params.user_lat = userLocation.latitude;
-            params.user_lng = userLocation.longitude;
-        }
+        // Distance sort is done client-side — no server params added here
         return params;
-    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch, nearMeEnabled, userLocation]);
+    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
 
     const toggleNearMe = useCallback(async () => {
         if (nearMeEnabled) {
@@ -421,6 +417,10 @@ const CollectionsScreen = () => {
             if (loc?.latitude && loc?.longitude && !loc?.error) {
                 setUserLocation({ latitude: loc.latitude, longitude: loc.longitude });
                 setNearMeEnabled(true);
+                // Pre-load the full record set for client-side distance sort if not already available
+                if (mapRecords.length === 0 && !mapLoading) {
+                    fetchMapRecords();
+                }
             } else {
                 Alert.alert('Location needed', 'Could not detect your location. Please enable location permissions and try again.');
             }
@@ -429,7 +429,7 @@ const CollectionsScreen = () => {
         } finally {
             setNearMeLoading(false);
         }
-    }, [nearMeEnabled]);
+    }, [nearMeEnabled, mapRecords.length, mapLoading, fetchMapRecords]);
 
     // Fetch a single page; pass reset=true on refresh/filter-change to clear existing records
     const fetchRecords = useCallback(async (pageNum = 1, reset = false) => {
@@ -487,10 +487,11 @@ const CollectionsScreen = () => {
     }, []);
 
     // Refetch page 1 whenever a filter changes (also fires on mount).
+    // Near Me sorting is client-side — toggling it does NOT trigger a server fetch.
     useEffect(() => {
         fetchRecords(1, true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch, nearMeEnabled, userLocation]);
+    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
@@ -515,12 +516,53 @@ const CollectionsScreen = () => {
     }, [pageLoading, loading, hasMore, page, fetchRecords]);
 
     // ── Derived stats & filtering ─────────────────────────────────────────
-    // `records` is now filtered server-side (status/type/dpd/search all applied
-    // as query params in fetchRecords), so no client-side re-filtering here —
-    // that used to silently limit filters to whatever page had been paginated
-    // in, and double-filtering on a non-debounced `search` would flicker/hide
-    // valid address-matched results the server already found.
-    const filtered = records;
+    // When Near Me is OFF: server-side filtering/pagination via `records`.
+    // When Near Me is ON: client-side sort+filter from `mapRecords` (full set
+    //   already fetched for the map tab) — zero extra server requests.
+    const filtered = useMemo(() => {
+        if (!nearMeEnabled || !userLocation) return records;
+
+        // Use the full unfiltered dataset; fall back to current page if map data not ready
+        const source = mapRecords.length > 0 ? mapRecords : records;
+
+        // Apply the same filters the server would have applied
+        let result = source;
+        if (activeFilter !== 'ALL')
+            result = result.filter(r => r.status === activeFilter);
+        if (typeFilter !== 'ALL')
+            result = result.filter(r => r.collection_type === typeFilter);
+        if (typeFilter === 'OD' && dpdFilter !== 'ALL')
+            result = result.filter(r => matchesDpdBucket(r.dpd_days, dpdFilter));
+        if (debouncedSearch) {
+            const q = debouncedSearch.toLowerCase();
+            result = result.filter(r =>
+                (r.customer_name || '').toLowerCase().includes(q) ||
+                (r.loan_id || '').toLowerCase().includes(q) ||
+                (r.customer_phone || '').toLowerCase().includes(q) ||
+                (r.address || '').toLowerCase().includes(q) ||
+                (r.pincode || '').toLowerCase().includes(q)
+            );
+        }
+
+        // Compute distance from user; prefer customer coords if already seeded
+        const cosLat = Math.cos(userLocation.latitude * Math.PI / 180);
+        const withDist = result.map(r => {
+            const lat = parseFloat(r.customer_latitude ?? r.visit_latitude);
+            const lng = parseFloat(r.customer_longitude ?? r.visit_longitude);
+            if (isNaN(lat) || isNaN(lng)) return { ...r, distance_km: null };
+            const dlat = (lat - userLocation.latitude) * 111;
+            const dlng = (lng - userLocation.longitude) * 111 * cosLat;
+            return { ...r, distance_km: Math.sqrt(dlat * dlat + dlng * dlng) };
+        });
+
+        // Sort: customers with known location first (nearest → farthest), unknown last
+        return withDist.sort((a, b) => {
+            if (a.distance_km == null && b.distance_km == null) return 0;
+            if (a.distance_km == null) return 1;
+            if (b.distance_km == null) return -1;
+            return a.distance_km - b.distance_km;
+        });
+    }, [nearMeEnabled, userLocation, records, mapRecords, activeFilter, typeFilter, dpdFilter, debouncedSearch]);
 
     // Map view search — non-collected only, across name/address/area/loan/date.
     // Uses mapRecords (its own dedicated fetch), not the List's filtered `records`,
@@ -1122,7 +1164,7 @@ const CollectionsScreen = () => {
                         </View>
                     </Modal>
 
-                    {loading ? (
+                    {(nearMeEnabled ? (mapLoading && mapRecords.length === 0) : loading) ? (
                         <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
                     ) : (
                         <FlatList
@@ -1131,23 +1173,32 @@ const CollectionsScreen = () => {
                             renderItem={renderItem}
                             contentContainerStyle={{ padding: spacing.md, paddingBottom: 120 }}
                             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                            onEndReached={onEndReached}
+                            onEndReached={nearMeEnabled ? null : onEndReached}
                             onEndReachedThreshold={0.3}
                             initialNumToRender={10}
                             maxToRenderPerBatch={10}
                             windowSize={7}
                             removeClippedSubviews
                             ListFooterComponent={
-                                pageLoading
-                                    ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                                          <ActivityIndicator size="small" color={colors.primary} />
-                                          <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>Loading more…</Text>
-                                      </View>
-                                    : !hasMore && records.length > 0
-                                        ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                                              <Text style={{ fontSize: 11, color: colors.textMuted }}>All {records.length} records loaded</Text>
+                                nearMeEnabled
+                                    ? filtered.length > 0
+                                        ? <View style={{ paddingVertical: 14, alignItems: 'center', gap: 3 }}>
+                                              <Icon name="navigation" size={13} color={colors.primary} />
+                                              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                                                  {filtered.filter(r => r.distance_km != null).length} of {filtered.length} customers sorted by distance
+                                              </Text>
                                           </View>
                                         : null
+                                    : pageLoading
+                                        ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                                              <ActivityIndicator size="small" color={colors.primary} />
+                                              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>Loading more…</Text>
+                                          </View>
+                                        : !hasMore && records.length > 0
+                                            ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                                                  <Text style={{ fontSize: 11, color: colors.textMuted }}>All {records.length} records loaded</Text>
+                                              </View>
+                                            : null
                             }
                             ListEmptyComponent={
                                 <View style={styles.center}>
