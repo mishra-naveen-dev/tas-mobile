@@ -575,6 +575,9 @@ api.rejectMasterRequest = (id, remarks = '') =>
 api.getCollections = (params = {}) =>
     api.get('/loans/collections/', { params });
 
+api.getDistinctProducts = () =>
+    api.get('/loans/collections/distinct_products/');
+
 api.updateCollectionStatus = (id, data) =>
     api.post(`/loans/collections/${id}/update_status/`, data);
 

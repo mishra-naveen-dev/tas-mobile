@@ -364,6 +364,8 @@ const CollectionsScreen = () => {
     const [activeFilter, setActiveFilter] = useState('ALL');
     const [typeFilter, setTypeFilter] = useState('ALL');
     const [dpdFilter, setDpdFilter] = useState('ALL');
+    const [productFilter, setProductFilter] = useState('ALL');
+    const [products, setProducts] = useState([]);
     const [filterModalVisible, setFilterModalVisible] = useState(false);
 
     // Aggregate counts (all assigned records, independent of the paginated/
@@ -400,10 +402,11 @@ const CollectionsScreen = () => {
         if (activeFilter !== 'ALL') params.status = activeFilter;
         if (typeFilter !== 'ALL') params.collection_type = typeFilter;
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
+        if (productFilter !== 'ALL') params.product_id = productFilter;
         if (debouncedSearch) params.search = debouncedSearch;
         // Distance sort is done client-side — no server params added here
         return params;
-    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
+    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
 
     const toggleNearMe = useCallback(async () => {
         if (nearMeEnabled) {
@@ -491,9 +494,16 @@ const CollectionsScreen = () => {
     useEffect(() => {
         fetchRecords(1, true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
+    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
+
+    // Load distinct product IDs once on mount for the product filter picker
+    useEffect(() => {
+        api.getDistinctProducts()
+            .then(res => setProducts(Array.isArray(res.data) ? res.data : []))
+            .catch(() => {});
+    }, []);
 
     useEffect(() => {
         if (view === 'map' && mapRecords.length === 0 && !mapLoading) {
@@ -533,6 +543,8 @@ const CollectionsScreen = () => {
             result = result.filter(r => r.collection_type === typeFilter);
         if (typeFilter === 'OD' && dpdFilter !== 'ALL')
             result = result.filter(r => matchesDpdBucket(r.dpd_days, dpdFilter));
+        if (productFilter !== 'ALL')
+            result = result.filter(r => (r.product_id || '').toLowerCase() === productFilter.toLowerCase());
         if (debouncedSearch) {
             const q = debouncedSearch.toLowerCase();
             result = result.filter(r =>
@@ -562,7 +574,7 @@ const CollectionsScreen = () => {
             if (b.distance_km == null) return -1;
             return a.distance_km - b.distance_km;
         });
-    }, [nearMeEnabled, userLocation, records, mapRecords, activeFilter, typeFilter, dpdFilter, debouncedSearch]);
+    }, [nearMeEnabled, userLocation, records, mapRecords, activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
 
     // Map view search — non-collected only, across name/address/area/loan/date.
     // Uses mapRecords (its own dedicated fetch), not the List's filtered `records`,
@@ -682,6 +694,11 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })()}
+                                {!!item.product_id && (
+                                    <View style={styles.productTag}>
+                                        <Text style={styles.productTagText} numberOfLines={1}>{item.product_id}</Text>
+                                    </View>
+                                )}
                             </View>
                         </View>
                         <View style={{ alignItems: 'flex-end', gap: 4 }}>
@@ -1031,25 +1048,26 @@ const CollectionsScreen = () => {
                         >
                             <Icon name="sliders" size={15} color={colors.primary} />
                             <Text style={styles.filterBtnText}>Filters</Text>
-                            {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL') && (
+                            {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL' || productFilter !== 'ALL') && (
                                 <View style={styles.filterBadge}>
                                     <Text style={styles.filterBadgeText}>
-                                        {(activeFilter !== 'ALL' ? 1 : 0) + (typeFilter !== 'ALL' ? 1 : 0) + (dpdFilter !== 'ALL' ? 1 : 0)}
+                                        {(activeFilter !== 'ALL' ? 1 : 0) + (typeFilter !== 'ALL' ? 1 : 0) + (dpdFilter !== 'ALL' ? 1 : 0) + (productFilter !== 'ALL' ? 1 : 0)}
                                     </Text>
                                 </View>
                             )}
                         </TouchableOpacity>
                         <Text style={styles.filterSummary} numberOfLines={1}>
-                            {(activeFilter === 'ALL' ? 'All' : STATUS_META[activeFilter]?.label)}
+                            {activeFilter === 'ALL' ? 'All' : STATUS_META[activeFilter]?.label}
                             {'  ·  '}
-                            {(typeFilter === 'ALL' ? 'All Types' : TYPE_META[typeFilter]?.label)}
+                            {typeFilter === 'ALL' ? 'All Types' : TYPE_META[typeFilter]?.label}
                             {typeFilter === 'OD' && dpdFilter !== 'ALL' ? ` (DPD ${dpdFilter})` : ''}
+                            {productFilter !== 'ALL' ? `  ·  ${productFilter}` : ''}
                             {'  ·  '}{filtered.length} results
                         </Text>
-                        {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL') && (
+                        {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL' || productFilter !== 'ALL') && (
                             <TouchableOpacity
                                 style={styles.resetIconBtn}
-                                onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); }}
+                                onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); setProductFilter('ALL'); }}
                                 activeOpacity={0.75}
                                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             >
@@ -1146,10 +1164,36 @@ const CollectionsScreen = () => {
                                     </>
                                 )}
 
+                                {products.length > 0 && (
+                                    <>
+                                        <Text style={styles.fieldLabel}>Loan Product</Text>
+                                        <View style={styles.statusGrid}>
+                                            <TouchableOpacity
+                                                style={[styles.statusOption, productFilter === 'ALL' && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
+                                                onPress={() => setProductFilter('ALL')}
+                                            >
+                                                <Text style={[styles.statusOptionText, productFilter === 'ALL' && { color: '#FFFFFF' }]}>All Products</Text>
+                                            </TouchableOpacity>
+                                            {products.map(p => {
+                                                const active = productFilter === p;
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={p}
+                                                        style={[styles.statusOption, active && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
+                                                        onPress={() => setProductFilter(p)}
+                                                    >
+                                                        <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{p}</Text>
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
+                                        </View>
+                                    </>
+                                )}
+
                                 <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
                                     <TouchableOpacity
                                         style={[styles.saveBtn, styles.resetBtn, { flex: 1 }]}
-                                        onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); }}
+                                        onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); setProductFilter('ALL'); }}
                                     >
                                         <Text style={[styles.saveBtnText, { color: colors.textDark }]}>Reset</Text>
                                     </TouchableOpacity>
@@ -1534,9 +1578,11 @@ const styles = StyleSheet.create({
     },
     resetBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
 
-    loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2 },
+    loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2, flexWrap: 'wrap' },
     typeTag: { paddingHorizontal: spacing.xs, paddingVertical: 1, borderRadius: borderRadius.sm, marginLeft: spacing.xs },
     typeTagText: { fontSize: 10, fontWeight: '700' },
+    productTag: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: borderRadius.sm, backgroundColor: '#7c3aed18', borderWidth: 1, borderColor: '#7c3aed30', maxWidth: 90 },
+    productTagText: { fontSize: 9, fontWeight: '700', color: '#7c3aed' },
 
     // Card
     card: {
