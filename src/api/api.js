@@ -2,6 +2,8 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
+import { cacheWrite, cacheRead, makeCacheKey } from '../utils/dataCache';
+import { serverStatus } from '../utils/serverStatus';
 
 const PROD_URL = 'https://api.tas.namracred.co.in/api/v1';
 
@@ -147,6 +149,25 @@ api.interceptors.request.use(async (config) => {
 let sessionExpiredCallback = null;
 let isSessionExpiredHandled = false;
 
+// Reconnect polling — tries a lightweight GET every 20s while server is unreachable
+let _reconnectTimer = null;
+function startReconnectPolling() {
+    if (_reconnectTimer) return;
+    _reconnectTimer = setInterval(async () => {
+        try {
+            const token = await AsyncStorage.getItem('access');
+            await axios.get(`${getBaseURL()}/organization/roles/`, {
+                params: { page_size: 1 },
+                timeout: 8000,
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+            clearInterval(_reconnectTimer);
+            _reconnectTimer = null;
+            serverStatus.setOnline();
+        } catch (_) { /* still offline */ }
+    }, 20000);
+}
+
 export const setSessionExpiredCallback = (callback) => {
     sessionExpiredCallback = callback;
 };
@@ -156,9 +177,40 @@ export const resetSessionHandler = () => {
 };
 
 api.interceptors.response.use(
-    (response) => response,
+    async (response) => {
+        const method = (response.config?.method || '').toLowerCase();
+        if (method === 'get') {
+            const key = makeCacheKey(response.config.url, response.config.params || {});
+            await cacheWrite(key, response.data);
+        }
+        if (!serverStatus._online) serverStatus.setOnline();
+        if (_reconnectTimer) { clearInterval(_reconnectTimer); _reconnectTimer = null; }
+        return response;
+    },
     async (error) => {
         const originalRequest = error.config;
+
+        // Network failure (no response) → serve last cached data
+        if (!error.response && originalRequest) {
+            const method = (originalRequest.method || '').toLowerCase();
+            if (method === 'get') {
+                const key = makeCacheKey(originalRequest.url, originalRequest.params || {});
+                const cached = await cacheRead(key);
+                if (cached) {
+                    serverStatus.setOffline(cached.ts);
+                    startReconnectPolling();
+                    return Promise.resolve({
+                        data: cached.data,
+                        status: 200,
+                        stale: true,
+                        cachedAt: cached.ts,
+                        config: originalRequest,
+                    });
+                }
+            }
+            serverStatus.setOffline(null);
+            startReconnectPolling();
+        }
 
         if (
             error.response?.status === 401 &&
