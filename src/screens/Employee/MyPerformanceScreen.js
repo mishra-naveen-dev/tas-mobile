@@ -10,9 +10,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../../api/api';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 import { colors, typography, spacing } from '../../theme/tokens';
+
+const CACHE_PREFIX = '@performance_cache_';
 
 const PERIODS = [
     { key: 'daily', label: 'Today' },
@@ -73,6 +76,11 @@ const RadialCard = ({
 
     return (
         <View style={rStyles.card}>
+            {pct >= 100 && (
+                <View style={rStyles.milestoneBadge}>
+                    <Icon name="award" size={11} color="#fff" />
+                </View>
+            )}
             {/* Title */}
             <View style={rStyles.titleRow}>
                 <View style={[rStyles.iconBox, { backgroundColor: iconBg }]}>
@@ -106,6 +114,105 @@ const RadialCard = ({
     );
 };
 
+// ─── Motivational banner (built from real numbers only — no fabricated streaks) ─
+const getMotivation = (period, data) => {
+    if (!data) return null;
+
+    const visits = Number(data.total_visits) || 0;
+    const amount = Number(data.total_collection_amount) || 0;
+
+    // Scale the monthly targets down to an implied daily/weekly pace so the
+    // same "% of goal" logic works for every tab.
+    const WORK_DAYS_PER_MONTH = 26;
+    const WORK_DAYS_PER_WEEK = 6;
+    const divisor = period === 'daily' ? WORK_DAYS_PER_MONTH
+        : period === 'weekly' ? (WORK_DAYS_PER_MONTH / WORK_DAYS_PER_WEEK)
+        : 1;
+
+    const visitTarget = MONTHLY_VISIT_TARGET / divisor;
+    const amountTarget = MONTHLY_AMOUNT_TARGET / divisor;
+    const pct = Math.max(
+        visitTarget > 0 ? visits / visitTarget : 0,
+        amountTarget > 0 ? amount / amountTarget : 0,
+    );
+
+    const periodWord = period === 'daily' ? 'today' : period === 'weekly' ? 'this week' : 'this month';
+
+    if (visits === 0 && amount === 0) {
+        return {
+            emoji: '🌅',
+            title: period === 'daily' ? "Let's make today count!" : `No activity recorded ${periodWord} yet`,
+            subtitle: 'Punch in and log your first visit to get started.',
+            color: colors.info,
+            bg: colors.infoLight,
+        };
+    }
+    if (pct >= 1) {
+        return {
+            emoji: '🏆',
+            title: `Outstanding work ${periodWord}!`,
+            subtitle: `${fmtNum(visits)} visits and ₹${fmtNum(amount)} collected — goal reached.`,
+            color: colors.success,
+            bg: colors.successLight,
+        };
+    }
+    if (pct >= 0.75) {
+        return {
+            emoji: '🔥',
+            title: 'Almost there — keep the momentum!',
+            subtitle: `${fmtNum(visits)} visits, ₹${fmtNum(amount)} collected ${periodWord}.`,
+            color: colors.warning,
+            bg: colors.warningLight,
+        };
+    }
+    if (pct >= 0.4) {
+        return {
+            emoji: '💪',
+            title: 'Good progress — stay consistent!',
+            subtitle: `${fmtNum(visits)} visits, ₹${fmtNum(amount)} collected ${periodWord}.`,
+            color: colors.primary,
+            bg: colors.primaryLight,
+        };
+    }
+    return {
+        emoji: '🚀',
+        title: 'Great start — keep going!',
+        subtitle: `${fmtNum(visits)} visits, ₹${fmtNum(amount)} collected ${periodWord}.`,
+        color: colors.primary,
+        bg: colors.primaryLight,
+    };
+};
+
+const fmtNum = (n) => Number(n || 0).toLocaleString('en-IN');
+
+const MotivationBanner = ({ period, data }) => {
+    const m = getMotivation(period, data);
+    if (!m) return null;
+    return (
+        <View style={[mStyles.card, { backgroundColor: m.bg }]}>
+            <Text style={mStyles.emoji}>{m.emoji}</Text>
+            <View style={{ flex: 1 }}>
+                <Text style={[mStyles.title, { color: m.color }]}>{m.title}</Text>
+                <Text style={mStyles.subtitle}>{m.subtitle}</Text>
+            </View>
+        </View>
+    );
+};
+
+const mStyles = StyleSheet.create({
+    card: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: 18,
+        padding: spacing.md,
+        marginBottom: spacing.md,
+        gap: spacing.sm,
+    },
+    emoji: { fontSize: 32 },
+    title: { fontSize: 15, fontWeight: '800' },
+    subtitle: { fontSize: 12, color: colors.textMedium, marginTop: 2 },
+});
+
 // ─── Existing small metric card ───────────────────────────────────────────────
 const MetricCard = ({ icon, iconColor, iconBg, label, value, sub }) => (
     <View style={styles.metricCard}>
@@ -125,19 +232,43 @@ const MyPerformanceScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState(null);
+    const [isStale, setIsStale] = useState(false);
+    const [staleAsOf, setStaleAsOf] = useState(null);
 
     const fetchData = useCallback(async (selectedPeriod, isRefresh = false) => {
         if (isRefresh) setRefreshing(true);
         else setLoading(true);
+        const cacheKey = `${CACHE_PREFIX}${selectedPeriod}`;
         try {
             const res = await api.getPerformance(selectedPeriod);
             setData(res.data);
             setError(null);
+            setIsStale(false);
+            setStaleAsOf(null);
+            AsyncStorage.setItem(cacheKey, JSON.stringify({ data: res.data, savedAt: Date.now() })).catch(() => {});
         } catch (err) {
-            if (err?.response?.status !== 401) {
-                const { message } = parseApiError(err);
-                setError(message);
+            if (err?.response?.status === 401) {
+                setLoading(false);
+                setRefreshing(false);
+                return;
             }
+            // Network/server hiccup — fall back to the last synced snapshot for
+            // this period instead of a hard error screen, if we have one.
+            try {
+                const cached = await AsyncStorage.getItem(cacheKey);
+                if (cached) {
+                    const { data: cachedData, savedAt } = JSON.parse(cached);
+                    setData(cachedData);
+                    setIsStale(true);
+                    setStaleAsOf(savedAt);
+                    setError(null);
+                    return;
+                }
+            } catch (cacheErr) {
+                // fall through to showing the error below
+            }
+            const { message } = parseApiError(err);
+            setError(message);
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -340,6 +471,15 @@ const MyPerformanceScreen = ({ navigation }) => {
                         </View>
                     ) : data ? (
                         <>
+                            {isStale && (
+                                <View style={styles.staleBanner}>
+                                    <Icon name="wifi-off" size={13} color={colors.warning} />
+                                    <Text style={styles.staleBannerText}>
+                                        Showing last synced data{staleAsOf ? ` · ${new Date(staleAsOf).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
+                                    </Text>
+                                </View>
+                            )}
+                            <MotivationBanner period={period} data={data} />
                             <View style={styles.dateRange}>
                                 <Icon name="calendar" size={13} color={colors.textMuted} />
                                 <Text style={styles.dateRangeText}>
@@ -375,6 +515,22 @@ const rStyles = StyleSheet.create({
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.08,
         shadowRadius: 8,
+        position: 'relative',
+    },
+    milestoneBadge: {
+        position: 'absolute',
+        top: -8,
+        right: -8,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: colors.warning,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: colors.surface,
+        elevation: 4,
+        zIndex: 10,
     },
     titleRow: {
         flexDirection: 'row',
@@ -480,6 +636,12 @@ const styles = StyleSheet.create({
     retryBtnText: { color: '#fff', fontSize: typography.sizes.sm, fontWeight: '600' },
     dateRange: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: spacing.md },
     dateRangeText: { fontSize: typography.sizes.xs, color: colors.textMuted },
+    staleBanner: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        backgroundColor: colors.warningLight, borderRadius: 10,
+        paddingVertical: 6, paddingHorizontal: spacing.sm, marginBottom: spacing.sm,
+    },
+    staleBannerText: { fontSize: 11, color: colors.warning, fontWeight: '600' },
     row: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm },
     sectionLabel: {
         fontSize: 13,

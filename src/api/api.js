@@ -578,6 +578,9 @@ api.getCollections = (params = {}) =>
 api.getDistinctProducts = () =>
     api.get('/loans/collections/distinct_products/');
 
+api.getDistinctProductTypes = () =>
+    api.get('/loans/collections/distinct_product_types/');
+
 api.updateCollectionStatus = (id, data) =>
     api.post(`/loans/collections/${id}/update_status/`, data);
 

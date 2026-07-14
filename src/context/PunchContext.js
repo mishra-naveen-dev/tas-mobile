@@ -2,11 +2,21 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
 import LocationService from '../services/LocationService';
+import GeocodingService from '../services/GeocodingService';
 import BackgroundTrackingService from '../services/BackgroundTrackingService';
 import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
 
 const IS_DEV = __DEV__;
+const GEOCODE_TIMEOUT_MS = 6000;
+
+// Reverse geocoding must never be able to hang the punch flow — race it
+// against a timeout and fall back to null (caller uses raw coordinates).
+const reverseGeocodeWithTimeout = (lat, lng, timeoutMs = GEOCODE_TIMEOUT_MS) =>
+  Promise.race([
+    GeocodingService.reverseGeocode(lat, lng),
+    new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ]);
 
 export const STATES = {
   IDLE: 'IDLE',
@@ -100,8 +110,19 @@ export const PunchProvider = ({ children }) => {
         return { success: false, error: location.error, errorType: location.errorType };
       }
       
-      const address = location.address || `${location.latitude?.toFixed(5)}, ${location.longitude?.toFixed(5)}`;
-      
+      // Reverse-geocode the fix into a human-readable address (Google, with
+      // an on-device coordinate fallback if the API/network is unavailable).
+      let address = location.address || '';
+      try {
+        const geo = await reverseGeocodeWithTimeout(location.latitude, location.longitude);
+        address = geo?.fullAddress || geo?.shortAddress || address;
+      } catch (e) {
+        if (IS_DEV) console.warn('[Punch] Reverse geocode failed:', e.message);
+      }
+      if (!address) {
+        address = `${location.latitude?.toFixed(5)}, ${location.longitude?.toFixed(5)}`;
+      }
+
       setCapturedLocation({
         latitude: location.latitude,
         longitude: location.longitude,
@@ -133,21 +154,20 @@ export const PunchProvider = ({ children }) => {
         punch_type: 'PUNCH_IN',  // Always PUNCH_IN for initial punch
         latitude: locationData.latitude,
         longitude: locationData.longitude,
-        current_address: locationData.current_address || '',
+        address: locationData.current_address || '',
+        accuracy: locationData.accuracy ?? null,
         customer_address: formData.customer_address || '',
         customer_name: formData.customer_name || '',
-        notes: formData.reason || '',
+        reason: formData.reason || '',
         visit_type: formData.visit_type || 'VISIT',
         loan_id: formData.loan_id || '',
         amount: formData.amount ? parseFloat(formData.amount) : null,
-        // Backend field is payment_method; keep payment_mode too for compatibility.
         payment_method: formData.payment_mode || '',
-        payment_mode: formData.payment_mode || '',
         upi_ref: formData.upi_ref || '',
         cheque_no: formData.cheque_no || '',
-        travel_with: formData.travel_with || 'ALONE',
+        travel_type: formData.travel_with || 'ALONE',
         co_employee_id: formData.co_employee_id || '',
-        co_employee_name: formData.co_employee_name || '',
+        companion_name: formData.co_employee_name || '',
         vehicle_number: formData.vehicle_number || '',
       };
       
@@ -201,13 +221,21 @@ export const PunchProvider = ({ children }) => {
       let lat = capturedLocation?.latitude || 0;
       let lng = capturedLocation?.longitude || 0;
       let address = capturedLocation?.current_address || '';
+      let accuracy = capturedLocation?.accuracy ?? null;
 
       try {
         const currentLocation = await LocationService.getCurrentLocation();
         if (!currentLocation.error) {
           lat = currentLocation.latitude;
           lng = currentLocation.longitude;
-          address = currentLocation.address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          accuracy = currentLocation.accuracy ?? accuracy;
+          try {
+            const geo = await reverseGeocodeWithTimeout(lat, lng);
+            address = geo?.fullAddress || geo?.shortAddress || address;
+          } catch (geoErr) {
+            if (IS_DEV) console.warn('[Punch] Reverse geocode failed on punch out:', geoErr.message);
+          }
+          if (!address) address = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
         }
       } catch (locErr) {
         if (IS_DEV) console.warn('[Punch] GPS unavailable for punch out, using last known location');
@@ -217,7 +245,8 @@ export const PunchProvider = ({ children }) => {
         punch_type: 'PUNCH_OUT',
         latitude: lat,
         longitude: lng,
-        current_address: address,
+        address,
+        accuracy,
         notes: 'Punch Out',
       };
 

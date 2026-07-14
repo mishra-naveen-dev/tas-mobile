@@ -7,11 +7,11 @@ const { width } = Dimensions.get('window');
 
 const TAB_LEFT = [
     { name: 'Home', label: 'Home', icon: 'home' },
-    { name: 'Correction', label: 'Correction', icon: 'edit-3' },
+    { name: 'Collections', label: 'Collections', icon: 'dollar-sign' },
 ];
 
 const TAB_RIGHT = [
-    { name: 'Collections', label: 'Collections', icon: 'dollar-sign' },
+    { name: 'Correction', label: 'Correction', icon: 'edit-3' },
     { name: 'More', label: 'More', icon: 'grid' },
 ];
 

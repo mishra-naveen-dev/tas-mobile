@@ -432,7 +432,9 @@ const EmployeePunchScreen = ({ navigation }) => {
     const result = await punchIn(form, locationData);
 
     if (result.success) {
-      // Clear form for next punch - don't close modal
+      // Auto-close the dialog once the punch is recorded, instead of leaving
+      // it open for another entry.
+      setModalVisible(false);
       setReasonDropdownOpen(false);
       setForm({
         reason: '',
@@ -455,7 +457,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       setAddressSuggestions([]);
       setShowAddressSuggestions(false);
       resetForm();
-      Alert.alert('Success', 'Punch recorded! Add another punch or tap close.');
+      Alert.alert('Success', 'Punch recorded!');
     }
   };
 
