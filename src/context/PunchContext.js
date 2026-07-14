@@ -77,10 +77,23 @@ export const PunchProvider = ({ children }) => {
     setPunchState(STATES.FETCHING_LOCATION);
     setErrorMessage(null);
     setSuccess(false);
-    
+
     try {
+      // Request background + notification permissions here too (not just
+      // foreground), so live route tracking works the moment this punch-in
+      // completes — bundled into the same user-initiated action instead of
+      // prompting at app launch before the user has done anything. Awaited
+      // (not fire-and-forget) since the OS can only show one permission
+      // dialog at a time — running this concurrently with the foreground
+      // location request below could make one of the two prompts misfire.
+      try {
+        await LiveTrackingService.bootstrapPermissions();
+      } catch (e) {
+        if (IS_DEV) console.warn('[Punch] Permission bootstrap error:', e.message);
+      }
+
       const location = await LocationService.getCurrentLocation();
-      
+
       if (location.error) {
         setPunchState(STATES.ERROR);
         setErrorMessage(location.error);
@@ -271,15 +284,6 @@ export const PunchProvider = ({ children }) => {
   useEffect(() => {
     fetchTodayPunches();
   }, [fetchTodayPunches]);
-
-  // Request location + background + notification permissions up-front so live
-  // route tracking actually works the first time the user punches in. Safe to
-  // run on every authenticated launch — the OS won't re-prompt granted perms.
-  useEffect(() => {
-    LiveTrackingService.bootstrapPermissions().catch((e) => {
-      if (IS_DEV) console.warn('[Punch] Permission bootstrap error:', e.message);
-    });
-  }, []);
 
   const value = useMemo(() => ({
     punches,

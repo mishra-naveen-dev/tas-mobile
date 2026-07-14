@@ -35,6 +35,9 @@ local.properties
 !debug.keystore
 .kotlin/
 
+
+AGENT.md
+PUNCH_FEATURE_OVERVIEW.md
 # node.js
 #
 node_modules/

@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { View, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography } from '../theme/tokens';
+import OfflineBanner from '../components/common/OfflineBanner';
 
 // Auth Screens
 // Auth Screens
@@ -225,32 +226,34 @@ const RootNavigator = () => {
     const isSuperAdmin = auth?.isSuperAdmin ?? false;
     const isAdmin = auth?.isAdmin ?? false;
 
+    let content;
     if (!isAuthenticated) {
-        return <AuthStackNavigator />;
-    }
-
-    if (forcePasswordChange) {
-        return (
+        content = <AuthStackNavigator />;
+    } else if (forcePasswordChange) {
+        content = (
             <AuthStack.Navigator screenOptions={commonScreenOptions}>
                 <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
             </AuthStack.Navigator>
         );
+    } else if (isSuperAdmin) {
+        content = <SuperAdminStackNavigator />;
+    } else if (isAdmin) {
+        content = <AdminStackNavigator />;
+    } else {
+        // Employees must grant background ("Allow all the time") location before
+        // using the app — checked on login and every time the app is foregrounded.
+        content = (
+            <LocationGate user={auth.user}>
+                <EmployeeStackNavigator />
+            </LocationGate>
+        );
     }
 
-    if (isSuperAdmin) {
-        return <SuperAdminStackNavigator />;
-    }
-
-    if (isAdmin) {
-        return <AdminStackNavigator />;
-    }
-
-    // Employees must grant background ("Allow all the time") location before
-    // using the app — checked on login and every time the app is foregrounded.
     return (
-        <LocationGate user={auth.user}>
-            <EmployeeStackNavigator />
-        </LocationGate>
+        <View style={{ flex: 1 }}>
+            <OfflineBanner />
+            {content}
+        </View>
     );
 };
 

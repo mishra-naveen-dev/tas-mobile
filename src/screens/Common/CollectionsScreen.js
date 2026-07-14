@@ -27,6 +27,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
 import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
+import { useAuth } from '../../context/AuthContext';
 
 const STATUS_OPTIONS = [
     { value: 'PENDING', label: 'P2P', color: colors.textMuted },
@@ -108,6 +109,9 @@ class MapErrorBoundary extends Component {
 }
 
 const PAGE_SIZE = 20;
+const NEAR_ME_AUTO_OFF_MS = 10 * 60 * 1000; // Near Me auto-disables after 10 minutes
+const NEAR_ME_RADIUS_OPTIONS_KM = [1, 2, 3, 4, 5];
+const NEAR_ME_DEFAULT_RADIUS_KM = 1;
 
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -128,7 +132,7 @@ const KpiPill = ({ label, value, accent }) => (
 );
 
 // ── Map tab ─────────────────────────────────────────────────────────────────
-const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
+const CollectionsMap = ({ records, navigateToCustomer, openUpdate, userLocation }) => {
     const mapRef = useRef(null);
     const currentRegion = useRef(null);
 
@@ -143,6 +147,32 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
             .filter(r => !isNaN(r.visit_latitude) && !isNaN(r.visit_longitude)),
         [records]
     );
+
+    // Nearest uncollected customer to user's GPS (equirectangular approx)
+    const nearest = useMemo(() => {
+        if (!userLocation) return null;
+        let closest = null;
+        let minDist = Infinity;
+        const cosLat = Math.cos(userLocation.latitude * Math.PI / 180);
+        for (const r of pinned) {
+            if (r.status === 'COLLECTED') continue;
+            const dlat = (r.visit_latitude - userLocation.latitude) * 111;
+            const dlng = (r.visit_longitude - userLocation.longitude) * 111 * cosLat;
+            const dist = Math.sqrt(dlat * dlat + dlng * dlng);
+            if (dist < minDist) { minDist = dist; closest = r; }
+        }
+        return closest;
+    }, [pinned, userLocation]);
+
+    const goToNearest = useCallback(() => {
+        if (!nearest) return;
+        mapRef.current?.animateToRegion({
+            latitude: nearest.visit_latitude,
+            longitude: nearest.visit_longitude,
+            latitudeDelta: 0.008,
+            longitudeDelta: 0.008,
+        }, 600);
+    }, [nearest]);
 
     // Route line: pending/partial customers sorted by visit time
     const routeCoords = useMemo(() => {
@@ -227,14 +257,21 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
                 {pinned.map(r => {
                     const meta = STATUS_META[r.status] || STATUS_META.PENDING;
                     const isDone = r.status === 'COLLECTED';
+                    const isNearest = nearest && r.id === nearest.id;
                     return (
                         <Marker
                             key={r.id}
                             coordinate={{ latitude: r.visit_latitude, longitude: r.visit_longitude }}
-                            pinColor={PIN_COLOR[r.status] || PIN_COLOR.PENDING}
+                            pinColor={isNearest ? '#F59E0B' : (PIN_COLOR[r.status] || PIN_COLOR.PENDING)}
                             opacity={isDone ? 0.5 : 1}
                         >
                             <Callout tooltip={false} style={styles.calloutBox}>
+                                {isNearest && (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4, backgroundColor: '#FEF3C7', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                                        <Icon name="star" size={10} color="#D97706" />
+                                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#92400E' }}>NEAREST</Text>
+                                    </View>
+                                )}
                                 <Text style={styles.calloutName} numberOfLines={1}>{r.customer_name}</Text>
                                 <Text style={styles.calloutSub}>{r.loan_id} · {meta.label}</Text>
                                 <Text style={styles.calloutAmt}>{fmtCompact(r.amount_due)}</Text>
@@ -277,6 +314,16 @@ const CollectionsMap = ({ records, navigateToCustomer, openUpdate }) => {
             <TouchableOpacity style={styles.recenterBtn} onPress={reCenter} activeOpacity={0.75}>
                 <Icon name="crosshair" size={20} color={colors.primary} />
             </TouchableOpacity>
+
+            {/* Go to Nearest — shown when Near Me is active */}
+            {nearest && (
+                <View style={{ position: 'absolute', bottom: 14, left: 0, right: 0, alignItems: 'center' }} pointerEvents="box-none">
+                    <TouchableOpacity style={styles.nearestFloatBtn} onPress={goToNearest} activeOpacity={0.8}>
+                        <Icon name="star" size={13} color="#fff" />
+                        <Text style={styles.nearestFloatBtnText}>Go to Nearest</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
           </MapErrorBoundary>
         </View>
     );
@@ -309,6 +356,11 @@ const AnimatedCard = React.memo(({ index, children }) => {
 
 // ── Main screen ──────────────────────────────────────────────────────────────
 const CollectionsScreen = () => {
+    const { user } = useAuth();
+    // Super Admin controls this per role/user via Feature Assignment
+    // (APP_NEAR_ME_COLLECTIONS) — defaults ON for employees.
+    const nearMeFeatureEnabled = !!user?.near_me_enabled;
+
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -321,6 +373,8 @@ const CollectionsScreen = () => {
     const [activeFilter, setActiveFilter] = useState('ALL');
     const [typeFilter, setTypeFilter] = useState('ALL');
     const [dpdFilter, setDpdFilter] = useState('ALL');
+    const [productFilter, setProductFilter] = useState('ALL');
+    const [products, setProducts] = useState([]);
     const [filterModalVisible, setFilterModalVisible] = useState(false);
 
     // Aggregate counts (all assigned records, independent of the paginated/
@@ -338,6 +392,23 @@ const CollectionsScreen = () => {
     const [saving, setSaving] = useState(false);
     const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
+    const [nearMeEnabled, setNearMeEnabled] = useState(false);
+    const [userLocation, setUserLocation] = useState(null);
+    const [nearMeLoading, setNearMeLoading] = useState(false);
+    const [nearMeRadiusKm, setNearMeRadiusKm] = useState(NEAR_ME_DEFAULT_RADIUS_KM);
+    const [radiusPickerVisible, setRadiusPickerVisible] = useState(false);
+    const nearMeTimerRef = useRef(null);
+
+    const [listError, setListError] = useState(false);
+    const productsLoadedRef = useRef(false);
+    // Bumped on every fetchRecords/fetchMapRecords call; a response is only
+    // applied if it's still the latest request in flight. Without this, rapid
+    // filter/search changes can fire overlapping requests, and a slower older
+    // one resolving after a newer one would silently overwrite correct results
+    // with stale data.
+    const fetchSeqRef = useRef(0);
+    const mapFetchSeqRef = useRef(0);
+
     // Debounce the search box so every keystroke doesn't trigger a network call.
     useEffect(() => {
         const t = setTimeout(() => setDebouncedSearch(search.trim()), 400);
@@ -353,27 +424,93 @@ const CollectionsScreen = () => {
         if (activeFilter !== 'ALL') params.status = activeFilter;
         if (typeFilter !== 'ALL') params.collection_type = typeFilter;
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
+        if (productFilter !== 'ALL') params.product_id = productFilter;
         if (debouncedSearch) params.search = debouncedSearch;
+        // Distance sort is done client-side — no server params added here
         return params;
-    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
+    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
+
+    // Shared "turn off" path for both the manual toggle and the auto-off timer.
+    const disableNearMe = useCallback(() => {
+        if (nearMeTimerRef.current) {
+            clearTimeout(nearMeTimerRef.current);
+            nearMeTimerRef.current = null;
+        }
+        setNearMeEnabled(false);
+        setUserLocation(null);
+    }, []);
+
+    // Tapping Near Me while OFF opens the radius picker; tapping while ON
+    // turns it off directly (no picker) — matches the existing quick-toggle feel.
+    const toggleNearMe = useCallback(() => {
+        if (nearMeEnabled) {
+            disableNearMe();
+            return;
+        }
+        setRadiusPickerVisible(true);
+    }, [nearMeEnabled, disableNearMe]);
+
+    // Fetches location and turns Near Me on, scoped to the chosen radius.
+    const activateNearMe = useCallback(async (radiusKm) => {
+        setRadiusPickerVisible(false);
+        setNearMeRadiusKm(radiusKm);
+        setNearMeLoading(true);
+        try {
+            const loc = await LocationService.getCurrentLocation();
+            if (loc?.latitude && loc?.longitude && !loc?.error) {
+                setUserLocation({ latitude: loc.latitude, longitude: loc.longitude });
+                setNearMeEnabled(true);
+                // Auto-disable after a fixed window so Near Me doesn't stay on
+                // (and keep sorting by a now-stale location) if the user forgets
+                // to turn it off — they can always re-tap to refresh and restart it.
+                nearMeTimerRef.current = setTimeout(disableNearMe, NEAR_ME_AUTO_OFF_MS);
+                // Pre-load the full record set for client-side distance sort if not already available
+                if (mapRecords.length === 0 && !mapLoading) {
+                    fetchMapRecords();
+                }
+            } else {
+                Alert.alert('Location needed', 'Could not detect your location. Please enable location permissions and try again.');
+            }
+        } catch (_) {
+            Alert.alert('Location needed', 'Could not detect your location. Please enable location permissions and try again.');
+        } finally {
+            setNearMeLoading(false);
+        }
+    }, [mapRecords.length, mapLoading, fetchMapRecords, disableNearMe]);
+
+    // Clear the auto-off timer if the screen unmounts while Near Me is active.
+    useEffect(() => {
+        return () => {
+            if (nearMeTimerRef.current) clearTimeout(nearMeTimerRef.current);
+        };
+    }, []);
 
     // Fetch a single page; pass reset=true on refresh/filter-change to clear existing records
     const fetchRecords = useCallback(async (pageNum = 1, reset = false) => {
         if (pageNum === 1) reset = true;
+        const seq = ++fetchSeqRef.current;
         if (pageNum > 1) setPageLoading(true);
-        else if (reset) setLoading(true);
+        else if (reset) { setLoading(true); setListError(false); }
         try {
             const res = await api.getCollections({ page: pageNum, page_size: PAGE_SIZE, ...buildFilterParams() });
+            if (seq !== fetchSeqRef.current) return; // superseded by a newer request — drop this stale response
             const data = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
             setRecords(prev => reset ? data : [...prev, ...data]);
             setPage(pageNum);
             setHasMore(!!res.data?.next);
+            setListError(false);
         } catch {
-            if (pageNum === 1) Alert.alert('Error', 'Could not load your collections.');
+            if (seq !== fetchSeqRef.current) return;
+            if (pageNum === 1) {
+                setListError(true);
+                setHasMore(false); // prevent onEndReached from looping on an empty error state
+            }
         } finally {
-            setLoading(false);
-            setRefreshing(false);
-            setPageLoading(false);
+            if (seq === fetchSeqRef.current) {
+                setLoading(false);
+                setRefreshing(false);
+                setPageLoading(false);
+            }
         }
     }, [buildFilterParams]);
 
@@ -392,33 +529,49 @@ const CollectionsScreen = () => {
     // The Map tab plots the working set on its own, independent fetch so an
     // active List-view Status/Type filter can't empty the map out.
     const fetchMapRecords = useCallback(async () => {
+        const seq = ++mapFetchSeqRef.current;
         setMapLoading(true);
         try {
             let all = [];
             let pageNum = 1;
-            // Safety cap: 3 pages @ 200 = 600 records is far beyond what a
-            // single employee/branch would realistically have assigned.
-            for (; pageNum <= 3; pageNum += 1) {
-                const res = await api.getCollections({ page: pageNum, page_size: 200 });
+            // Safety cap: 6 pages @ 100 (backend's page-size ceiling) = 600
+            // records, far beyond what a single employee/branch would
+            // realistically have assigned. Requesting more than the backend's
+            // max_page_size is silently clamped, not rejected, so the page
+            // count here must match that ceiling to keep the same total reach.
+            for (; pageNum <= 6; pageNum += 1) {
+                const res = await api.getCollections({ page: pageNum, page_size: 100 });
+                if (seq !== mapFetchSeqRef.current) return; // superseded — abandon this run
                 const data = res.data?.results ?? (Array.isArray(res.data) ? res.data : []);
                 all = all.concat(data);
                 if (!res.data?.next) break;
             }
-            setMapRecords(all);
+            if (seq === mapFetchSeqRef.current) setMapRecords(all);
         } catch {
             // Non-critical — map just stays empty until the next refresh.
         } finally {
-            setMapLoading(false);
+            if (seq === mapFetchSeqRef.current) setMapLoading(false);
         }
     }, []);
 
     // Refetch page 1 whenever a filter changes (also fires on mount).
+    // Near Me sorting is client-side — toggling it does NOT trigger a server fetch.
     useEffect(() => {
         fetchRecords(1, true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeFilter, typeFilter, dpdFilter, debouncedSearch]);
+    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
+
+    // Products are lazy-loaded when the filter modal is first opened so they
+    // don't race with the initial collections fetch on mount.
+    const loadProducts = useCallback(() => {
+        if (productsLoadedRef.current) return;
+        productsLoadedRef.current = true;
+        api.getDistinctProducts()
+            .then(res => setProducts(Array.isArray(res.data) ? res.data : []))
+            .catch(() => { productsLoadedRef.current = false; }); // allow retry on next open
+    }, []);
 
     useEffect(() => {
         if (view === 'map' && mapRecords.length === 0 && !mapLoading) {
@@ -429,24 +582,71 @@ const CollectionsScreen = () => {
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
+        setListError(false);
+        setHasMore(true);
         fetchRecords(1, true);
         fetchSummary();
         if (view === 'map') fetchMapRecords();
     }, [fetchRecords, fetchSummary, fetchMapRecords, view]);
 
     const onEndReached = useCallback(() => {
-        if (!pageLoading && !loading && hasMore) {
+        // Guard: records.length > 0 prevents an immediate page-2 fetch when
+        // the list is empty after a failed page-1 load (hasMore stays true
+        // after an error; we reset it above, but belt-and-suspenders here).
+        if (!pageLoading && !loading && hasMore && records.length > 0) {
             fetchRecords(page + 1, false);
         }
-    }, [pageLoading, loading, hasMore, page, fetchRecords]);
+    }, [pageLoading, loading, hasMore, records.length, page, fetchRecords]);
 
     // ── Derived stats & filtering ─────────────────────────────────────────
-    // `records` is now filtered server-side (status/type/dpd/search all applied
-    // as query params in fetchRecords), so no client-side re-filtering here —
-    // that used to silently limit filters to whatever page had been paginated
-    // in, and double-filtering on a non-debounced `search` would flicker/hide
-    // valid address-matched results the server already found.
-    const filtered = records;
+    // When Near Me is OFF: server-side filtering/pagination via `records`.
+    // When Near Me is ON: client-side sort+filter from `mapRecords` (full set
+    //   already fetched for the map tab) — zero extra server requests.
+    const filtered = useMemo(() => {
+        if (!nearMeEnabled || !userLocation) return records;
+
+        // Use the full unfiltered dataset; fall back to current page if map data not ready
+        const source = mapRecords.length > 0 ? mapRecords : records;
+
+        // Apply the same filters the server would have applied
+        let result = source;
+        if (activeFilter !== 'ALL')
+            result = result.filter(r => r.status === activeFilter);
+        if (typeFilter !== 'ALL')
+            result = result.filter(r => r.collection_type === typeFilter);
+        if (typeFilter === 'OD' && dpdFilter !== 'ALL')
+            result = result.filter(r => matchesDpdBucket(r.dpd_days, dpdFilter));
+        if (productFilter !== 'ALL')
+            result = result.filter(r => (r.product_id || '').toLowerCase() === productFilter.toLowerCase());
+        if (debouncedSearch) {
+            const q = debouncedSearch.toLowerCase();
+            result = result.filter(r =>
+                (r.customer_name || '').toLowerCase().includes(q) ||
+                (r.loan_id || '').toLowerCase().includes(q) ||
+                (r.customer_phone || '').toLowerCase().includes(q) ||
+                (r.address || '').toLowerCase().includes(q) ||
+                (r.pincode || '').toLowerCase().includes(q)
+            );
+        }
+
+        // Compute distance from user; prefer customer coords if already seeded
+        const cosLat = Math.cos(userLocation.latitude * Math.PI / 180);
+        const withDist = result.map(r => {
+            const lat = parseFloat(r.customer_latitude ?? r.visit_latitude);
+            const lng = parseFloat(r.customer_longitude ?? r.visit_longitude);
+            if (isNaN(lat) || isNaN(lng)) return { ...r, distance_km: null };
+            const dlat = (lat - userLocation.latitude) * 111;
+            const dlng = (lng - userLocation.longitude) * 111 * cosLat;
+            return { ...r, distance_km: Math.sqrt(dlat * dlat + dlng * dlng) };
+        });
+
+        // Only customers within the chosen radius, with a known location — an
+        // unknown location can't be confirmed as "within range" so it's excluded
+        // here (unlike the plain distance-sort, which puts unknowns last instead).
+        const withinRadius = withDist.filter(r => r.distance_km != null && r.distance_km <= nearMeRadiusKm);
+
+        return withinRadius.sort((a, b) => a.distance_km - b.distance_km);
+    }, [nearMeEnabled, userLocation, nearMeRadiusKm, records, mapRecords, activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
 
     // Map view search — non-collected only, across name/address/area/loan/date.
     // Uses mapRecords (its own dedicated fetch), not the List's filtered `records`,
@@ -566,12 +766,29 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })()}
+                                {!!item.product_id && (
+                                    <View style={styles.productTag}>
+                                        <Text style={styles.productTagText} numberOfLines={1}>{item.product_id}</Text>
+                                    </View>
+                                )}
                             </View>
                         </View>
-                        <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
-                            <Text style={[styles.statusChipText, { color: meta.color }]}>
-                                {item.status_display || meta.label}
-                            </Text>
+                        <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                            <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
+                                <Text style={[styles.statusChipText, { color: meta.color }]}>
+                                    {item.status_display || meta.label}
+                                </Text>
+                            </View>
+                            {nearMeEnabled && item.distance_km != null && (
+                                <View style={styles.distanceBadge}>
+                                    <Icon name="navigation" size={10} color={colors.primary} />
+                                    <Text style={styles.distanceBadgeText}>
+                                        {item.distance_km < 1
+                                            ? `${Math.round(item.distance_km * 1000)} m`
+                                            : `${item.distance_km.toFixed(1)} km`}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
                     </View>
 
@@ -705,6 +922,23 @@ const CollectionsScreen = () => {
                                 <Icon name="map" size={16} color={view === 'map' ? colors.primary : 'rgba(255,255,255,0.7)'} />
                             </TouchableOpacity>
                         </View>
+                        {/* Near Me toggle — Feature-gated (APP_NEAR_ME_COLLECTIONS) */}
+                        {nearMeFeatureEnabled && (
+                            <TouchableOpacity
+                                style={[styles.nearMeHeaderBtn, nearMeEnabled && styles.nearMeHeaderBtnActive]}
+                                onPress={toggleNearMe}
+                                disabled={nearMeLoading}
+                                activeOpacity={0.8}
+                            >
+                                {nearMeLoading
+                                    ? <ActivityIndicator size="small" color="#fff" />
+                                    : <Icon name="navigation" size={13} color={nearMeEnabled ? colors.primary : 'rgba(255,255,255,0.9)'} />
+                                }
+                                <Text style={[styles.nearMeHeaderBtnText, nearMeEnabled && { color: colors.primary }]}>
+                                    {nearMeEnabled ? `Near Me · ${nearMeRadiusKm}km` : 'Near Me'}
+                                </Text>
+                            </TouchableOpacity>
+                        )}
                         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
                             <Icon name="refresh-cw" size={18} color="#FFFFFF" />
                         </TouchableOpacity>
@@ -745,6 +979,7 @@ const CollectionsScreen = () => {
                                 records={mapRecords}
                                 navigateToCustomer={navigateToCustomer}
                                 openUpdate={openUpdate}
+                                userLocation={nearMeEnabled ? userLocation : null}
                             />
                         )}
                     </View>
@@ -884,30 +1119,31 @@ const CollectionsScreen = () => {
                     <View style={styles.filterBar}>
                         <TouchableOpacity
                             style={styles.filterBtn}
-                            onPress={() => setFilterModalVisible(true)}
+                            onPress={() => { setFilterModalVisible(true); loadProducts(); }}
                             activeOpacity={0.85}
                         >
                             <Icon name="sliders" size={15} color={colors.primary} />
                             <Text style={styles.filterBtnText}>Filters</Text>
-                            {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL') && (
+                            {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL' || productFilter !== 'ALL') && (
                                 <View style={styles.filterBadge}>
                                     <Text style={styles.filterBadgeText}>
-                                        {(activeFilter !== 'ALL' ? 1 : 0) + (typeFilter !== 'ALL' ? 1 : 0) + (dpdFilter !== 'ALL' ? 1 : 0)}
+                                        {(activeFilter !== 'ALL' ? 1 : 0) + (typeFilter !== 'ALL' ? 1 : 0) + (dpdFilter !== 'ALL' ? 1 : 0) + (productFilter !== 'ALL' ? 1 : 0)}
                                     </Text>
                                 </View>
                             )}
                         </TouchableOpacity>
                         <Text style={styles.filterSummary} numberOfLines={1}>
-                            {(activeFilter === 'ALL' ? 'All' : STATUS_META[activeFilter]?.label)}
+                            {activeFilter === 'ALL' ? 'All' : STATUS_META[activeFilter]?.label}
                             {'  ·  '}
-                            {(typeFilter === 'ALL' ? 'All Types' : TYPE_META[typeFilter]?.label)}
+                            {typeFilter === 'ALL' ? 'All Types' : TYPE_META[typeFilter]?.label}
                             {typeFilter === 'OD' && dpdFilter !== 'ALL' ? ` (DPD ${dpdFilter})` : ''}
+                            {productFilter !== 'ALL' ? `  ·  ${productFilter}` : ''}
                             {'  ·  '}{filtered.length} results
                         </Text>
-                        {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL') && (
+                        {(activeFilter !== 'ALL' || typeFilter !== 'ALL' || dpdFilter !== 'ALL' || productFilter !== 'ALL') && (
                             <TouchableOpacity
                                 style={styles.resetIconBtn}
-                                onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); }}
+                                onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); setProductFilter('ALL'); }}
                                 activeOpacity={0.75}
                                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             >
@@ -1004,10 +1240,36 @@ const CollectionsScreen = () => {
                                     </>
                                 )}
 
+                                {products.length > 0 && (
+                                    <>
+                                        <Text style={styles.fieldLabel}>Loan Product</Text>
+                                        <View style={styles.statusGrid}>
+                                            <TouchableOpacity
+                                                style={[styles.statusOption, productFilter === 'ALL' && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
+                                                onPress={() => setProductFilter('ALL')}
+                                            >
+                                                <Text style={[styles.statusOptionText, productFilter === 'ALL' && { color: '#FFFFFF' }]}>All Products</Text>
+                                            </TouchableOpacity>
+                                            {products.map(p => {
+                                                const active = productFilter === p;
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={p}
+                                                        style={[styles.statusOption, active && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
+                                                        onPress={() => setProductFilter(p)}
+                                                    >
+                                                        <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{p}</Text>
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
+                                        </View>
+                                    </>
+                                )}
+
                                 <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
                                     <TouchableOpacity
                                         style={[styles.saveBtn, styles.resetBtn, { flex: 1 }]}
-                                        onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); }}
+                                        onPress={() => { setActiveFilter('ALL'); setTypeFilter('ALL'); setDpdFilter('ALL'); setProductFilter('ALL'); }}
                                     >
                                         <Text style={[styles.saveBtnText, { color: colors.textDark }]}>Reset</Text>
                                     </TouchableOpacity>
@@ -1022,8 +1284,60 @@ const CollectionsScreen = () => {
                         </View>
                     </Modal>
 
-                    {loading ? (
+                    {/* ── Near Me radius picker ── */}
+                    <Modal
+                        visible={radiusPickerVisible}
+                        transparent
+                        animationType="slide"
+                        onRequestClose={() => setRadiusPickerVisible(false)}
+                    >
+                        <View style={styles.modalOverlay}>
+                            <View style={styles.modalContent}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>Near Me</Text>
+                                    <TouchableOpacity onPress={() => setRadiusPickerVisible(false)}>
+                                        <Icon name="x" size={22} color={colors.textDark} />
+                                    </TouchableOpacity>
+                                </View>
+                                <Text style={styles.modalSub}>
+                                    Show only customers within this distance of your current location.
+                                </Text>
+
+                                <Text style={styles.fieldLabel}>Radius</Text>
+                                <View style={styles.statusGrid}>
+                                    {NEAR_ME_RADIUS_OPTIONS_KM.map(km => (
+                                        <TouchableOpacity
+                                            key={km}
+                                            style={styles.statusOption}
+                                            onPress={() => activateNearMe(km)}
+                                            disabled={nearMeLoading}
+                                        >
+                                            <Text style={styles.statusOptionText}>{km} km</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            </View>
+                        </View>
+                    </Modal>
+
+                    {(nearMeEnabled ? (mapLoading && mapRecords.length === 0) : loading) ? (
                         <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+                    ) : listError ? (
+                        /* ── Inline error state: no alert, always retryable ── */
+                        <View style={styles.center}>
+                            <Icon name="wifi-off" size={40} color={colors.textLight} />
+                            <Text style={[styles.emptyText, { marginTop: spacing.sm }]}>
+                                Could not load collections.{'\n'}Check your connection and try again.
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.retryBtn}
+                                onPress={() => { setListError(false); setHasMore(true); fetchRecords(1, true); }}
+                                activeOpacity={0.8}
+                            >
+                                <Icon name="refresh-cw" size={14} color="#fff" />
+                                <Text style={styles.retryBtnText}>Retry</Text>
+                            </TouchableOpacity>
+                        </View>
                     ) : (
                         <FlatList
                             data={filtered}
@@ -1031,29 +1345,42 @@ const CollectionsScreen = () => {
                             renderItem={renderItem}
                             contentContainerStyle={{ padding: spacing.md, paddingBottom: 120 }}
                             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                            onEndReached={onEndReached}
+                            onEndReached={nearMeEnabled ? null : onEndReached}
                             onEndReachedThreshold={0.3}
                             initialNumToRender={10}
                             maxToRenderPerBatch={10}
                             windowSize={7}
                             removeClippedSubviews
                             ListFooterComponent={
-                                pageLoading
-                                    ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                                          <ActivityIndicator size="small" color={colors.primary} />
-                                          <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>Loading more…</Text>
-                                      </View>
-                                    : !hasMore && records.length > 0
-                                        ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                                              <Text style={{ fontSize: 11, color: colors.textMuted }}>All {records.length} records loaded</Text>
+                                nearMeEnabled
+                                    ? filtered.length > 0
+                                        ? <View style={{ paddingVertical: 14, alignItems: 'center', gap: 3 }}>
+                                              <Icon name="navigation" size={13} color={colors.primary} />
+                                              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                                                  {filtered.length} customer{filtered.length === 1 ? '' : 's'} within {nearMeRadiusKm} km, nearest first
+                                              </Text>
                                           </View>
                                         : null
+                                    : pageLoading
+                                        ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                                              <ActivityIndicator size="small" color={colors.primary} />
+                                              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>Loading more…</Text>
+                                          </View>
+                                        : !hasMore && records.length > 0
+                                            ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                                                  <Text style={{ fontSize: 11, color: colors.textMuted }}>All {records.length} records loaded</Text>
+                                              </View>
+                                            : null
                             }
                             ListEmptyComponent={
                                 <View style={styles.center}>
                                     <Icon name="inbox" size={40} color={colors.textLight} />
                                     <Text style={styles.emptyText}>
-                                        {(summary?.total_assigned || 0) === 0 ? 'No customers assigned to you yet.' : 'No records match this filter.'}
+                                        {(summary?.total_assigned || 0) === 0
+                                            ? 'No customers assigned to you yet.'
+                                            : nearMeEnabled
+                                                ? `No customers within ${nearMeRadiusKm} km. Try a larger radius.`
+                                                : 'No records match this filter.'}
                                     </Text>
                                 </View>
                             }
@@ -1221,7 +1548,13 @@ const CollectionsScreen = () => {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     center: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xxxl },
-    emptyText: { marginTop: spacing.sm, color: colors.textMuted, fontSize: typography.sizes.sm, textAlign: 'center' },
+    emptyText: { marginTop: spacing.sm, color: colors.textMuted, fontSize: typography.sizes.sm, textAlign: 'center', lineHeight: 20 },
+    retryBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        marginTop: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+        backgroundColor: colors.primary, borderRadius: borderRadius.full,
+    },
+    retryBtnText: { color: '#fff', fontWeight: '700', fontSize: typography.sizes.sm },
 
     // Header
     header: {
@@ -1383,9 +1716,11 @@ const styles = StyleSheet.create({
     },
     resetBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
 
-    loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2 },
+    loanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: 2, flexWrap: 'wrap' },
     typeTag: { paddingHorizontal: spacing.xs, paddingVertical: 1, borderRadius: borderRadius.sm, marginLeft: spacing.xs },
     typeTagText: { fontSize: 10, fontWeight: '700' },
+    productTag: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: borderRadius.sm, backgroundColor: '#7c3aed18', borderWidth: 1, borderColor: '#7c3aed30', maxWidth: 90 },
+    productTagText: { fontSize: 9, fontWeight: '700', color: '#7c3aed' },
 
     // Card
     card: {
@@ -1455,6 +1790,34 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.md, alignItems: 'center', marginTop: spacing.sm,
     },
     saveBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: typography.sizes.md },
+
+    // Near Me — header toggle button
+    nearMeHeaderBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: borderRadius.md,
+        paddingHorizontal: spacing.sm, paddingVertical: spacing.xs + 2,
+    },
+    nearMeHeaderBtnActive: { backgroundColor: '#FFFFFF' },
+    nearMeHeaderBtnText: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.9)' },
+
+    // Distance badge on list card
+    distanceBadge: {
+        flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: colors.primary + '12', borderRadius: 8,
+        paddingHorizontal: 6, paddingVertical: 2,
+        borderWidth: 1, borderColor: colors.primary + '30',
+    },
+    distanceBadgeText: { fontSize: 10, fontWeight: '700', color: colors.primary },
+
+    // "Go to Nearest" floating button on map
+    nearestFloatBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20,
+        backgroundColor: colors.primary,
+        elevation: 10,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.22, shadowRadius: 4,
+    },
+    nearestFloatBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
 });
 
 export default CollectionsScreen;

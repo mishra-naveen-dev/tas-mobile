@@ -37,11 +37,21 @@ const HeroHeader = ({
         username: typeof user?.username === 'string' ? user.username : 'User',
     };
 
-    const userName = safeUser.first_name && safeUser.last_name
-        ? `${safeUser.first_name} ${safeUser.last_name}`
-        : safeUser.username || 'User';
+    // Title-case a string that may be stored in ALL CAPS from the backend
+    const toTitleCase = (str) =>
+        str ? str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) : '';
 
-    const userInitial = typeof userName === 'string' && userName.length > 0 ? userName.charAt(0).toUpperCase() : 'U';
+    // Greeting: first name only (shorter, fits in one line); fallback to username
+    const greetingName = safeUser.first_name
+        ? toTitleCase(safeUser.first_name)
+        : toTitleCase(safeUser.username) || 'User';
+
+    // Full name shown as a smaller subtitle below the greeting
+    const fullName = (safeUser.first_name || safeUser.last_name)
+        ? toTitleCase(`${safeUser.first_name} ${safeUser.last_name}`.trim())
+        : '';
+
+    const userInitial = greetingName.charAt(0).toUpperCase() || 'U';
 
     const safeRole = typeof role === 'string' ? role : 'employee';
     const safeStatus = typeof status === 'string' ? status : 'offline';
@@ -65,9 +75,16 @@ const HeroHeader = ({
                     </View>
                     <View style={styles.info}>
                         <View style={styles.nameRow}>
-                            <Text style={styles.greeting}>Hello,</Text>
-                            <Text style={styles.name}> {userName}</Text>
+                            <Text style={styles.greeting}>Hello, </Text>
+                            <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
+                                {greetingName}
+                            </Text>
                         </View>
+                        {!!fullName && greetingName !== fullName && (
+                            <Text style={styles.fullName} numberOfLines={1} ellipsizeMode="tail">
+                                {fullName}
+                            </Text>
+                        )}
                         <View style={styles.badges}>
                             <View style={[styles.roleBadge, { backgroundColor: `${getRoleBadgeColor(safeRole)}15` }]}>
                                 <Text style={[styles.roleText, { color: getRoleBadgeColor(safeRole) }]}>
@@ -147,6 +164,13 @@ const styles = StyleSheet.create({
         fontSize: typography.sizes.xl,
         fontWeight: typography.weights.bold,
         color: colors.textDark,
+        flexShrink: 1,
+    },
+    fullName: {
+        fontSize: typography.sizes.xs,
+        color: colors.textMuted,
+        marginTop: 1,
+        marginBottom: 2,
     },
     badges: {
         flexDirection: 'row',
