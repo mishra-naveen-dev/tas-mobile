@@ -729,9 +729,9 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })()}
-                                {!!item.product_id && (
+                                {!!item.product_type && (
                                     <View style={styles.productTag}>
-                                        <Text style={styles.productTagText} numberOfLines={1}>{item.product_id}</Text>
+                                        <Text style={styles.productTagText} numberOfLines={1}>{item.product_type}</Text>
                                     </View>
                                 )}
                             </View>
