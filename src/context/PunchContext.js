@@ -201,9 +201,10 @@ export const PunchProvider = ({ children }) => {
       return { success: true, data: res.data };
     } catch (err) {
       if (IS_DEV) console.error('[Punch] Error:', err?.response?.data || err.message);
-      const errorMsg = err?.response?.data?.detail || 
+      const errorMsg = err?.response?.data?.error ||
+                      err?.response?.data?.detail ||
                       err?.response?.data?.message ||
-                      JSON.stringify(err?.response?.data) || 
+                      JSON.stringify(err?.response?.data) ||
                       err?.message || 'Failed to punch in';
       setPunchState(STATES.ERROR);
       setErrorMessage(errorMsg);
@@ -277,7 +278,7 @@ export const PunchProvider = ({ children }) => {
 
       return { success: true };
     } catch (err) {
-      const errorMsg = err?.response?.data?.detail || err?.message || 'Failed to punch out';
+      const errorMsg = err?.response?.data?.error || err?.response?.data?.detail || err?.message || 'Failed to punch out';
       setPunchState(STATES.ERROR);
       setErrorMessage(errorMsg);
       return { success: false, error: errorMsg };

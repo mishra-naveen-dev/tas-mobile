@@ -687,7 +687,8 @@ const CollectionsScreen = () => {
             setModal({ open: false, record: null });
             fetchRecords();
         } catch (e) {
-            Alert.alert('Error', 'Failed to update status.');
+            const msg = e?.response?.data?.error || e?.response?.data?.detail || e?.response?.data?.message || 'Failed to update status.';
+            Alert.alert('Error', msg);
         } finally {
             setSaving(false);
         }
