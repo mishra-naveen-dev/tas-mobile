@@ -110,7 +110,7 @@ class MapErrorBoundary extends Component {
 
 const PAGE_SIZE = 20;
 const NEAR_ME_AUTO_OFF_MS = 10 * 60 * 1000; // Near Me auto-disables after 10 minutes
-const NEAR_ME_RADIUS_OPTIONS_KM = [1, 2, 3, 4, 5];
+const NEAR_ME_RADIUS_OPTIONS_KM = [1, 2, 3, 4, 5, 10];
 const NEAR_ME_DEFAULT_RADIUS_KM = 1;
 
 const fmtDate = (d) =>
