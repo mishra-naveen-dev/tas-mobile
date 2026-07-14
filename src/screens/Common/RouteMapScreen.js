@@ -126,6 +126,43 @@ const RouteMapScreen = ({ navigation, route }) => {
     // Coordinates used to fit the map view
     const allCoordinates = gpsCoordinates.length > 0 ? gpsCoordinates : punchCoordinates;
 
+    // Several punches often share (near-)identical GPS — e.g. a few quick
+    // back-to-back check-ins without moving — which would otherwise stack
+    // exactly on top of each other with only the last one visible. Spread
+    // same-spot markers into a small ring purely for on-map visibility; the
+    // callout still shows each punch's real captured address/time, and every
+    // other calculation (distance, polyline, fit-bounds) keeps using the
+    // true, un-offset coordinates above.
+    const markerPositions = useMemo(() => {
+        const groups = new Map();
+        punchCoordinates.forEach((c, idx) => {
+            const key = `${c.latitude.toFixed(5)},${c.longitude.toFixed(5)}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(idx);
+        });
+
+        const positions = new Array(punchCoordinates.length);
+        groups.forEach((indices) => {
+            const n = indices.length;
+            if (n === 1) {
+                positions[indices[0]] = punchCoordinates[indices[0]];
+                return;
+            }
+            const { latitude: baseLat, longitude: baseLng } = punchCoordinates[indices[0]];
+            const radiusMeters = 10 + Math.min(n, 8) * 2;
+            const latOffset = radiusMeters / 111320;
+            const lngOffset = radiusMeters / (111320 * Math.cos(baseLat * Math.PI / 180) || 1);
+            indices.forEach((idx, i) => {
+                const angle = (2 * Math.PI * i) / n;
+                positions[idx] = {
+                    latitude: baseLat + latOffset * Math.sin(angle),
+                    longitude: baseLng + lngOffset * Math.cos(angle),
+                };
+            });
+        });
+        return positions;
+    }, [punchCoordinates]);
+
     const getMapRegion = () => {
         if (allCoordinates.length === 0) {
             return { latitude: 23.0225, longitude: 72.5714, latitudeDelta: 0.1, longitudeDelta: 0.1 };
@@ -261,7 +298,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                     {mappablePunches.map((punch, idx) => (
                         <Marker
                             key={String(punch.id)}
-                            coordinate={{
+                            coordinate={markerPositions[idx] || {
                                 latitude: parseFloat(punch.latitude),
                                 longitude: parseFloat(punch.longitude),
                             }}
