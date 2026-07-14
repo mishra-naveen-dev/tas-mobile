@@ -426,9 +426,15 @@ const CollectionsScreen = () => {
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
         if (productFilter !== 'ALL') params.product_id = productFilter;
         if (debouncedSearch) params.search = debouncedSearch;
-        // Distance sort is done client-side — no server params added here
+        // Near Me: server-side distance filter — no 600-record bulk fetch needed
+        if (nearMeEnabled && userLocation) {
+            params.user_lat = userLocation.latitude;
+            params.user_lng = userLocation.longitude;
+            params.radius_km = nearMeRadiusKm;
+            params.sort_by_distance = 1;
+        }
         return params;
-    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
+    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch, nearMeEnabled, userLocation, nearMeRadiusKm]);
 
     // Shared "turn off" path for both the manual toggle and the auto-off timer.
     const disableNearMe = useCallback(() => {
@@ -464,10 +470,8 @@ const CollectionsScreen = () => {
                 // (and keep sorting by a now-stale location) if the user forgets
                 // to turn it off — they can always re-tap to refresh and restart it.
                 nearMeTimerRef.current = setTimeout(disableNearMe, NEAR_ME_AUTO_OFF_MS);
-                // Pre-load the full record set for client-side distance sort if not already available
-                if (mapRecords.length === 0 && !mapLoading) {
-                    fetchMapRecords();
-                }
+                // fetchRecords is triggered automatically by the useEffect that
+                // watches nearMeEnabled + userLocation — no manual call needed.
             } else {
                 Alert.alert('Location needed', 'Could not detect your location. Please enable location permissions and try again.');
             }
@@ -476,7 +480,7 @@ const CollectionsScreen = () => {
         } finally {
             setNearMeLoading(false);
         }
-    }, [mapRecords.length, mapLoading, fetchMapRecords, disableNearMe]);
+    }, [disableNearMe]);
 
     // Clear the auto-off timer if the screen unmounts while Near Me is active.
     useEffect(() => {
@@ -554,12 +558,12 @@ const CollectionsScreen = () => {
         }
     }, []);
 
-    // Refetch page 1 whenever a filter changes (also fires on mount).
-    // Near Me sorting is client-side — toggling it does NOT trigger a server fetch.
+    // Refetch page 1 whenever a filter or Near Me changes (also fires on mount).
     useEffect(() => {
         fetchRecords(1, true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
+    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch,
+        nearMeEnabled, nearMeRadiusKm, userLocation?.latitude, userLocation?.longitude]);
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
@@ -599,54 +603,10 @@ const CollectionsScreen = () => {
     }, [pageLoading, loading, hasMore, records.length, page, fetchRecords]);
 
     // ── Derived stats & filtering ─────────────────────────────────────────
-    // When Near Me is OFF: server-side filtering/pagination via `records`.
-    // When Near Me is ON: client-side sort+filter from `mapRecords` (full set
-    //   already fetched for the map tab) — zero extra server requests.
-    const filtered = useMemo(() => {
-        if (!nearMeEnabled || !userLocation) return records;
-
-        // Use the full unfiltered dataset; fall back to current page if map data not ready
-        const source = mapRecords.length > 0 ? mapRecords : records;
-
-        // Apply the same filters the server would have applied
-        let result = source;
-        if (activeFilter !== 'ALL')
-            result = result.filter(r => r.status === activeFilter);
-        if (typeFilter !== 'ALL')
-            result = result.filter(r => r.collection_type === typeFilter);
-        if (typeFilter === 'OD' && dpdFilter !== 'ALL')
-            result = result.filter(r => matchesDpdBucket(r.dpd_days, dpdFilter));
-        if (productFilter !== 'ALL')
-            result = result.filter(r => (r.product_id || '').toLowerCase() === productFilter.toLowerCase());
-        if (debouncedSearch) {
-            const q = debouncedSearch.toLowerCase();
-            result = result.filter(r =>
-                (r.customer_name || '').toLowerCase().includes(q) ||
-                (r.loan_id || '').toLowerCase().includes(q) ||
-                (r.customer_phone || '').toLowerCase().includes(q) ||
-                (r.address || '').toLowerCase().includes(q) ||
-                (r.pincode || '').toLowerCase().includes(q)
-            );
-        }
-
-        // Compute distance from user; prefer customer coords if already seeded
-        const cosLat = Math.cos(userLocation.latitude * Math.PI / 180);
-        const withDist = result.map(r => {
-            const lat = parseFloat(r.customer_latitude ?? r.visit_latitude);
-            const lng = parseFloat(r.customer_longitude ?? r.visit_longitude);
-            if (isNaN(lat) || isNaN(lng)) return { ...r, distance_km: null };
-            const dlat = (lat - userLocation.latitude) * 111;
-            const dlng = (lng - userLocation.longitude) * 111 * cosLat;
-            return { ...r, distance_km: Math.sqrt(dlat * dlat + dlng * dlng) };
-        });
-
-        // Only customers within the chosen radius, with a known location — an
-        // unknown location can't be confirmed as "within range" so it's excluded
-        // here (unlike the plain distance-sort, which puts unknowns last instead).
-        const withinRadius = withDist.filter(r => r.distance_km != null && r.distance_km <= nearMeRadiusKm);
-
-        return withinRadius.sort((a, b) => a.distance_km - b.distance_km);
-    }, [nearMeEnabled, userLocation, nearMeRadiusKm, records, mapRecords, activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch]);
+    // Server handles all filtering (status, type, DPD, search, Near Me radius).
+    // `records` is always the server-filtered, server-sorted result set.
+    // Client-side filtering is no longer needed — just pass records through.
+    const filtered = useMemo(() => records, [records]);
 
     // Map view search — non-collected only, across name/address/area/loan/date.
     // Uses mapRecords (its own dedicated fetch), not the List's filtered `records`,
@@ -1320,7 +1280,7 @@ const CollectionsScreen = () => {
                         </View>
                     </Modal>
 
-                    {(nearMeEnabled ? (mapLoading && mapRecords.length === 0) : loading) ? (
+                    {loading ? (
                         <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
                     ) : listError ? (
                         /* ── Inline error state: no alert, always retryable ── */
@@ -1345,22 +1305,20 @@ const CollectionsScreen = () => {
                             renderItem={renderItem}
                             contentContainerStyle={{ padding: spacing.md, paddingBottom: 120 }}
                             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                            onEndReached={nearMeEnabled ? null : onEndReached}
+                            onEndReached={onEndReached}
                             onEndReachedThreshold={0.3}
                             initialNumToRender={10}
                             maxToRenderPerBatch={10}
                             windowSize={7}
                             removeClippedSubviews
                             ListFooterComponent={
-                                nearMeEnabled
-                                    ? filtered.length > 0
-                                        ? <View style={{ paddingVertical: 14, alignItems: 'center', gap: 3 }}>
-                                              <Icon name="navigation" size={13} color={colors.primary} />
-                                              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
-                                                  {filtered.length} customer{filtered.length === 1 ? '' : 's'} within {nearMeRadiusKm} km, nearest first
-                                              </Text>
-                                          </View>
-                                        : null
+                                nearMeEnabled && !hasMore && records.length > 0
+                                    ? <View style={{ paddingVertical: 14, alignItems: 'center', gap: 3 }}>
+                                          <Icon name="navigation" size={13} color={colors.primary} />
+                                          <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                                              {records.length} customer{records.length === 1 ? '' : 's'} within {nearMeRadiusKm} km, nearest first
+                                          </Text>
+                                      </View>
                                     : pageLoading
                                         ? <View style={{ paddingVertical: 18, alignItems: 'center' }}>
                                               <ActivityIndicator size="small" color={colors.primary} />
