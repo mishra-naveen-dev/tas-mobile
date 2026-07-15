@@ -24,6 +24,10 @@ const ICONS_BY_TYPE = {
   CORRECTION_WINDOW_CLOSING: 'alert-triangle',
   PROFILE_UPDATE: 'user',
   PUNCH_INACTIVITY: 'alert-circle',
+  DEVICE_APPROVED: 'smartphone',
+  DEVICE_REJECTED: 'smartphone',
+  MASTER_DATA_APPROVED: 'check-circle',
+  MASTER_DATA_REJECTED: 'x-circle',
   GENERAL: 'bell',
 };
 
