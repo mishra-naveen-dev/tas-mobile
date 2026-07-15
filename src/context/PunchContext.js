@@ -175,6 +175,13 @@ export const PunchProvider = ({ children }) => {
         payload.out_of_range_reason = formData.out_of_range_reason;
         payload.out_of_range_comment = formData.out_of_range_comment || '';
       }
+      // Only sent on resubmission after the operator confirms punching from
+      // the same spot as another customer today (see same_location_duplicate
+      // handling below).
+      if (formData.duplicate_location_reason) {
+        payload.duplicate_location_reason = formData.duplicate_location_reason;
+        payload.duplicate_location_comment = formData.duplicate_location_comment || '';
+      }
       
       if (IS_DEV) console.log('[Punch] Submitting punch:', JSON.stringify(payload, null, 2));
       
@@ -216,6 +223,15 @@ export const PunchProvider = ({ children }) => {
           success: false,
           locationOutOfRange: true,
           distanceM: respData.distance_m,
+          error: respData.message,
+        };
+      }
+      if (respData?.error === 'same_location_duplicate') {
+        setPunchState(STATES.FORM_OPEN);
+        return {
+          success: false,
+          sameLocationDuplicate: true,
+          otherLoanId: respData.other_loan_id,
           error: respData.message,
         };
       }

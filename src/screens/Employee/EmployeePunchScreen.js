@@ -123,6 +123,12 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [outOfRangeReason, setOutOfRangeReason] = useState('');
   const [outOfRangeComment, setOutOfRangeComment] = useState('');
 
+  // Same-location confirmation (shown when this punch lands within ~20m of
+  // another customer already punched today).
+  const [dupLocationModal, setDupLocationModal] = useState({ visible: false, otherLoanId: '' });
+  const [dupLocationReason, setDupLocationReason] = useState('');
+  const [dupLocationComment, setDupLocationComment] = useState('');
+
   // Loan ID autocomplete from the employee's uploaded collection records.
   const [loanSuggestions, setLoanSuggestions] = useState([]);
   const [showLoanSuggestions, setShowLoanSuggestions] = useState(false);
@@ -306,6 +312,9 @@ const EmployeePunchScreen = ({ navigation }) => {
     setOutOfRangeModal({ visible: false, distanceM: 0 });
     setOutOfRangeReason('');
     setOutOfRangeComment('');
+    setDupLocationModal({ visible: false, otherLoanId: '' });
+    setDupLocationReason('');
+    setDupLocationComment('');
   };
 
   const submitPunch = async (extra = {}) => {
@@ -327,6 +336,10 @@ const EmployeePunchScreen = ({ navigation }) => {
 
     if (result.locationOutOfRange) {
       setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
+      return;
+    }
+    if (result.sameLocationDuplicate) {
+      setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
       return;
     }
     // Any other failure already surfaces via the error Banner (errorMessage
@@ -354,6 +367,18 @@ const EmployeePunchScreen = ({ navigation }) => {
     await submitPunch({ out_of_range_reason: outOfRangeReason, out_of_range_comment: outOfRangeComment });
   };
 
+  const handleConfirmDupLocation = async () => {
+    if (!dupLocationReason) {
+      Alert.alert('Required', 'Please select a reason.');
+      return;
+    }
+    if (dupLocationReason === 'OTHER' && !dupLocationComment.trim()) {
+      Alert.alert('Required', 'Please add a comment for "Other".');
+      return;
+    }
+    await submitPunch({ duplicate_location_reason: dupLocationReason, duplicate_location_comment: dupLocationComment });
+  };
+
   const closeModal = () => {
     setModalVisible(false);
     setLocalLocation(null);
@@ -361,6 +386,9 @@ const EmployeePunchScreen = ({ navigation }) => {
     setOutOfRangeModal({ visible: false, distanceM: 0 });
     setOutOfRangeReason('');
     setOutOfRangeComment('');
+    setDupLocationModal({ visible: false, otherLoanId: '' });
+    setDupLocationReason('');
+    setDupLocationComment('');
     setForm({
       reason: '',
       visit_type: '',
@@ -441,24 +469,31 @@ const EmployeePunchScreen = ({ navigation }) => {
           <Icon name="arrow-left" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.title}>{isActive ? 'Tracking' : 'Punch'}</Text>
-        {isActive ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TouchableOpacity
-            style={[styles.punchOutHeaderBtn, isPunchingOut && styles.disabled]}
-            onPress={handlePunchOutPress}
-            disabled={isPunchingOut}
+            style={styles.forgotPunchBtn}
+            onPress={() => navigation.navigate('Correction')}
+            accessibilityLabel="Forgot to punch? Request a correction"
           >
-            {isPunchingOut ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Icon name="log-out" size={14} color="#fff" />
-                <Text style={styles.punchOutHeaderText}>Punch Out</Text>
-              </>
-            )}
+            <Icon name="edit-3" size={18} color={colors.primary} />
           </TouchableOpacity>
-        ) : (
-          <View style={{ width: 80 }} />
-        )}
+          {isActive && (
+            <TouchableOpacity
+              style={[styles.punchOutHeaderBtn, isPunchingOut && styles.disabled]}
+              onPress={handlePunchOutPress}
+              disabled={isPunchingOut}
+            >
+              {isPunchingOut ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Icon name="log-out" size={14} color="#fff" />
+                  <Text style={styles.punchOutHeaderText}>Punch Out</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
@@ -830,6 +865,70 @@ const EmployeePunchScreen = ({ navigation }) => {
           </View>
         </View>
       </Modal>
+
+      {/* Same-location confirmation — shown when this punch lands within
+          ~20m of another customer already punched today. */}
+      <Modal visible={dupLocationModal.visible} transparent animationType="fade" onRequestClose={() => setDupLocationModal({ visible: false, otherLoanId: '' })}>
+        <View style={styles.oorOverlay}>
+          <View style={styles.oorCard}>
+            <View style={styles.oorHeader}>
+              <Icon name="users" size={22} color={colors.warning} />
+              <Text style={styles.oorTitle}>Same Location as Another Customer</Text>
+            </View>
+            <Text style={styles.oorMessage}>
+              Another customer (Loan {dupLocationModal.otherLoanId}) was already punched from this exact
+              location today. You can still punch by selecting a reason below — it will be sent for
+              supervisor review.
+            </Text>
+
+            <Text style={styles.label}>Reason *</Text>
+            {[
+              { value: 'GROUP_MEETING', label: 'Group / joint meeting — multiple customers at this location' },
+              { value: 'SHARED_BUILDING', label: 'Shared building or complex — customer is also here' },
+              { value: 'OTHER', label: 'Others' },
+            ].map((r) => (
+              <TouchableOpacity
+                key={r.value}
+                style={styles.oorReasonRow}
+                onPress={() => setDupLocationReason(r.value)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.oorRadio, dupLocationReason === r.value && styles.oorRadioActive]}>
+                  {dupLocationReason === r.value && <View style={styles.oorRadioDot} />}
+                </View>
+                <Text style={styles.oorReasonText}>{r.label}</Text>
+              </TouchableOpacity>
+            ))}
+
+            {dupLocationReason === 'OTHER' && (
+              <TextInput
+                style={[styles.input, { height: 70, textAlignVertical: 'top', marginTop: spacing.xs }]}
+                value={dupLocationComment}
+                onChangeText={setDupLocationComment}
+                placeholder="Please describe the reason..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+              />
+            )}
+
+            <View style={[styles.modalFooter, { paddingHorizontal: 0 }]}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => setDupLocationModal({ visible: false, otherLoanId: '' })}
+              >
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.submitBtn, isSubmitting && styles.disabled]}
+                onPress={handleConfirmDupLocation}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.submitText}>Confirm & Punch</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -848,6 +947,7 @@ const styles = StyleSheet.create({
   oorReasonText: { flex: 1, fontSize: typography.sizes.sm, color: colors.text },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: spacing.md, backgroundColor: colors.surface, elevation: 2 },
   backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
+  forgotPunchBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: typography.sizes.lg, fontWeight: 'bold', color: colors.text },
   punchOutHeaderBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E53935', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, gap: 4, elevation: 3 },
   punchOutHeaderText: { fontSize: typography.sizes.xs, fontWeight: '700', color: '#fff' },
