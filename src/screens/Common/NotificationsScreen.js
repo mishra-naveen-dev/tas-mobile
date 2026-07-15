@@ -23,6 +23,7 @@ const ICONS_BY_TYPE = {
   CORRECTION_WINDOW_OPEN: 'clock',
   CORRECTION_WINDOW_CLOSING: 'alert-triangle',
   PROFILE_UPDATE: 'user',
+  PUNCH_INACTIVITY: 'alert-circle',
   GENERAL: 'bell',
 };
 
@@ -99,6 +100,8 @@ const NotificationsScreen = ({ navigation }) => {
         });
       } else if (item.related_type === 'CollectionRecordBulkAssignment') {
         navigation.navigate('EmployeeTabs', { screen: 'EmployeeCollections' });
+      } else if (item.related_type === 'AttendancePunch') {
+        navigation.navigate('EmployeeTabs', { screen: 'EmployeePunch' });
       }
     } catch {
       // Recipient's role doesn't have this tab (shouldn't happen for this
