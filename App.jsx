@@ -35,13 +35,16 @@ const AppContent = () => {
                 duration: NotificationDuration.LONG,
                 onPress: () => {
                     if (!navigationRef.current) return;
+                    // Only employees receive CUSTOMER_ASSIGNED, so EmployeeTabs/
+                    // EmployeeCollections (the real registered route names —
+                    // see RootNavigator.js) is always the right target here.
                     if (msg.collection_id) {
-                        navigationRef.current.navigate('MainTabs', {
-                            screen: 'Collections',
+                        navigationRef.current.navigate('EmployeeTabs', {
+                            screen: 'EmployeeCollections',
                             params: { collectionId: msg.collection_id },
                         });
                     } else {
-                        navigationRef.current.navigate('MainTabs', { screen: 'Collections' });
+                        navigationRef.current.navigate('EmployeeTabs', { screen: 'EmployeeCollections' });
                     }
                 },
             });

@@ -571,6 +571,22 @@ api.approveMasterRequest = (id, remarks = '') =>
 api.rejectMasterRequest = (id, remarks = '') =>
     api.post(`/master-data/requests/${id}/reject/`, { remarks });
 
+// ── Notifications ──
+api.getNotifications = (params = {}) =>
+    api.get('/organization/notifications/', { params });
+
+api.getRecentNotifications = () =>
+    api.get('/organization/notifications/recent/');
+
+api.getUnreadNotificationCount = () =>
+    api.get('/organization/notifications/unread_count/');
+
+api.markNotificationRead = (id) =>
+    api.post(`/organization/notifications/${id}/mark_read/`);
+
+api.markAllNotificationsRead = () =>
+    api.post('/organization/notifications/mark_all_read/');
+
 // ── Customer collections ──
 api.getCollections = (params = {}) =>
     api.get('/loans/collections/', { params });

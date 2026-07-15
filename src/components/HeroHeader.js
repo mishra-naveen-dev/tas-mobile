@@ -1,7 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
+import { useNavigation } from '@react-navigation/native';
 import { colors, typography, spacing } from '../theme/tokens';
+import api from '../api/api';
+import SSEClient from '../services/SSEClient';
 
 const HeroHeader = ({
     user,
@@ -11,6 +14,33 @@ const HeroHeader = ({
     onLogout,
     style
 }) => {
+    const navigation = useNavigation();
+    const [unreadCount, setUnreadCount] = useState(0);
+
+    const refreshUnreadCount = useCallback(() => {
+        api.getUnreadNotificationCount()
+            .then(res => setUnreadCount(res?.data?.unread_count ?? 0))
+            .catch(() => {});
+    }, []);
+
+    useEffect(() => {
+        refreshUnreadCount();
+        // Any real-time notification (customer assigned, correction reviewed,
+        // etc.) bumps the badge immediately rather than waiting for the next
+        // screen focus to re-poll.
+        const unsubscribe = SSEClient.onNotification(() => {
+            setUnreadCount(prev => prev + 1);
+        });
+        return unsubscribe;
+    }, [refreshUnreadCount]);
+
+    // Re-sync (rather than blindly trust the local increment) whenever this
+    // header regains focus, e.g. after the user reads notifications and
+    // comes back — keeps the badge honest against server state.
+    useEffect(() => {
+        const unsubscribeFocus = navigation.addListener?.('focus', refreshUnreadCount);
+        return unsubscribeFocus;
+    }, [navigation, refreshUnreadCount]);
     const getRoleBadgeColor = (userRole) => {
         const safeRole = typeof userRole === 'string' ? userRole.toUpperCase() : '';
         switch (safeRole) {
@@ -59,13 +89,6 @@ const HeroHeader = ({
     const roleDisplay = String(safeRole).replace(/_/g, ' ').toUpperCase();
     const statusDisplay = String(safeStatus).charAt(0).toUpperCase() + String(safeStatus).slice(1);
 
-    const getStatusIcon = () => {
-        const s = typeof status === 'string' ? status.toLowerCase() : 'offline';
-        if (s === 'online') return 'wifi';
-        if (s === 'active') return 'activity';
-        return 'wifi-off';
-    };
-
     return (
         <View style={[styles.container, style]}>
             <View style={styles.content}>
@@ -103,11 +126,20 @@ const HeroHeader = ({
                     </View>
                 </View>
                 <View style={styles.right}>
-                    {showStatus && (
-                        <View style={[styles.statusIndicator, { backgroundColor: `${getStatusColor(safeStatus)}15` }]}>
-                            <Icon name={getStatusIcon()} size={18} color={getStatusColor(safeStatus)} />
-                        </View>
-                    )}
+                    <TouchableOpacity
+                        style={styles.notificationBtn}
+                        onPress={() => navigation.navigate('Notifications')}
+                        accessibilityLabel="Notifications"
+                    >
+                        <Icon name="bell" size={18} color={colors.textMuted} />
+                        {unreadCount > 0 && (
+                            <View style={styles.notificationBadge}>
+                                <Text style={styles.notificationBadgeText}>
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                </Text>
+                            </View>
+                        )}
+                    </TouchableOpacity>
                     {onLogout && (
                         <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
                             <Icon name="log-out" size={20} color={colors.textMuted} />
@@ -206,13 +238,33 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
     },
-    statusIndicator: {
+    notificationBtn: {
         width: 40,
         height: 40,
         borderRadius: 20,
+        backgroundColor: colors.background,
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: spacing.sm,
+    },
+    notificationBadge: {
+        position: 'absolute',
+        top: 2,
+        right: 2,
+        minWidth: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: colors.danger,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 3,
+        borderWidth: 1.5,
+        borderColor: colors.surface,
+    },
+    notificationBadgeText: {
+        fontSize: 9,
+        fontWeight: typography.weights.bold,
+        color: '#fff',
     },
     logoutBtn: {
         width: 40,

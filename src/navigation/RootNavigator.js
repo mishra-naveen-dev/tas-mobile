@@ -50,6 +50,7 @@ import EmployeeListScreen from '../screens/Common/EmployeeListScreen';
 import ProfileScreen from '../screens/Common/ProfileScreen';
 import MyPerformanceScreen from '../screens/Employee/MyPerformanceScreen';
 import MissedPunchDashboardScreen from '../screens/Employee/MissedPunchDashboardScreen';
+import NotificationsScreen from '../screens/Common/NotificationsScreen';
 
 
 import CustomTabBar from '../components/CustomTabBar';
@@ -89,9 +90,9 @@ const EmployeeTabNavigator = () => {
             }}
         >
             <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
-            <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
-            <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
             <EmployeeTab.Screen name="EmployeeCollections" component={CollectionsScreen} />
+            <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
+            <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
             <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
         </EmployeeTab.Navigator>
     );
@@ -111,6 +112,7 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="MissedPunchDashboard" component={MissedPunchDashboardScreen} />
         <EmployeeStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <EmployeeStack.Screen name="Profile" component={ProfileScreen} />
+        <EmployeeStack.Screen name="Notifications" component={NotificationsScreen} />
     </EmployeeStack.Navigator>
 );
 
@@ -123,6 +125,7 @@ const AdminStackNavigator = () => (
         <AdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <AdminStack.Screen name="Profile" component={ProfileScreen} />
+        <AdminStack.Screen name="Notifications" component={NotificationsScreen} />
     </AdminStack.Navigator>
 );
 
@@ -216,6 +219,7 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="CreateUser" component={CreateUserScreen} />
         <SuperAdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <SuperAdminStack.Screen name="Profile" component={ProfileScreen} />
+        <SuperAdminStack.Screen name="Notifications" component={NotificationsScreen} />
     </SuperAdminStack.Navigator>
 );
 

@@ -472,7 +472,7 @@ const EmployeePunchScreen = ({ navigation }) => {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TouchableOpacity
             style={styles.forgotPunchBtn}
-            onPress={() => navigation.navigate('MainTabs', { screen: 'Correction' })}
+            onPress={() => navigation.navigate('PunchCorrection')}
             accessibilityLabel="Forgot to punch? Request a correction"
           >
             <Icon name="edit-3" size={18} color={colors.primary} />
