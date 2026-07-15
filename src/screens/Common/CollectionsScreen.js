@@ -374,7 +374,7 @@ const CollectionsScreen = () => {
     const [typeFilter, setTypeFilter] = useState('ALL');
     const [dpdFilter, setDpdFilter] = useState('ALL');
     const [productFilter, setProductFilter] = useState('ALL');
-    const [products, setProducts] = useState([]);
+    const [productTypes, setProductTypes] = useState([]);
     const [filterModalVisible, setFilterModalVisible] = useState(false);
 
     // Aggregate counts (all assigned records, independent of the paginated/
@@ -400,7 +400,7 @@ const CollectionsScreen = () => {
     const nearMeTimerRef = useRef(null);
 
     const [listError, setListError] = useState(false);
-    const productsLoadedRef = useRef(false);
+    const productTypesLoadedRef = useRef(false);
     // Bumped on every fetchRecords/fetchMapRecords call; a response is only
     // applied if it's still the latest request in flight. Without this, rapid
     // filter/search changes can fire overlapping requests, and a slower older
@@ -424,7 +424,7 @@ const CollectionsScreen = () => {
         if (activeFilter !== 'ALL') params.status = activeFilter;
         if (typeFilter !== 'ALL') params.collection_type = typeFilter;
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
-        if (productFilter !== 'ALL') params.product_id = productFilter;
+        if (productFilter !== 'ALL') params.product_type = productFilter;
         if (debouncedSearch) params.search = debouncedSearch;
         // Near Me: server-side distance filter — no 600-record bulk fetch needed
         if (nearMeEnabled && userLocation) {
@@ -567,14 +567,17 @@ const CollectionsScreen = () => {
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
-    // Products are lazy-loaded when the filter modal is first opened so they
-    // don't race with the initial collections fetch on mount.
-    const loadProducts = useCallback(() => {
-        if (productsLoadedRef.current) return;
-        productsLoadedRef.current = true;
-        api.getDistinctProducts()
-            .then(res => setProducts(Array.isArray(res.data) ? res.data : []))
-            .catch(() => { productsLoadedRef.current = false; }); // allow retry on next open
+    // Product types are lazy-loaded when the filter modal is first opened so
+    // they don't race with the initial collections fetch on mount. Uses the
+    // grouped product_type (e.g. JLG, IBL) rather than the raw per-scheme
+    // product_id, which can run into 50+ distinct values and overwhelm the
+    // filter sheet with an unusable wall of chips.
+    const loadProductTypes = useCallback(() => {
+        if (productTypesLoadedRef.current) return;
+        productTypesLoadedRef.current = true;
+        api.getDistinctProductTypes()
+            .then(res => setProductTypes(Array.isArray(res.data) ? res.data : []))
+            .catch(() => { productTypesLoadedRef.current = false; }); // allow retry on next open
     }, []);
 
     useEffect(() => {
@@ -684,7 +687,8 @@ const CollectionsScreen = () => {
             setModal({ open: false, record: null });
             fetchRecords();
         } catch (e) {
-            Alert.alert('Error', 'Failed to update status.');
+            const msg = e?.response?.data?.error || e?.response?.data?.detail || e?.response?.data?.message || 'Failed to update status.';
+            Alert.alert('Error', msg);
         } finally {
             setSaving(false);
         }
@@ -726,9 +730,9 @@ const CollectionsScreen = () => {
                                         </View>
                                     );
                                 })()}
-                                {!!item.product_id && (
+                                {!!item.product_type && (
                                     <View style={styles.productTag}>
-                                        <Text style={styles.productTagText} numberOfLines={1}>{item.product_id}</Text>
+                                        <Text style={styles.productTagText} numberOfLines={1}>{item.product_type}</Text>
                                     </View>
                                 )}
                             </View>
@@ -1079,7 +1083,7 @@ const CollectionsScreen = () => {
                     <View style={styles.filterBar}>
                         <TouchableOpacity
                             style={styles.filterBtn}
-                            onPress={() => { setFilterModalVisible(true); loadProducts(); }}
+                            onPress={() => { setFilterModalVisible(true); loadProductTypes(); }}
                             activeOpacity={0.85}
                         >
                             <Icon name="sliders" size={15} color={colors.primary} />
@@ -1200,17 +1204,17 @@ const CollectionsScreen = () => {
                                     </>
                                 )}
 
-                                {products.length > 0 && (
+                                {productTypes.length > 0 && (
                                     <>
-                                        <Text style={styles.fieldLabel}>Loan Product</Text>
+                                        <Text style={styles.fieldLabel}>Product Type</Text>
                                         <View style={styles.statusGrid}>
                                             <TouchableOpacity
                                                 style={[styles.statusOption, productFilter === 'ALL' && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
                                                 onPress={() => setProductFilter('ALL')}
                                             >
-                                                <Text style={[styles.statusOptionText, productFilter === 'ALL' && { color: '#FFFFFF' }]}>All Products</Text>
+                                                <Text style={[styles.statusOptionText, productFilter === 'ALL' && { color: '#FFFFFF' }]}>All Types</Text>
                                             </TouchableOpacity>
-                                            {products.map(p => {
+                                            {productTypes.map(p => {
                                                 const active = productFilter === p;
                                                 return (
                                                     <TouchableOpacity
