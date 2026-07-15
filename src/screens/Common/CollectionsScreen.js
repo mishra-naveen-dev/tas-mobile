@@ -355,8 +355,12 @@ const AnimatedCard = React.memo(({ index, children }) => {
 });
 
 // ── Main screen ──────────────────────────────────────────────────────────────
-const CollectionsScreen = () => {
+const CollectionsScreen = ({ route }) => {
     const { user } = useAuth();
+    // Deep-linked here (e.g. from a "customer assigned to you" notification)
+    // with a specific record to jump straight to.
+    const deepLinkCollectionId = route?.params?.collectionId;
+    const deepLinkHandled = useRef(false);
     // Super Admin controls this per role/user via Feature Assignment
     // (APP_NEAR_ME_COLLECTIONS) — defaults ON for employees.
     const nearMeFeatureEnabled = !!user?.near_me_enabled;
@@ -641,6 +645,27 @@ const CollectionsScreen = () => {
         });
         setModal({ open: true, record });
     };
+
+    // Deep link: jump straight to a specific customer (e.g. from a
+    // "customer assigned to you" notification). Prefer the already-loaded
+    // list (instant, no extra request); fall back to fetching the record
+    // directly since it may not be on the currently loaded page/filter.
+    useEffect(() => {
+        if (!deepLinkCollectionId || deepLinkHandled.current) return;
+
+        const fromList = records.find(r => r.id === deepLinkCollectionId);
+        if (fromList) {
+            deepLinkHandled.current = true;
+            openUpdate(fromList);
+            return;
+        }
+        if (!loading) {
+            deepLinkHandled.current = true;
+            api.getCollectionRecord(deepLinkCollectionId)
+                .then(res => { if (res?.data) openUpdate(res.data); })
+                .catch(() => Alert.alert('Not Found', 'This customer record could not be loaded.'));
+        }
+    }, [deepLinkCollectionId, records, loading]);
 
     const navigateToCustomer = useCallback((r) => {
         // Prefer GPS coords (captured on prior visit); fall back to text address

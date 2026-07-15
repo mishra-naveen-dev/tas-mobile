@@ -575,6 +575,9 @@ api.rejectMasterRequest = (id, remarks = '') =>
 api.getCollections = (params = {}) =>
     api.get('/loans/collections/', { params });
 
+api.getCollectionRecord = (id) =>
+    api.get(`/loans/collections/${id}/`);
+
 api.getDistinctProducts = () =>
     api.get('/loans/collections/distinct_products/');
 
