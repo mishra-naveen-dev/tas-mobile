@@ -12,6 +12,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import HeroHeader from '../../components/HeroHeader';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const SuperAdminEmployeesScreen = ({ navigation }) => {
     const [employees, setEmployees] = useState([]);
@@ -181,21 +182,27 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
                     ))}
                 </View>
 
-                <FlatList
-                    data={filteredEmployees}
-                    renderItem={({ item }) => <EmployeeCard item={item} />}
-                    keyExtractor={(item, index) => item.id ? item.id.toString() : `emp-${index}`}
-                    contentContainerStyle={styles.listContent}
-                    showsVerticalScrollIndicator={false}
-                    ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <Icon name="users" size={64} color={colors.textLight} />
-                            <Text style={styles.emptyText}>
-                                {loading ? 'Loading employees...' : 'No employees found'}
-                            </Text>
-                        </View>
-                    }
-                />
+                {loading && filteredEmployees.length === 0 ? (
+                    <View style={{ padding: spacing.md }}>
+                        {[1, 2, 3, 4, 5].map(i => (
+                            <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                        ))}
+                    </View>
+                ) : (
+                    <FlatList
+                        data={filteredEmployees}
+                        renderItem={({ item }) => <EmployeeCard item={item} />}
+                        keyExtractor={(item, index) => item.id ? item.id.toString() : `emp-${index}`}
+                        contentContainerStyle={styles.listContent}
+                        showsVerticalScrollIndicator={false}
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <Icon name="users" size={64} color={colors.textLight} />
+                                <Text style={styles.emptyText}>No employees found</Text>
+                            </View>
+                        }
+                    />
+                )}
             </View>
         </SafeAreaView>
     );

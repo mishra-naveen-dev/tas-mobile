@@ -19,7 +19,6 @@ import PrimaryButton from '../../components/PrimaryButton';
 import GlassCard from '../../components/GlassCard';
 import LoadingOverlay from '../../components/LoadingOverlay';
 import ErrorView from '../../components/ErrorView';
-import { SkeletonForm } from '../../components/SkeletonComponents';
 import { colors, typography, spacing } from '../../theme/tokens';
 
 const ApplyAllowanceScreen = ({ navigation, route }) => {

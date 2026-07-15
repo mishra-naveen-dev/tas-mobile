@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
 import LocationService from '../services/LocationService';
+import { captureFieldActivityLocation } from '../hooks/useFieldActivityLocation';
 import GeocodingService from '../services/GeocodingService';
 import BackgroundTrackingService from '../services/BackgroundTrackingService';
 import LiveTrackingService from '../services/LiveTrackingService';
@@ -102,14 +103,14 @@ export const PunchProvider = ({ children }) => {
         if (IS_DEV) console.warn('[Punch] Permission bootstrap error:', e.message);
       }
 
-      const location = await LocationService.getCurrentLocation();
+      const location = await captureFieldActivityLocation();
 
       if (location.error) {
         setPunchState(STATES.ERROR);
         setErrorMessage(location.error);
         return { success: false, error: location.error, errorType: location.errorType };
       }
-      
+
       // Reverse-geocode the fix into a human-readable address (Google, with
       // an on-device coordinate fallback if the API/network is unavailable).
       let address = location.address || '';
@@ -130,6 +131,14 @@ export const PunchProvider = ({ children }) => {
         accuracy: location.accuracy,
         speed: location.speed,
         isMock: location.isMock,
+        altitude: location.altitude,
+        heading: location.heading,
+        battery_level: location.battery_level,
+        is_mock_location: location.is_mock_location,
+        mock_detection_method: location.mock_detection_method,
+        gps_provider: location.gps_provider,
+        network_status: location.network_status,
+        device_timestamp: location.device_timestamp,
       });
       
       setIsMockLocation(location.isMock || false);
@@ -156,6 +165,14 @@ export const PunchProvider = ({ children }) => {
         longitude: locationData.longitude,
         address: locationData.current_address || '',
         accuracy: locationData.accuracy ?? null,
+        altitude: locationData.altitude ?? null,
+        heading: locationData.heading ?? null,
+        battery_level: locationData.battery_level ?? null,
+        is_mock_location: locationData.is_mock_location ?? false,
+        mock_detection_method: locationData.mock_detection_method || '',
+        gps_provider: locationData.gps_provider || '',
+        network_status: locationData.network_status || '',
+        device_timestamp: locationData.device_timestamp || undefined,
         customer_name: formData.customer_name || '',
         reason: formData.reason || '',
         visit_type: formData.visit_type || 'VISIT',
@@ -258,13 +275,33 @@ export const PunchProvider = ({ children }) => {
       let lng = capturedLocation?.longitude || 0;
       let address = capturedLocation?.current_address || '';
       let accuracy = capturedLocation?.accuracy ?? null;
+      let gpsExtra = {
+        altitude: capturedLocation?.altitude ?? null,
+        heading: capturedLocation?.heading ?? null,
+        battery_level: capturedLocation?.battery_level ?? null,
+        is_mock_location: capturedLocation?.is_mock_location ?? false,
+        mock_detection_method: capturedLocation?.mock_detection_method || '',
+        gps_provider: capturedLocation?.gps_provider || '',
+        network_status: capturedLocation?.network_status || '',
+        device_timestamp: capturedLocation?.device_timestamp || undefined,
+      };
 
       try {
-        const currentLocation = await LocationService.getCurrentLocation();
+        const currentLocation = await captureFieldActivityLocation();
         if (!currentLocation.error) {
           lat = currentLocation.latitude;
           lng = currentLocation.longitude;
           accuracy = currentLocation.accuracy ?? accuracy;
+          gpsExtra = {
+            altitude: currentLocation.altitude ?? null,
+            heading: currentLocation.heading ?? null,
+            battery_level: currentLocation.battery_level ?? null,
+            is_mock_location: currentLocation.is_mock_location ?? false,
+            mock_detection_method: currentLocation.mock_detection_method || '',
+            gps_provider: currentLocation.gps_provider || '',
+            network_status: currentLocation.network_status || '',
+            device_timestamp: currentLocation.device_timestamp || undefined,
+          };
           try {
             const geo = await reverseGeocodeWithTimeout(lat, lng);
             address = geo?.fullAddress || geo?.shortAddress || address;
@@ -283,6 +320,7 @@ export const PunchProvider = ({ children }) => {
         longitude: lng,
         address,
         accuracy,
+        ...gpsExtra,
         notes: 'Punch Out',
       };
 

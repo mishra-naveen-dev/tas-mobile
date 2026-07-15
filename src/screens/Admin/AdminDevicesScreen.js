@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const AdminDevicesScreen = ({ navigation }) => {
     const [devices, setDevices] = useState([]);
@@ -242,23 +243,29 @@ const AdminDevicesScreen = ({ navigation }) => {
                 </View>
             ) : null}
 
-            <FlatList
-                data={currentDevices}
-                keyExtractor={(item, index) => item.id ? `device_${item.id}` : `device-${index}`}
-                renderItem={renderDevice}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
-                }
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="smartphone" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>
-                            {loading ? 'Loading...' : 'No devices found'}
-                        </Text>
-                    </View>
-                }
-            />
+            {loading && currentDevices.length === 0 ? (
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
+                </View>
+            ) : (
+                <FlatList
+                    data={currentDevices}
+                    keyExtractor={(item, index) => item.id ? `device_${item.id}` : `device-${index}`}
+                    renderItem={renderDevice}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+                    }
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Icon name="smartphone" size={48} color={colors.textLight} />
+                            <Text style={styles.emptyText}>No devices found</Text>
+                        </View>
+                    }
+                />
+            )}
         </SafeAreaView>
     );
 };

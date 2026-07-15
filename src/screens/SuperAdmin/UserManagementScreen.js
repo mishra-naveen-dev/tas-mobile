@@ -13,6 +13,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import ScreenHeader from '../../components/ScreenHeader';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const UserManagementScreen = ({ navigation }) => {
     const [users, setUsers] = useState([]);
@@ -115,21 +116,29 @@ const UserManagementScreen = ({ navigation }) => {
                 </TouchableOpacity>
             </View>
 
-            <FlatList
-                data={currentUsers}
-                keyExtractor={(item, index) => item.id ? `user_${item.id}` : `user-${index}`}
-                renderItem={renderUser}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                }
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="users" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>No users found</Text>
-                    </View>
-                }
-            />
+            {loading && currentUsers.length === 0 ? (
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
+                </View>
+            ) : (
+                <FlatList
+                    data={currentUsers}
+                    keyExtractor={(item, index) => item.id ? `user_${item.id}` : `user-${index}`}
+                    renderItem={renderUser}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                    }
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Icon name="users" size={48} color={colors.textLight} />
+                            <Text style={styles.emptyText}>No users found</Text>
+                        </View>
+                    }
+                />
+            )}
 
             <TouchableOpacity style={styles.fab} activeOpacity={0.8}>
                 <Icon name="plus" size={24} color="#FFFFFF" />

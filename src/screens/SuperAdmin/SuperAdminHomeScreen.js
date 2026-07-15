@@ -14,6 +14,7 @@ import { useAuth } from '../../context/AuthContext';
 import api from '../../api/api';
 import HeroHeader from '../../components/HeroHeader';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const SuperAdminHomeScreen = ({ navigation }) => {
     const auth = useAuth();
@@ -379,8 +380,10 @@ const SuperAdminHomeScreen = ({ navigation }) => {
                             </TouchableOpacity>
                         </View>
                         {loading ? (
-                            <View style={styles.loadingContainer}>
-                                <Text style={styles.loadingText}>Loading employees...</Text>
+                            <View>
+                                {[1, 2, 3].map(i => (
+                                    <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                                ))}
                             </View>
                         ) : employees.length > 0 ? (
                             employees.map((employee) => (

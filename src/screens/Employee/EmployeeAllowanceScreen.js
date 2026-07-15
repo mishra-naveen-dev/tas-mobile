@@ -15,6 +15,7 @@ import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import HeroHeader from '../../components/HeroHeader';
 import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const EmployeeAllowanceScreen = ({ navigation }) => {
     const auth = useAuth();
@@ -196,23 +197,29 @@ const EmployeeAllowanceScreen = ({ navigation }) => {
                 </View>
             ) : null}
 
-            <FlatList
-                data={filteredAllowances}
-                renderItem={renderAllowance}
-                keyExtractor={(item, index) => item?.id ? String(item.id) : String(index)}
-                contentContainerStyle={styles.listContent}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
-                }
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="dollar-sign" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>
-                            {loading ? 'Loading...' : 'No allowances found'}
-                        </Text>
-                    </View>
-                }
-            />
+            {loading && filteredAllowances.length === 0 ? (
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
+                </View>
+            ) : (
+                <FlatList
+                    data={filteredAllowances}
+                    renderItem={renderAllowance}
+                    keyExtractor={(item, index) => item?.id ? String(item.id) : String(index)}
+                    contentContainerStyle={styles.listContent}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+                    }
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Icon name="dollar-sign" size={48} color={colors.textLight} />
+                            <Text style={styles.emptyText}>No allowances found</Text>
+                        </View>
+                    }
+                />
+            )}
         </SafeAreaView>
     );
 };

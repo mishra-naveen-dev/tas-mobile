@@ -12,6 +12,7 @@ import {
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const AdminApprovalsScreen = ({ navigation }) => {
     const [allowances, setAllowances] = useState([]);
@@ -238,27 +239,35 @@ const handleApprove = async (type, id) => {
                 ))}
             </View>
 
-            <FlatList
-                data={currentData}
-                keyExtractor={(item, index) => item?.id ? String(item.id) : String(index)}
-                renderItem={({ item }) => {
-                    if (currentType === 'correction') {
-                        return renderCorrectionItem({ item });
+            {loading && currentData.length === 0 ? (
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
+                </View>
+            ) : (
+                <FlatList
+                    data={currentData}
+                    keyExtractor={(item, index) => item?.id ? String(item.id) : String(index)}
+                    renderItem={({ item }) => {
+                        if (currentType === 'correction') {
+                            return renderCorrectionItem({ item });
+                        }
+                        return renderItem({ item, type: currentType });
+                    }}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                     }
-                    return renderItem({ item, type: currentType });
-                }}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                }
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="check-circle" size={48} color={colors.success} />
-                        <Text style={styles.emptyText}>No pending items</Text>
-                        <Text style={styles.emptySubtext}>All caught up!</Text>
-                    </View>
-                }
-            />
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Icon name="check-circle" size={48} color={colors.success} />
+                            <Text style={styles.emptyText}>No pending items</Text>
+                            <Text style={styles.emptySubtext}>All caught up!</Text>
+                        </View>
+                    }
+                />
+            )}
         </SafeAreaView>
     );
 };

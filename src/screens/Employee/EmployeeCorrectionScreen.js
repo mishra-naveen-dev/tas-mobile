@@ -17,6 +17,7 @@ import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import HeroHeader from '../../components/HeroHeader';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const MAX_EDITS = 3;
 
@@ -308,23 +309,29 @@ const EmployeeCorrectionScreen = ({ navigation }) => {
                 </View>
             ) : null}
 
-            <FlatList
-                data={filteredCorrections}
-                renderItem={renderCorrection}
-                keyExtractor={(item, index) => String(item?.id || index)}
-                contentContainerStyle={styles.listContent}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
-                }
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="file-text" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>
-                            {loading ? 'Loading...' : 'No correction requests found'}
-                        </Text>
-                    </View>
-                }
-            />
+            {loading && filteredCorrections.length === 0 ? (
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
+                </View>
+            ) : (
+                <FlatList
+                    data={filteredCorrections}
+                    renderItem={renderCorrection}
+                    keyExtractor={(item, index) => String(item?.id || index)}
+                    contentContainerStyle={styles.listContent}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+                    }
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Icon name="file-text" size={48} color={colors.textLight} />
+                            <Text style={styles.emptyText}>No correction requests found</Text>
+                        </View>
+                    }
+                />
+            )}
         </SafeAreaView>
     );
 };

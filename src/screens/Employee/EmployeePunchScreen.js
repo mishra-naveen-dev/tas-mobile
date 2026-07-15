@@ -625,10 +625,27 @@ const EmployeePunchScreen = ({ navigation }) => {
                 <TextInput
                   style={styles.reasonInput}
                   value={form.reason}
-                  onChangeText={(t) => updateForm('reason', t)}
+                  onChangeText={(t) => {
+                    updateForm('reason', t);
+                    // The dropdown only ever lists fixed presets (no filtering
+                    // as you type) — once the typed text no longer matches one
+                    // exactly, those suggestions are irrelevant, so close it
+                    // automatically instead of leaving it open over a custom,
+                    // free-typed reason.
+                    if (reasonDropdownOpen && !REASON_PRESETS.some((r) => r.value === t)) {
+                      setReasonDropdownOpen(false);
+                    }
+                  }}
                   placeholder="Type or select a reason..."
                   placeholderTextColor={colors.textMuted}
                   onFocus={() => setReasonDropdownOpen(true)}
+                  onBlur={() => {
+                    // Slight delay so a tap on a dropdown option still
+                    // registers its onPress before the list unmounts — closing
+                    // synchronously on blur can race ahead of the touch and
+                    // swallow the tap on some Android devices.
+                    setTimeout(() => setReasonDropdownOpen(false), 150);
+                  }}
                 />
                 <TouchableOpacity
                   style={styles.reasonToggle}

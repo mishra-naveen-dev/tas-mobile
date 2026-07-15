@@ -12,6 +12,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import ScreenHeader from '../../components/ScreenHeader';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const ApprovalRoutesScreen = ({ navigation }) => {
     const [routes, setRoutes] = useState([]);
@@ -94,22 +95,30 @@ const ApprovalRoutesScreen = ({ navigation }) => {
                 navigation={navigation}
             />
 
-            <FlatList
-                data={routes}
-                keyExtractor={(item, index) => item.id ? `route_${item.id}` : `route-${index}`}
-                renderItem={renderRoute}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                }
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="git-branch" size={48} color={colors.textLight} />
-                        <Text style={styles.emptyText}>No approval routes</Text>
-                        <Text style={styles.emptySubtext}>Create routes to manage approval workflows</Text>
-                    </View>
-                }
-            />
+            {loading && routes.length === 0 ? (
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
+                </View>
+            ) : (
+                <FlatList
+                    data={routes}
+                    keyExtractor={(item, index) => item.id ? `route_${item.id}` : `route-${index}`}
+                    renderItem={renderRoute}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                    }
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Icon name="git-branch" size={48} color={colors.textLight} />
+                            <Text style={styles.emptyText}>No approval routes</Text>
+                            <Text style={styles.emptySubtext}>Create routes to manage approval workflows</Text>
+                        </View>
+                    }
+                />
+            )}
 
             <TouchableOpacity style={styles.fab} activeOpacity={0.8}>
                 <Icon name="plus" size={24} color="#FFFFFF" />

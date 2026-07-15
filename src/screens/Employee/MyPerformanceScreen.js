@@ -14,6 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../../api/api';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonStatsGrid, SkeletonCard } from '../../components/SkeletonComponents';
 
 const CACHE_PREFIX = '@performance_cache_';
 
@@ -444,8 +445,9 @@ const MyPerformanceScreen = ({ navigation }) => {
             </View>
 
             {loading ? (
-                <View style={styles.centered}>
-                    <ActivityIndicator size="large" color={colors.primary} />
+                <View style={{ padding: spacing.md }}>
+                    <SkeletonStatsGrid style={{ marginBottom: spacing.md }} />
+                    <SkeletonCard />
                 </View>
             ) : (
                 <ScrollView

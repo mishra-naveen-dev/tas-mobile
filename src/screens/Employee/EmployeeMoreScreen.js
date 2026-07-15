@@ -6,7 +6,6 @@ import {
     ScrollView,
     TouchableOpacity,
     Alert,
-    ActivityIndicator,
     RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,6 +14,7 @@ import { useAuth } from '../../context/AuthContext';
 import HeroHeader from '../../components/HeroHeader';
 import api from '../../api/api';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
+import { SkeletonText } from '../../components/SkeletonComponents';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ const StatTile = ({ icon, iconColor, bgColor, label, value, loading }) => (
             <Icon name={icon} size={17} color={iconColor} />
         </View>
         {loading ? (
-            <ActivityIndicator size="small" color={iconColor} style={{ marginVertical: 4 }} />
+            <SkeletonText width={36} height={18} style={{ marginVertical: 4 }} />
         ) : (
             <Text style={[styles.tileValue, { color: iconColor }]}>{value}</Text>
         )}
@@ -313,6 +313,13 @@ const EmployeeMoreScreen = ({ navigation }) => {
                     icon="dollar-sign"
                     iconColor={colors.success}
                     onPress={() => navigation.navigate('AllowanceHistory')}
+                />
+                <MenuRow
+                    title="Collection Done"
+                    subtitle="Customers marked Collected or Partial"
+                    icon="check-circle"
+                    iconColor={colors.success}
+                    onPress={() => navigation.navigate('CollectionDone')}
                 />
 
                 {/* ── Analytics ────────────────────────────────────────────────── */}

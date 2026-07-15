@@ -14,6 +14,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import { useFocusEffect } from '@react-navigation/native';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const MAX_EDITS = 3;
 
@@ -272,8 +273,10 @@ const MissedPunchDashboardScreen = ({ navigation }) => {
             </View>
 
             {loading ? (
-                <View style={styles.centered}>
-                    <ActivityIndicator size="large" color={colors.primary} />
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
                 </View>
             ) : (
                 <FlatList

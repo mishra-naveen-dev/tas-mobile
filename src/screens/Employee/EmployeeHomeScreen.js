@@ -25,6 +25,7 @@ import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
+import { SkeletonStatsGrid, SkeletonListItem } from '../../components/SkeletonComponents';
 
 const ZOHO_CHART_URL = 'https://analytics.zoho.in/open-view/334082000154073362';
 
@@ -721,18 +722,22 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     </View>
                 )}
 
-                <View style={styles.statsSection}>
-                    <View style={styles.statsRow}>
-                        {statsData.slice(0, 2).map((stat) => (
-                            <StatCard key={stat.id} {...stat} />
-                        ))}
+                {isLoading ? (
+                    <SkeletonStatsGrid style={{ marginBottom: spacing.md }} />
+                ) : (
+                    <View style={styles.statsSection}>
+                        <View style={styles.statsRow}>
+                            {statsData.slice(0, 2).map((stat) => (
+                                <StatCard key={stat.id} {...stat} />
+                            ))}
+                        </View>
+                        <View style={styles.statsRow}>
+                            {statsData.slice(2, 4).map((stat) => (
+                                <StatCard key={stat.id} {...stat} />
+                            ))}
+                        </View>
                     </View>
-                    <View style={styles.statsRow}>
-                        {statsData.slice(2, 4).map((stat) => (
-                            <StatCard key={stat.id} {...stat} />
-                        ))}
-                    </View>
-                </View>
+                )}
 
                 {/* ── Collection Stats Widget ── */}
                 <CollectionWidget
@@ -786,12 +791,18 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         onFilterChange={handleFilterChange} 
                     />
 
-                    {activities.length === 0 ? (
+                    {isLoading ? (
+                        <View>
+                            {[1, 2, 3].map(i => (
+                                <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                            ))}
+                        </View>
+                    ) : activities.length === 0 ? (
                         <View style={styles.emptyState}>
                             <Icon name="inbox" size={48} color={colors.textLight} />
                             <Text style={styles.emptyText}>
-                                {selectedFilter === 'ALL' 
-                                    ? 'No activity recorded yet today' 
+                                {selectedFilter === 'ALL'
+                                    ? 'No activity recorded yet today'
                                     : 'No activities match the selected filter'}
                             </Text>
                         </View>

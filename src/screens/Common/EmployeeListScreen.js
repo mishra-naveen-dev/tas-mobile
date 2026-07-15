@@ -12,6 +12,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import ScreenHeader from '../../components/ScreenHeader';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const EmployeeListScreen = ({ navigation }) => {
     const [employees, setEmployees] = useState([]);
@@ -78,33 +79,39 @@ const EmployeeListScreen = ({ navigation }) => {
                 navigation={navigation}
             />
 
-            <FlatList
-                data={employees}
-                keyExtractor={(item, index) => item.id ? `emp_${item.id}` : `emp-${index}`}
-                renderItem={renderEmployee}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                }
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    error ? (
-                        <View style={styles.emptyContainer}>
-                            <Icon name="alert-circle" size={48} color={colors.danger} />
-                            <Text style={[styles.emptyText, { color: colors.danger }]}>{error}</Text>
-                            <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
-                                <Text style={styles.retryBtnText}>Try Again</Text>
-                            </TouchableOpacity>
-                        </View>
-                    ) : (
-                        <View style={styles.emptyContainer}>
-                            <Icon name="users" size={48} color={colors.textLight} />
-                            <Text style={styles.emptyText}>
-                                {loading ? 'Loading...' : 'No employees found'}
-                            </Text>
-                        </View>
-                    )
-                }
-            />
+            {loading && employees.length === 0 ? (
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
+                </View>
+            ) : (
+                <FlatList
+                    data={employees}
+                    keyExtractor={(item, index) => item.id ? `emp_${item.id}` : `emp-${index}`}
+                    renderItem={renderEmployee}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                    }
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        error ? (
+                            <View style={styles.emptyContainer}>
+                                <Icon name="alert-circle" size={48} color={colors.danger} />
+                                <Text style={[styles.emptyText, { color: colors.danger }]}>{error}</Text>
+                                <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
+                                    <Text style={styles.retryBtnText}>Try Again</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <View style={styles.emptyContainer}>
+                                <Icon name="users" size={48} color={colors.textLight} />
+                                <Text style={styles.emptyText}>No employees found</Text>
+                            </View>
+                        )
+                    }
+                />
+            )}
         </SafeAreaView>
     );
 };

@@ -115,6 +115,12 @@ class LocationService {
       address: CONFIG.mockLocation.address,
       accuracy: CONFIG.mockLocation.accuracy,
       speed: CONFIG.mockLocation.speed,
+      altitude: null,
+      heading: null,
+      // This IS a fake location (dev-mode fallback with no real GPS) — flag
+      // it the same way a device-mocked fix would be, so a dev build never
+      // silently passes off a fabricated point as a genuine reading.
+      coordsMocked: true,
       timestamp: Date.now(),
       isMock: true,
     };
@@ -162,7 +168,7 @@ class LocationService {
           clearTimeout(timeout);
           resolved = true;
 
-          const { latitude, longitude, accuracy, speed } = position.coords;
+          const { latitude, longitude, accuracy, speed, altitude, heading, mocked } = position.coords;
 
           if (!this.isValidCoord(latitude, longitude)) {
             console.warn('[Location] Invalid coordinates');
@@ -175,12 +181,17 @@ class LocationService {
           }
 
           console.log('[Location] GPS success:', latitude.toFixed(4), longitude.toFixed(4));
-          
+
           resolve({
             latitude,
             longitude,
             accuracy: accuracy || 50,
             speed: speed ? speed * 3.6 : 0,
+            altitude: altitude ?? null,
+            heading: heading ?? null,
+            // Real device/OS mock-location signal (Android only — `mocked` is
+            // undefined on iOS, which has no equivalent OS-level flag).
+            coordsMocked: mocked === true,
             timestamp: Date.now(),
             isMock: false,
             address: '',

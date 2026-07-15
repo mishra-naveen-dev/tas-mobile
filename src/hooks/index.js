@@ -6,3 +6,4 @@ export { useLoadingState } from './useLoadingState';
 export { useErrorHandler } from './useErrorHandler';
 export { usePagination } from './usePagination';
 export { usePullToRefresh } from './usePullToRefresh';
+export { captureFieldActivityLocation } from './useFieldActivityLocation';

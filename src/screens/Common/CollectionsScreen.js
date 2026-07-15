@@ -20,12 +20,15 @@ import {
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Callout, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
+import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
+import { SkeletonListItem, SkeletonMapPreview } from '../../components/SkeletonComponents';
 import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 
@@ -124,12 +127,22 @@ const fmtCompact = (n) => {
     return `₹${v}`;
 };
 
-const KpiPill = ({ label, value, accent }) => (
-    <View style={styles.kpiPill}>
-        <Text style={[styles.kpiValue, accent && { color: accent }]}>{value}</Text>
-        <Text style={styles.kpiLabel}>{label}</Text>
-    </View>
-);
+const KpiPill = ({ label, value, accent, onPress }) => {
+    const content = (
+        <>
+            <Text style={[styles.kpiValue, accent && { color: accent }]}>{value}</Text>
+            <Text style={styles.kpiLabel}>{label}</Text>
+        </>
+    );
+    if (onPress) {
+        return (
+            <TouchableOpacity style={styles.kpiPill} onPress={onPress} activeOpacity={0.7}>
+                {content}
+            </TouchableOpacity>
+        );
+    }
+    return <View style={styles.kpiPill}>{content}</View>;
+};
 
 // ── Map tab ─────────────────────────────────────────────────────────────────
 const CollectionsMap = ({ records, navigateToCustomer, openUpdate, userLocation }) => {
@@ -356,6 +369,7 @@ const AnimatedCard = React.memo(({ index, children }) => {
 
 // ── Main screen ──────────────────────────────────────────────────────────────
 const CollectionsScreen = ({ route }) => {
+    const navigation = useNavigation();
     const { user } = useAuth();
     // Deep-linked here (e.g. from a "customer assigned to you" notification)
     // with a specific record to jump straight to.
@@ -392,7 +406,7 @@ const CollectionsScreen = ({ route }) => {
     const [mapLoading, setMapLoading] = useState(false);
 
     const [modal, setModal] = useState({ open: false, record: null });
-    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null, visit_reason: '' });
+    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null, visit_reason: '', visit_dpd_bucket: '' });
     const [saving, setSaving] = useState(false);
     const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
@@ -642,6 +656,7 @@ const CollectionsScreen = ({ route }) => {
             remarks: record.remarks || '',
             promise_date: record.promise_date ? new Date(record.promise_date) : null,
             visit_reason: record.visit_reason || '',
+            visit_dpd_bucket: record.visit_dpd_bucket || '',
         });
         setModal({ open: true, record });
     };
@@ -668,34 +683,68 @@ const CollectionsScreen = ({ route }) => {
     }, [deepLinkCollectionId, records, loading]);
 
     const navigateToCustomer = useCallback((r) => {
-        // Prefer GPS coords (captured on prior visit); fall back to text address
+        // Destination priority:
+        //   1. customer_latitude/longitude — the authoritative geo-tag for this
+        //      customer. Not populated for most records yet (a bulk upload
+        //      feature to set this directly is planned); currently only ever
+        //      gets seeded as a side effect of the first GPS-bearing visit
+        //      (see backend CollectionRecordViewSet.update_status). Checked
+        //      first so navigation automatically switches to the precise,
+        //      upload-provided coordinate the moment that feature ships —
+        //      no further code change needed here when it does.
+        //   2. visit_latitude/longitude — wherever an employee's own device
+        //      stood during a prior visit; a reasonable proxy today, but not
+        //      guaranteed to be the customer's actual location.
+        //   3. Text address — last resort when no GPS exists at all.
+        //
+        // Uses the same modern "dir/?api=1" Google Maps URL as LocationService.openMaps —
+        // the legacy `google.navigation:q=`/`daddr=` schemes used here previously are
+        // deprecated and unreliable on current Google Maps versions (some builds
+        // collapse both origin and destination to "current location" instead of
+        // routing from the user's current position to the customer). The dir/?api=1
+        // endpoint reliably defaults the omitted origin to the user's current location.
+        if (r.customer_latitude && r.customer_longitude) {
+            LocationService.openMaps(r.customer_latitude, r.customer_longitude);
+            return;
+        }
         if (r.visit_latitude && r.visit_longitude) {
-            const lat = r.visit_latitude;
-            const lng = r.visit_longitude;
-            Linking.openURL(`google.navigation:q=${lat},${lng}&mode=d`).catch(() =>
-                Linking.openURL(`https://maps.google.com/maps?daddr=${lat},${lng}`)
-            );
+            LocationService.openMaps(r.visit_latitude, r.visit_longitude);
             return;
         }
         const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
         if (addr) {
-            Linking.openURL(`https://maps.google.com/maps?q=${encodeURIComponent(addr)}&mode=d`);
+            Linking.openURL(
+                `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving`
+            ).catch(() => {});
         } else {
             Alert.alert('No Location', 'No address or GPS data available for this customer.');
         }
     }, []);
 
     const save = async () => {
+        if (form.status === 'PENDING' && !form.promise_date) {
+            Alert.alert('Promise Date Required', 'Please select the date the customer promised to pay.');
+            return;
+        }
         setSaving(true);
         try {
             // Auto-capture GPS at the moment of save
             let gpsPayload = {};
             try {
-                const loc = await LocationService.getCurrentLocation();
+                const loc = await captureFieldActivityLocation();
                 if (loc?.latitude && loc?.longitude && !loc?.error) {
                     gpsPayload.latitude = loc.latitude;
                     gpsPayload.longitude = loc.longitude;
                     gpsPayload.location_address = loc.address || '';
+                    gpsPayload.accuracy = loc.accuracy ?? null;
+                    gpsPayload.altitude = loc.altitude ?? null;
+                    gpsPayload.speed = loc.speed ?? null;
+                    gpsPayload.is_mock_location = loc.is_mock_location ?? false;
+                    gpsPayload.mock_detection_method = loc.mock_detection_method || '';
+                    gpsPayload.network_status = loc.network_status || '';
+                    gpsPayload.device_timestamp = loc.device_timestamp || undefined;
+                } else {
+                    console.warn('[Collections] GPS unavailable for this visit update:', loc?.error);
                 }
             } catch (_) {
                 // GPS optional — don't block the save
@@ -707,6 +756,9 @@ const CollectionsScreen = ({ route }) => {
                 ? form.promise_date.toISOString().split('T')[0]
                 : null;
             payload.visit_reason = form.status === 'VISITED' ? form.visit_reason : '';
+            payload.visit_dpd_bucket = form.status === 'VISITED' && form.visit_reason === 'OD_VISIT'
+                ? form.visit_dpd_bucket
+                : '';
 
             await api.updateCollectionStatus(modal.record.id, payload);
             setModal({ open: false, record: null });
@@ -853,6 +905,15 @@ const CollectionsScreen = ({ route }) => {
                         </View>
                     )}
 
+                    {!!item.visit_dpd_bucket && (
+                        <View style={styles.row}>
+                            <Icon name="alert-triangle" size={15} color={colors.warning} />
+                            <Text style={[styles.rowText, { color: colors.warning }]}>
+                                DPD: {item.visit_dpd_bucket}
+                            </Text>
+                        </View>
+                    )}
+
                     <View style={styles.row}>
                         <Icon name="clock" size={15} color={colors.textMuted} />
                         <Text style={styles.rowText}>Last collection: {fmtDate(item.last_collection_date)}</Text>
@@ -938,7 +999,11 @@ const CollectionsScreen = ({ route }) => {
                     <KpiPill label="To Collect" value={fmtCompact(summary?.total_due_amount || 0)} />
                     <KpiPill label="Collected" value={fmtCompact(summary?.total_collected_amount || 0)} accent={colors.successLight} />
                     <KpiPill label="Pending" value={summary?.pending || 0} />
-                    <KpiPill label="Done" value={(summary?.collected || 0) + (summary?.partially_collected || 0)} />
+                    <KpiPill
+                        label="Done"
+                        value={(summary?.collected || 0) + (summary?.partially_collected || 0)}
+                        onPress={() => navigation.navigate('CollectionDone')}
+                    />
                 </View>
             </View>
 
@@ -962,7 +1027,7 @@ const CollectionsScreen = ({ route }) => {
                     {/* Map — fixed height so list is visible below */}
                     <View style={{ height: SCREEN_HEIGHT * 0.52 }}>
                         {mapLoading && mapRecords.length === 0 ? (
-                            <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+                            <SkeletonMapPreview style={{ height: '100%', borderRadius: 0 }} />
                         ) : (
                             <CollectionsMap
                                 records={mapRecords}
@@ -1310,7 +1375,11 @@ const CollectionsScreen = ({ route }) => {
                     </Modal>
 
                     {loading ? (
-                        <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+                        <View style={{ padding: spacing.md }}>
+                            {[1, 2, 3, 4, 5].map(i => (
+                                <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                            ))}
+                        </View>
                     ) : listError ? (
                         /* ── Inline error state: no alert, always retryable ── */
                         <View style={styles.center}>
@@ -1415,9 +1484,10 @@ const CollectionsScreen = ({ route }) => {
                                             if (o.value !== 'PENDING') {
                                                 next.promise_date = null;
                                             }
-                                            // Clear visit reason when switching away from Visited
+                                            // Clear visit reason (and its DPD bucket) when switching away from Visited
                                             if (o.value !== 'VISITED') {
                                                 next.visit_reason = '';
+                                                next.visit_dpd_bucket = '';
                                             }
                                             return next;
                                         })}
@@ -1430,15 +1500,15 @@ const CollectionsScreen = ({ route }) => {
 
                         {form.status === 'PENDING' && (
                             <>
-                                <Text style={styles.fieldLabel}>Promise to Pay Date</Text>
+                                <Text style={styles.fieldLabel}>Promise to Pay Date *</Text>
                                 <TouchableOpacity
-                                    style={styles.input}
+                                    style={[styles.input, !form.promise_date && styles.inputRequired]}
                                     onPress={() => setShowPromiseDatePicker(true)}
                                 >
                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
                                         <Icon name="calendar" size={16} color={colors.textMuted} />
                                         <Text style={{ color: form.promise_date ? colors.textDark : colors.textMuted }}>
-                                            {form.promise_date ? fmtDate(form.promise_date) : 'Select date customer will pay'}
+                                            {form.promise_date ? fmtDate(form.promise_date) : 'Select date customer will pay (required)'}
                                         </Text>
                                     </View>
                                 </TouchableOpacity>
@@ -1469,7 +1539,32 @@ const CollectionsScreen = ({ route }) => {
                                             <TouchableOpacity
                                                 key={o.value}
                                                 style={[styles.statusOption, active && { backgroundColor: colors.info, borderColor: colors.info }]}
-                                                onPress={() => setForm(f => ({ ...f, visit_reason: o.value }))}
+                                                onPress={() => setForm(f => ({
+                                                    ...f,
+                                                    visit_reason: o.value,
+                                                    // Clear the DPD bucket when switching away from OD Visit
+                                                    visit_dpd_bucket: o.value === 'OD_VISIT' ? f.visit_dpd_bucket : '',
+                                                }))}
+                                            >
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </>
+                        )}
+
+                        {form.status === 'VISITED' && form.visit_reason === 'OD_VISIT' && (
+                            <>
+                                <Text style={styles.fieldLabel}>DPD Bucket</Text>
+                                <View style={styles.statusGrid}>
+                                    {DPD_BUCKET_OPTIONS.map(o => {
+                                        const active = form.visit_dpd_bucket === o.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={o.value}
+                                                style={[styles.statusOption, active && { backgroundColor: colors.warning, borderColor: colors.warning }]}
+                                                onPress={() => setForm(f => ({ ...f, visit_dpd_bucket: o.value }))}
                                             >
                                                 <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
                                             </TouchableOpacity>
@@ -1766,6 +1861,7 @@ const styles = StyleSheet.create({
         borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md,
         paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, fontSize: typography.sizes.sm, color: colors.textDark,
     },
+    inputRequired: { borderColor: colors.error },
     remarksInput: { height: 70, textAlignVertical: 'top' },
     gpsNotice: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
