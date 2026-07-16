@@ -184,6 +184,7 @@ export const PunchProvider = ({ children }) => {
         travel_type: formData.travel_with || 'ALONE',
         co_employee_id: formData.co_employee_id || '',
         companion_name: formData.co_employee_name || '',
+        companion_phone: formData.co_employee_phone || '',
         vehicle_number: formData.vehicle_number || '',
       };
       // Only sent on resubmission after the operator confirms an out-of-range

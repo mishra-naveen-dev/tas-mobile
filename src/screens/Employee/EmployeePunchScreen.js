@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { usePunch, STATES } from '../../context/PunchContext';
+import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 
@@ -114,6 +115,7 @@ const EmployeePunchScreen = ({ navigation }) => {
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
+    co_employee_phone: '',
     vehicle_number: '',
   });
 
@@ -288,6 +290,17 @@ const EmployeePunchScreen = ({ navigation }) => {
       }
     }
 
+    if (form.travel_with === 'WITH_EMPLOYEE') {
+      if (!form.co_employee_phone) {
+        Alert.alert('Required', 'Employee phone number is required');
+        return false;
+      }
+      if (!isPhone(form.co_employee_phone)) {
+        Alert.alert('Invalid', 'Enter a valid 10-digit phone number');
+        return false;
+      }
+    }
+
     return true;
   };
 
@@ -306,6 +319,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       travel_with: 'ALONE',
       co_employee_id: '',
       co_employee_name: '',
+      co_employee_phone: '',
       vehicle_number: '',
     });
     setLocalLocation(null);
@@ -401,6 +415,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       travel_with: 'ALONE',
       co_employee_id: '',
       co_employee_name: '',
+      co_employee_phone: '',
       vehicle_number: '',
     });
     resetForm();
@@ -423,6 +438,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       if (key === 'travel_with') {
         updated.co_employee_id = '';
         updated.co_employee_name = '';
+        updated.co_employee_phone = '';
         updated.vehicle_number = '';
       }
       return updated;
@@ -806,6 +822,16 @@ const EmployeePunchScreen = ({ navigation }) => {
                   <TextInput style={styles.input} value={form.co_employee_id} onChangeText={(t) => updateForm('co_employee_id', t)} placeholder="Employee ID" placeholderTextColor={colors.textMuted} />
                   <Text style={styles.label}>Employee Name</Text>
                   <TextInput style={styles.input} value={form.co_employee_name} onChangeText={(t) => updateForm('co_employee_name', t)} placeholder="Employee Name" placeholderTextColor={colors.textMuted} />
+                  <Text style={styles.label}>Employee Phone Number</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={form.co_employee_phone}
+                    onChangeText={(t) => updateForm('co_employee_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                    placeholder="10-digit mobile number"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="number-pad"
+                    maxLength={10}
+                  />
                 </>
               )}
             </ScrollView>
