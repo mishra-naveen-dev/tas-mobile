@@ -516,6 +516,14 @@ api.rejectDevice = (id) => api.post(`/organization/devices/${id}/reject/`);
 api.blockDevice = (id) => api.post(`/organization/devices/${id}/block/`);
 api.resetDevice = (id) => api.post(`/organization/devices/${id}/reset/`);
 
+api.getAllowanceRequests = (params = {}) => api.get('/allowance/requests/', { params });
+api.approveAllowanceRequest = (id) => api.post(`/allowance/requests/${id}/approve/`);
+api.rejectAllowanceRequest = (id, reason = '') => api.post(`/allowance/requests/${id}/reject/`, { reason });
+
+api.getProfileUpdateRequests = (params = {}) => api.get('/organization/profile-update/', { params });
+api.approveProfileUpdateRequest = (id) => api.post(`/organization/profile-update/${id}/approve/`);
+api.rejectProfileUpdateRequest = (id) => api.post(`/organization/profile-update/${id}/reject/`);
+
 api.getOrganizationStats = () => {
     return api.get('/organization/users/stats/');
 };
