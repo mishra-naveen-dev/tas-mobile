@@ -89,8 +89,8 @@ android {
         applicationId "com.tasmobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 5
-        versionName "1.4"
+        versionCode 6
+        versionName "1.5"
         manifestPlaceholders = [MAPS_API_KEY: dotenvProps.getProperty("GOOGLE_MAPS_API_KEY", "")]
     }
     signingConfigs {
