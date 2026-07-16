@@ -439,7 +439,15 @@ const CollectionsScreen = ({ route }) => {
     // loaded client-side.
     const buildFilterParams = useCallback(() => {
         const params = {};
-        if (activeFilter !== 'ALL') params.status = activeFilter;
+        if (activeFilter !== 'ALL') {
+            params.status = activeFilter;
+        } else {
+            // Default (All) view is the working list — once a customer is marked
+            // Collected/Partially Collected they move to the Done screen instead
+            // of lingering here. Selecting the Collected/Partial chip explicitly
+            // still shows them (handled by the branch above).
+            params.is_done = false;
+        }
         if (typeFilter !== 'ALL') params.collection_type = typeFilter;
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
         if (productFilter !== 'ALL') params.product_type = productFilter;
