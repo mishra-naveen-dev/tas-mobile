@@ -8,9 +8,7 @@ import {
     RefreshControl,
     Alert,
     Modal,
-    TextInput,
     Platform,
-    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -24,7 +22,11 @@ import {
     adaptAllowance, adaptCorrection, adaptDevice, adaptProfile,
 } from '../../utils/requestAdapters';
 
-const AdminApprovalsScreen = ({ navigation }) => {
+// Read-only counterpart to the admin Approvals inbox — same normalization
+// and detail/timeline view, but scoped to "my own requests" (every backend
+// endpoint here already filters to the logged-in user for non-admin roles)
+// and with no approve/reject actions.
+const MyRequestsScreen = ({ navigation }) => {
     const [allowances, setAllowances] = useState([]);
     const [corrections, setCorrections] = useState([]);
     const [devices, setDevices] = useState([]);
@@ -32,21 +34,13 @@ const AdminApprovalsScreen = ({ navigation }) => {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState(0);
-    const [statusFilter, setStatusFilter] = useState('PENDING');
+    const [statusFilter, setStatusFilter] = useState('ALL');
     const [dateFrom, setDateFrom] = useState(null);
     const [dateTo, setDateTo] = useState(null);
     const [showFromPicker, setShowFromPicker] = useState(false);
     const [showToPicker, setShowToPicker] = useState(false);
     const [filterModalVisible, setFilterModalVisible] = useState(false);
-    const [detail, setDetail] = useState(null); // normalized item currently shown in detail modal
-    const [rejectModal, setRejectModal] = useState({ visible: false, item: null });
-    const [rejectReason, setRejectReason] = useState('');
-    const [actionLoading, setActionLoading] = useState(false);
-
-    const handleBack = () => {
-        if (navigation.canGoBack()) navigation.goBack();
-        else navigation.navigate('AdminDashboard');
-    };
+    const [detail, setDetail] = useState(null);
 
     const fetchData = useCallback(async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true); else setLoading(true);
@@ -69,7 +63,7 @@ const AdminApprovalsScreen = ({ navigation }) => {
             setDevices(unwrap(deviceRes));
             setProfiles(unwrap(profileRes));
         } catch (err) {
-            Alert.alert('Error', 'Failed to load approvals');
+            Alert.alert('Error', 'Failed to load your requests');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -80,7 +74,6 @@ const AdminApprovalsScreen = ({ navigation }) => {
 
     const onRefresh = () => fetchData(true);
 
-    // ── Normalize + filter the active tab's data ──────────────────────────────
     const adaptedByTab = useMemo(() => ([
         allowances.map(adaptAllowance),
         corrections.map(adaptCorrection),
@@ -102,7 +95,6 @@ const AdminApprovalsScreen = ({ navigation }) => {
             const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
             list = list.filter(i => i.raisedAt && new Date(i.raisedAt) <= to);
         }
-        // Newest first — the latest request is always shown by default at the top.
         return [...list].sort((a, b) => new Date(b.raisedAt) - new Date(a.raisedAt));
     }, [adaptedByTab, activeTab, statusFilter, dateFrom, dateTo]);
 
@@ -114,51 +106,9 @@ const AdminApprovalsScreen = ({ navigation }) => {
         setDateTo(null);
     };
 
-    // ── Approve / Reject ──────────────────────────────────────────────────────
-    const runApprove = async (item) => {
-        setActionLoading(true);
-        try {
-            if (item.type === 'allowance') await api.approveAllowanceRequest(item.id);
-            else if (item.type === 'correction') await api.reviewCorrection(item.id, 'APPROVE');
-            else if (item.type === 'device') await api.approveDevice(item.id);
-            else if (item.type === 'profile') await api.approveProfileUpdateRequest(item.id);
-            setDetail(null);
-            fetchData();
-        } catch (err) {
-            Alert.alert('Error', 'Failed to approve');
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const openReject = (item) => {
-        setRejectReason('');
-        setRejectModal({ visible: true, item });
-    };
-
-    const confirmReject = async () => {
-        const item = rejectModal.item;
-        if (!item) return;
-        setActionLoading(true);
-        try {
-            if (item.type === 'allowance') await api.rejectAllowanceRequest(item.id, rejectReason);
-            else if (item.type === 'correction') await api.reviewCorrection(item.id, 'REJECT', rejectReason);
-            else if (item.type === 'device') await api.rejectDevice(item.id);
-            else if (item.type === 'profile') await api.rejectProfileUpdateRequest(item.id);
-            setRejectModal({ visible: false, item: null });
-            setDetail(null);
-            fetchData();
-        } catch (err) {
-            Alert.alert('Error', 'Failed to reject');
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    // ── Card ───────────────────────────────────────────────────────────────────
     const renderItem = ({ item, index }) => {
         const meta = STATUS_META[item.status] || STATUS_META.PENDING;
-        const isLatest = index === 0 && !hasDateFilter && statusFilter === 'PENDING';
+        const isLatest = index === 0 && !hasDateFilter && statusFilter === 'ALL';
         return (
             <TouchableOpacity style={styles.card} activeOpacity={0.8} onPress={() => setDetail(item)}>
                 <View style={[styles.cardAccent, { backgroundColor: meta.color }]} />
@@ -166,14 +116,13 @@ const AdminApprovalsScreen = ({ navigation }) => {
                     <View style={styles.cardHeader}>
                         <View style={{ flex: 1 }}>
                             <View style={styles.titleRow}>
-                                <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+                                <Text style={styles.cardTitle} numberOfLines={1}>{item.subtitle}</Text>
                                 {isLatest && (
                                     <View style={styles.latestBadge}>
                                         <Text style={styles.latestBadgeText}>LATEST</Text>
                                     </View>
                                 )}
                             </View>
-                            <Text style={styles.cardSubtitle} numberOfLines={1}>{item.subtitle}</Text>
                             {!!item.meta && <Text style={styles.cardMeta}>{item.meta}</Text>}
                         </View>
                         <View style={[styles.statusChip, { backgroundColor: meta.bg }]}>
@@ -181,27 +130,11 @@ const AdminApprovalsScreen = ({ navigation }) => {
                             <Text style={[styles.statusChipText, { color: meta.color }]}>{meta.label}</Text>
                         </View>
                     </View>
-
                     <Text style={styles.raisedText}>Raised {fmtDateTime(item.raisedAt)}</Text>
-
                     {item.status === 'PENDING' && (
-                        <View style={styles.cardActions}>
-                            <TouchableOpacity
-                                style={[styles.actionBtn, styles.approveBtn]}
-                                onPress={() => runApprove(item)}
-                                disabled={actionLoading}
-                            >
-                                <Icon name="check" size={14} color="#fff" />
-                                <Text style={styles.actionBtnText}>Approve</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.actionBtn, styles.rejectBtn]}
-                                onPress={() => openReject(item)}
-                                disabled={actionLoading}
-                            >
-                                <Icon name="x" size={14} color="#fff" />
-                                <Text style={styles.actionBtnText}>Reject</Text>
-                            </TouchableOpacity>
+                        <View style={styles.pendingWithRow}>
+                            <Icon name="user-check" size={12} color={colors.warning} />
+                            <Text style={styles.pendingWithText}>Pending with {item.pendingWith}</Text>
                         </View>
                     )}
                 </View>
@@ -210,21 +143,21 @@ const AdminApprovalsScreen = ({ navigation }) => {
     };
 
     const tabs = [
-        { title: 'Allowances', count: allowances.filter(a => a.status === 'PENDING').length },
-        { title: 'Corrections', count: corrections.filter(c => c.status === 'PENDING').length },
-        { title: 'Devices', count: devices.filter(d => d.status === 'PENDING').length },
-        { title: 'Profile Updates', count: profiles.filter(p => p.status === 'PENDING').length },
+        { title: 'Allowances', count: allowances.length },
+        { title: 'Corrections', count: corrections.length },
+        { title: 'Devices', count: devices.length },
+        { title: 'Profile Updates', count: profiles.length },
     ];
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <View style={styles.header}>
-                <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+                <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
                     <Icon name="arrow-left" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
                 <View style={styles.headerTitleContainer}>
-                    <Text style={styles.headerTitle}>Approvals</Text>
-                    <Text style={styles.headerSubtitle}>Review and take action</Text>
+                    <Text style={styles.headerTitle}>My Requests</Text>
+                    <Text style={styles.headerSubtitle}>Track all your requests</Text>
                 </View>
                 <TouchableOpacity style={styles.filterButton} onPress={() => setFilterModalVisible(true)}>
                     <Icon name="filter" size={20} color="#FFFFFF" />
@@ -260,7 +193,7 @@ const AdminApprovalsScreen = ({ navigation }) => {
 
             {loading && currentItems.length === 0 ? (
                 <View style={{ padding: spacing.md }}>
-                    {[1, 2, 3, 4, 5].map(i => (
+                    {[1, 2, 3].map(i => (
                         <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
                     ))}
                 </View>
@@ -273,10 +206,10 @@ const AdminApprovalsScreen = ({ navigation }) => {
                     contentContainerStyle={styles.listContent}
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
-                            <Icon name="check-circle" size={48} color={colors.success} />
+                            <Icon name="inbox" size={48} color={colors.textMuted} />
                             <Text style={styles.emptyText}>No requests found</Text>
                             <Text style={styles.emptySubtext}>
-                                {statusFilter !== 'ALL' || hasDateFilter ? 'Try adjusting your filters' : 'All caught up!'}
+                                {statusFilter !== 'ALL' || hasDateFilter ? 'Try adjusting your filters' : 'Nothing submitted yet'}
                             </Text>
                         </View>
                     }
@@ -331,7 +264,7 @@ const AdminApprovalsScreen = ({ navigation }) => {
                                 mode="date"
                                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                                 maximumDate={new Date()}
-                                onChange={(e, selected) => {
+                                onChange={(event, selected) => {
                                     setShowFromPicker(Platform.OS === 'ios');
                                     if (selected) setDateFrom(selected);
                                 }}
@@ -343,7 +276,7 @@ const AdminApprovalsScreen = ({ navigation }) => {
                                 mode="date"
                                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                                 maximumDate={new Date()}
-                                onChange={(e, selected) => {
+                                onChange={(event, selected) => {
                                     setShowToPicker(Platform.OS === 'ios');
                                     if (selected) setDateTo(selected);
                                 }}
@@ -362,37 +295,7 @@ const AdminApprovalsScreen = ({ navigation }) => {
                 </View>
             </Modal>
 
-            <RequestDetailModal
-                detail={detail}
-                onClose={() => setDetail(null)}
-                actions={{ onApprove: runApprove, onReject: openReject, loading: actionLoading }}
-            />
-
-            {/* ── Reject reason modal — plain TextInput, not Alert.prompt (Android has no native prompt dialog) ── */}
-            <Modal visible={rejectModal.visible} transparent animationType="fade" onRequestClose={() => setRejectModal({ visible: false, item: null })}>
-                <View style={styles.modalOverlay}>
-                    <View style={styles.rejectModalContent}>
-                        <Text style={styles.modalTitle}>Reject Request</Text>
-                        <Text style={styles.fieldLabel}>Reason (optional)</Text>
-                        <TextInput
-                            style={styles.reasonInput}
-                            value={rejectReason}
-                            onChangeText={setRejectReason}
-                            placeholder="Why is this being rejected?"
-                            placeholderTextColor={colors.textMuted}
-                            multiline
-                        />
-                        <View style={styles.modalFooter}>
-                            <TouchableOpacity style={styles.clearBtn} onPress={() => setRejectModal({ visible: false, item: null })}>
-                                <Text style={styles.clearBtnText}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={[styles.applyBtn, { backgroundColor: colors.danger }]} onPress={confirmReject} disabled={actionLoading}>
-                                {actionLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.applyBtnText}>Reject</Text>}
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-            </Modal>
+            <RequestDetailModal detail={detail} onClose={() => setDetail(null)} />
         </SafeAreaView>
     );
 };
@@ -462,19 +365,12 @@ const styles = StyleSheet.create({
     cardTitle: { fontSize: typography.sizes.md, fontWeight: typography.weights.semibold, color: colors.textDark, flexShrink: 1 },
     latestBadge: { backgroundColor: colors.primary, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 },
     latestBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
-    cardSubtitle: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 2 },
     cardMeta: { fontSize: 11, color: colors.textLight, marginTop: 2 },
     statusChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.md },
     statusChipText: { fontSize: 11, fontWeight: '700' },
     raisedText: { fontSize: 11, color: colors.textLight, marginTop: spacing.sm },
-    cardActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm, gap: spacing.xs },
-    actionBtn: {
-        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-        paddingVertical: spacing.sm, borderRadius: 8,
-    },
-    approveBtn: { backgroundColor: colors.success },
-    rejectBtn: { backgroundColor: colors.danger },
-    actionBtnText: { color: '#fff', fontWeight: typography.weights.bold, fontSize: typography.sizes.sm },
+    pendingWithRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+    pendingWithText: { fontSize: 11, color: colors.warning, fontWeight: '600' },
 
     emptyContainer: { padding: spacing.xxl, alignItems: 'center' },
     emptyText: { fontSize: typography.sizes.lg, fontWeight: typography.weights.semibold, color: colors.textDark, marginTop: spacing.md },
@@ -512,14 +408,6 @@ const styles = StyleSheet.create({
         borderRadius: borderRadius.md, backgroundColor: colors.primary,
     },
     applyBtnText: { color: '#fff', fontWeight: '700' },
-
-    rejectModalContent: {
-        backgroundColor: colors.surface, borderRadius: 16, padding: spacing.md, margin: spacing.lg,
-    },
-    reasonInput: {
-        borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md,
-        padding: spacing.sm, minHeight: 70, textAlignVertical: 'top', color: colors.textDark,
-    },
 });
 
-export default AdminApprovalsScreen;
+export default MyRequestsScreen;

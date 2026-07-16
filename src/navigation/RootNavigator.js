@@ -50,6 +50,7 @@ import DashboardScreen from '../screens/Common/DashboardScreen';
 import EmployeeListScreen from '../screens/Common/EmployeeListScreen';
 import ProfileScreen from '../screens/Common/ProfileScreen';
 import ProfileUpdateRequestScreen from '../screens/Common/ProfileUpdateRequestScreen';
+import MyRequestsScreen from '../screens/Common/MyRequestsScreen';
 import MyPerformanceScreen from '../screens/Employee/MyPerformanceScreen';
 import MissedPunchDashboardScreen from '../screens/Employee/MissedPunchDashboardScreen';
 import NotificationsScreen from '../screens/Common/NotificationsScreen';
@@ -116,6 +117,7 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <EmployeeStack.Screen name="Profile" component={ProfileScreen} />
         <EmployeeStack.Screen name="ProfileUpdateRequest" component={ProfileUpdateRequestScreen} />
+        <EmployeeStack.Screen name="MyRequests" component={MyRequestsScreen} />
         <EmployeeStack.Screen name="Notifications" component={NotificationsScreen} />
     </EmployeeStack.Navigator>
 );

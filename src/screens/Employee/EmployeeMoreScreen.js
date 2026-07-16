@@ -294,6 +294,13 @@ const EmployeeMoreScreen = ({ navigation }) => {
                 {/* ── History ──────────────────────────────────────────────────── */}
                 <SectionLabel title="History" />
                 <MenuRow
+                    title="My Requests"
+                    subtitle="Track all your requests and their approval status"
+                    icon="list"
+                    iconColor={colors.info}
+                    onPress={() => navigation.navigate('MyRequests')}
+                />
+                <MenuRow
                     title="Punch History"
                     subtitle="View all your punch records"
                     icon="clock"
