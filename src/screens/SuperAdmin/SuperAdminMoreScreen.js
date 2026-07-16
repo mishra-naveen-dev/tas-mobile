@@ -5,6 +5,7 @@ import {
     StyleSheet,
     ScrollView,
     TouchableOpacity,
+    RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -16,12 +17,23 @@ import { colors, typography, spacing } from '../../theme/tokens';
 const SuperAdminMoreScreen = ({ navigation }) => {
     const { user } = useAuth();
     const [userData, setUserData] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
 
-    useEffect(() => {
-        api.get('/organization/profile-update/')
+    const loadUserData = () => {
+        return api.get('/organization/profile-update/')
             .then(res => setUserData(res.data))
             .catch(() => {});
+    };
+
+    useEffect(() => {
+        loadUserData();
     }, []);
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await loadUserData();
+        setRefreshing(false);
+    };
 
     const MenuItem = ({ title, subtitle, icon, color, badge, onPress }) => (
         <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.7}>

@@ -6,7 +6,8 @@ import {
     FlatList,
     TouchableOpacity,
     TextInput,
-    SafeAreaView
+    SafeAreaView,
+    RefreshControl
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
@@ -18,6 +19,7 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
     const [employees, setEmployees] = useState([]);
     const [filteredEmployees, setFilteredEmployees] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [filter, setFilter] = useState('all');
     const [userData, setUserData] = useState(null);
@@ -31,7 +33,8 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
         }
     };
 
-    const fetchEmployees = async () => {
+    const fetchEmployees = async (isRefresh = false) => {
+        if (isRefresh) setRefreshing(true); else setLoading(true);
         try {
             const res = await api.get('/organization/users/');
             if (res.data && Array.isArray(res.data)) {
@@ -42,7 +45,13 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
             console.log('Error fetching employees:', err);
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
+    };
+
+    const onRefresh = () => {
+        fetchUserData();
+        fetchEmployees(true);
     };
 
     useEffect(() => {
@@ -195,6 +204,9 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
                         keyExtractor={(item, index) => item.id ? item.id.toString() : `emp-${index}`}
                         contentContainerStyle={styles.listContent}
                         showsVerticalScrollIndicator={false}
+                        refreshControl={
+                            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+                        }
                         ListEmptyComponent={
                             <View style={styles.emptyContainer}>
                                 <Icon name="users" size={64} color={colors.textLight} />

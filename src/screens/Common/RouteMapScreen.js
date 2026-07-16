@@ -7,6 +7,7 @@ import {
     ActivityIndicator,
     Dimensions,
     ScrollView,
+    RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -52,12 +53,13 @@ const RouteMapScreen = ({ navigation, route }) => {
     const [gpsRoute,    setGpsRoute]    = useState([]);   // actual 10-s GPS track
     const [routeDist,   setRouteDist]   = useState(null); // km, outlier-filtered
     const [loading,     setLoading]     = useState(true);
+    const [refreshing,  setRefreshing]  = useState(false);
     const [error,       setError]       = useState(null);
 
     const isTodayActive = toDateStr(activeDate) === toDateStr(new Date());
 
-    const fetchData = useCallback(async () => {
-        setLoading(true);
+    const fetchData = useCallback(async (isRefresh = false) => {
+        if (isRefresh) setRefreshing(true); else setLoading(true);
         setError(null);
         try {
             const dateStr = toDateStr(activeDate);
@@ -97,10 +99,13 @@ const RouteMapScreen = ({ navigation, route }) => {
             setError('Failed to load route data. Pull down to retry.');
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     }, [activeDate, employeeId]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    const onRefresh = useCallback(() => fetchData(true), [fetchData]);
 
     // Punch markers — only those with valid GPS
     const mappablePunches = allPunches.filter(
@@ -225,7 +230,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                 <Text style={styles.headerTitle}>
                     {employeeName ? employeeName : 'Route Map'}
                 </Text>
-                <TouchableOpacity onPress={fetchData} style={styles.refreshBtn}>
+                <TouchableOpacity onPress={() => fetchData()} style={styles.refreshBtn}>
                     <Icon name="refresh-cw" size={20} color={loading ? colors.border : colors.primary} />
                 </TouchableOpacity>
             </View>
@@ -374,6 +379,9 @@ const RouteMapScreen = ({ navigation, route }) => {
                 style={styles.list}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+                }
             >
                 {/* Stats row */}
                 <View style={styles.statsRow}>
