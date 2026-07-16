@@ -1498,36 +1498,50 @@ const CollectionsScreen = ({ route }) => {
                             })}
                         </View>
 
-                        {form.status === 'PENDING' && (
-                            <>
-                                <Text style={styles.fieldLabel}>Promise to Pay Date *</Text>
-                                <TouchableOpacity
-                                    style={[styles.input, !form.promise_date && styles.inputRequired]}
-                                    onPress={() => setShowPromiseDatePicker(true)}
-                                >
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
-                                        <Icon name="calendar" size={16} color={colors.textMuted} />
-                                        <Text style={{ color: form.promise_date ? colors.textDark : colors.textMuted }}>
-                                            {form.promise_date ? fmtDate(form.promise_date) : 'Select date customer will pay (required)'}
-                                        </Text>
-                                    </View>
-                                </TouchableOpacity>
-                                {showPromiseDatePicker && (
-                                    <DateTimePicker
-                                        value={form.promise_date || new Date()}
-                                        mode="date"
-                                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                        minimumDate={new Date()}
-                                        onChange={(event, selectedDate) => {
-                                            setShowPromiseDatePicker(Platform.OS === 'ios');
-                                            if (selectedDate) {
-                                                setForm(f => ({ ...f, promise_date: selectedDate }));
-                                            }
-                                        }}
-                                    />
-                                )}
-                            </>
-                        )}
+                        {form.status === 'PENDING' && (() => {
+                            // Promise date is capped to a 1-month window starting at the
+                            // customer's planned/demand date (due_date) — an employee can't
+                            // promise a payment before that date or more than a month past
+                            // it. Falls back to today when the record has no planned date.
+                            const plannedDate = modal.record?.due_date ? new Date(modal.record.due_date) : new Date();
+                            plannedDate.setHours(0, 0, 0, 0);
+                            const maxPromiseDate = new Date(plannedDate);
+                            maxPromiseDate.setMonth(maxPromiseDate.getMonth() + 1);
+                            return (
+                                <>
+                                    <Text style={styles.fieldLabel}>Promise to Pay Date *</Text>
+                                    <TouchableOpacity
+                                        style={[styles.input, !form.promise_date && styles.inputRequired]}
+                                        onPress={() => setShowPromiseDatePicker(true)}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                                            <Icon name="calendar" size={16} color={colors.textMuted} />
+                                            <Text style={{ color: form.promise_date ? colors.textDark : colors.textMuted }}>
+                                                {form.promise_date ? fmtDate(form.promise_date) : 'Select date customer will pay (required)'}
+                                            </Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                    <Text style={styles.dateHintText}>
+                                        Allowed: {fmtDate(plannedDate)} – {fmtDate(maxPromiseDate)}
+                                    </Text>
+                                    {showPromiseDatePicker && (
+                                        <DateTimePicker
+                                            value={form.promise_date || plannedDate}
+                                            mode="date"
+                                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                            minimumDate={plannedDate}
+                                            maximumDate={maxPromiseDate}
+                                            onChange={(event, selectedDate) => {
+                                                setShowPromiseDatePicker(Platform.OS === 'ios');
+                                                if (selectedDate) {
+                                                    setForm(f => ({ ...f, promise_date: selectedDate }));
+                                                }
+                                            }}
+                                        />
+                                    )}
+                                </>
+                            );
+                        })()}
 
                         {form.status === 'VISITED' && (
                             <>
@@ -1851,6 +1865,7 @@ const styles = StyleSheet.create({
     emiHint: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
     emiHintText: { fontSize: 10, fontWeight: '600', color: colors.success },
     emiSub: { fontSize: 11, color: colors.textMuted, marginTop: 4, marginBottom: 2 },
+    dateHintText: { fontSize: 11, color: colors.textMuted, marginTop: 4, marginBottom: 2 },
     statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
     statusOption: {
         paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
