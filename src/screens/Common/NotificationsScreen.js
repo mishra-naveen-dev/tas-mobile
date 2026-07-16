@@ -5,8 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   FlatList,
-  ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -47,7 +47,7 @@ const fmtTime = (iso) => {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 };
 
-const NotificationRow = ({ item, onPress }) => (
+const NotificationRow = ({ item, onPress, onDelete }) => (
   <TouchableOpacity
     style={[styles.row, !item.is_read && styles.rowUnread]}
     onPress={() => onPress(item)}
@@ -68,6 +68,13 @@ const NotificationRow = ({ item, onPress }) => (
       <Text style={styles.time}>{fmtTime(item.created_at)}</Text>
     </View>
     {!item.is_read && <View style={styles.unreadDot} />}
+    <TouchableOpacity
+      style={styles.deleteBtn}
+      onPress={() => onDelete(item)}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+    >
+      <Icon name="trash-2" size={16} color={colors.textMuted} />
+    </TouchableOpacity>
   </TouchableOpacity>
 );
 
@@ -127,6 +134,42 @@ const NotificationsScreen = ({ navigation }) => {
     }
   };
 
+  const handleDeleteSingle = (item) => {
+    // Optimistic removal — this is a single, deliberate tap on a trash icon,
+    // not a bulk/irreversible action, so no confirmation dialog is needed.
+    const previous = notifications;
+    setNotifications(prev => prev.filter(n => n.id !== item.id));
+    api.deleteNotification(item.id).catch(() => {
+      // Roll back if the delete didn't actually happen server-side.
+      setNotifications(previous);
+      Alert.alert('Error', 'Could not delete this notification. Please try again.');
+    });
+  };
+
+  const handleClearAll = () => {
+    Alert.alert(
+      'Clear All Notifications',
+      'This will permanently delete all your notifications. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: async () => {
+            const previous = notifications;
+            setNotifications([]);
+            try {
+              await api.deleteAllNotifications();
+            } catch {
+              setNotifications(previous);
+              Alert.alert('Error', 'Could not clear notifications. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const hasUnread = notifications.some(n => !n.is_read);
 
   return (
@@ -136,13 +179,22 @@ const NotificationsScreen = ({ navigation }) => {
           <Icon name="arrow-left" size={22} color={colors.textDark} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Notifications</Text>
-        {hasUnread ? (
-          <TouchableOpacity onPress={handleMarkAllRead}>
-            <Text style={styles.markAllText}>Mark all read</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 90 }} />
-        )}
+        <View style={styles.headerActions}>
+          {hasUnread && (
+            <TouchableOpacity onPress={handleMarkAllRead}>
+              <Text style={styles.markAllText}>Mark all read</Text>
+            </TouchableOpacity>
+          )}
+          {notifications.length > 0 && (
+            <TouchableOpacity
+              onPress={handleClearAll}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{ marginLeft: spacing.sm }}
+            >
+              <Icon name="trash-2" size={18} color={colors.danger || colors.textMuted} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {loading ? (
@@ -155,7 +207,9 @@ const NotificationsScreen = ({ navigation }) => {
         <FlatList
           data={notifications}
           keyExtractor={(item) => String(item.id)}
-          renderItem={({ item }) => <NotificationRow item={item} onPress={handlePress} />}
+          renderItem={({ item }) => (
+            <NotificationRow item={item} onPress={handlePress} onDelete={handleDeleteSingle} />
+          )}
           contentContainerStyle={notifications.length === 0 ? styles.emptyContainer : styles.listContent}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} colors={[colors.primary]} />
@@ -181,7 +235,8 @@ const styles = StyleSheet.create({
   },
   backBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
-  markAllText: { fontSize: typography.sizes.xs, fontWeight: '700', color: colors.primary, width: 90, textAlign: 'right' },
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
+  markAllText: { fontSize: typography.sizes.xs, fontWeight: '700', color: colors.primary },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xxxl },
   emptyContainer: { flexGrow: 1 },
   emptyText: { marginTop: spacing.md, fontSize: typography.sizes.sm, color: colors.textMuted },
@@ -203,6 +258,7 @@ const styles = StyleSheet.create({
   message: { fontSize: typography.sizes.xs, color: colors.textMedium, marginTop: 2 },
   time: { fontSize: 11, color: colors.textMuted, marginTop: 4 },
   unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary, marginTop: 6 },
+  deleteBtn: { justifyContent: 'center', alignItems: 'center', paddingLeft: spacing.xs, alignSelf: 'center' },
 });
 
 export default NotificationsScreen;

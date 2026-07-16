@@ -587,6 +587,12 @@ api.markNotificationRead = (id) =>
 api.markAllNotificationsRead = () =>
     api.post('/organization/notifications/mark_all_read/');
 
+api.deleteNotification = (id) =>
+    api.delete(`/organization/notifications/${id}/`);
+
+api.deleteAllNotifications = () =>
+    api.delete('/organization/notifications/delete_all/');
+
 // ── Customer collections ──
 api.getCollections = (params = {}) =>
     api.get('/loans/collections/', { params });
