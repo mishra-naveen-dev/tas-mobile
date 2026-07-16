@@ -726,6 +726,10 @@ const CollectionsScreen = ({ route }) => {
             Alert.alert('Promise Date Required', 'Please select the date the customer promised to pay.');
             return;
         }
+        if (form.status === 'NOT_PAID' && !form.remarks.trim()) {
+            Alert.alert('Reason Required', 'Please enter the reason the customer did not pay.');
+            return;
+        }
         setSaving(true);
         try {
             // Auto-capture GPS at the moment of save
@@ -1615,13 +1619,15 @@ const CollectionsScreen = ({ route }) => {
                             </>
                         )}
 
-                        <Text style={styles.fieldLabel}>Remarks</Text>
+                        <Text style={styles.fieldLabel}>
+                            {form.status === 'NOT_PAID' ? 'Reason Why Not Paid *' : 'Remarks'}
+                        </Text>
                         <TextInput
-                            style={[styles.input, styles.remarksInput]}
+                            style={[styles.input, styles.remarksInput, form.status === 'NOT_PAID' && !form.remarks.trim() && styles.inputRequired]}
                             multiline
                             value={form.remarks}
                             onChangeText={(v) => setForm(f => ({ ...f, remarks: v }))}
-                            placeholder="Optional notes"
+                            placeholder={form.status === 'NOT_PAID' ? 'Why did the customer not pay? (required)' : 'Optional notes'}
                             placeholderTextColor={colors.textMuted}
                         />
 
