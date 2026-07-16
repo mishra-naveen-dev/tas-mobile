@@ -521,6 +521,7 @@ api.approveAllowanceRequest = (id) => api.post(`/allowance/requests/${id}/approv
 api.rejectAllowanceRequest = (id, reason = '') => api.post(`/allowance/requests/${id}/reject/`, { reason });
 
 api.getProfileUpdateRequests = (params = {}) => api.get('/organization/profile-update/', { params });
+api.createProfileUpdateRequest = (data) => api.post('/organization/profile-update/', data);
 api.approveProfileUpdateRequest = (id) => api.post(`/organization/profile-update/${id}/approve/`);
 api.rejectProfileUpdateRequest = (id) => api.post(`/organization/profile-update/${id}/reject/`);
 

@@ -362,6 +362,13 @@ const EmployeeMoreScreen = ({ navigation }) => {
                     iconColor={colors.primary}
                     onPress={() => navigation.navigate('Profile')}
                 />
+                <MenuRow
+                    title="Profile Update Request"
+                    subtitle="Request a change to your phone number"
+                    icon="user-check"
+                    iconColor={colors.info}
+                    onPress={() => navigation.navigate('ProfileUpdateRequest')}
+                />
 
                 {/* ── Footer ───────────────────────────────────────────────────── */}
                 <View style={styles.footer}>
