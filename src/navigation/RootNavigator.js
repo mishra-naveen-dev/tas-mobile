@@ -21,6 +21,7 @@ import EmployeeMoreScreen from '../screens/Employee/EmployeeMoreScreen';
 import CollectionsScreen from '../screens/Common/CollectionsScreen';
 import CollectionDoneScreen from '../screens/Common/CollectionDoneScreen';
 import CollectionVisitScreen from '../screens/Common/CollectionVisitScreen';
+import HelpSupportScreen from '../screens/Common/HelpSupportScreen';
 
 // Admin Screens
 import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
@@ -121,6 +122,7 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="ProfileUpdateRequest" component={ProfileUpdateRequestScreen} />
         <EmployeeStack.Screen name="MyRequests" component={MyRequestsScreen} />
         <EmployeeStack.Screen name="Notifications" component={NotificationsScreen} />
+        <EmployeeStack.Screen name="HelpSupport" component={HelpSupportScreen} />
     </EmployeeStack.Navigator>
 );
 
@@ -134,6 +136,7 @@ const AdminStackNavigator = () => (
         <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <AdminStack.Screen name="Profile" component={ProfileScreen} />
         <AdminStack.Screen name="Notifications" component={NotificationsScreen} />
+        <AdminStack.Screen name="HelpSupport" component={HelpSupportScreen} />
     </AdminStack.Navigator>
 );
 
@@ -228,6 +231,7 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <SuperAdminStack.Screen name="Profile" component={ProfileScreen} />
         <SuperAdminStack.Screen name="Notifications" component={NotificationsScreen} />
+        <SuperAdminStack.Screen name="HelpSupport" component={HelpSupportScreen} />
     </SuperAdminStack.Navigator>
 );
 

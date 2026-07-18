@@ -217,6 +217,16 @@ const EmployeeMoreScreen = ({ navigation }) => {
                     onPress={() => navigation.navigate('ProfileUpdateRequest')}
                 />
 
+                {/* ── Support ──────────────────────────────────────────────────── */}
+                <SectionLabel title="Support" />
+                <MenuRow
+                    title="Help & Support"
+                    subtitle="Company info, FAQs and IT Technical Support"
+                    icon="help-circle"
+                    iconColor={colors.info}
+                    onPress={() => navigation.navigate('HelpSupport')}
+                />
+
                 {/* ── Footer ───────────────────────────────────────────────────── */}
                 <View style={styles.footer}>
                     <Text style={styles.footerApp}>Traveling Allowance System</Text>

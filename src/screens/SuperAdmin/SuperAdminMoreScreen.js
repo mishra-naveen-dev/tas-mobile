@@ -178,6 +178,15 @@ const SuperAdminMoreScreen = ({ navigation }) => {
                         onPress={() => navigation.navigate('AdminApprovals')}
                     />
 
+                    <SectionTitle title="Support" />
+                    <MenuItem
+                        title="Help & Support"
+                        subtitle="Company info, FAQs and IT Technical Support"
+                        icon="help-circle"
+                        color={colors.info}
+                        onPress={() => navigation.navigate('HelpSupport')}
+                    />
+
                     <View style={styles.footer}>
                         <Text style={styles.footerText}>Traveling Allowance System</Text>
                         <Text style={styles.footerVersion}>Version 1.0.0</Text>

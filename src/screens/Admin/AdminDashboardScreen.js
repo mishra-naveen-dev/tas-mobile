@@ -210,6 +210,13 @@ const AdminDashboardScreen = ({ navigation }) => {
                             color={colors.info}
                             onPress={() => navigation.navigate('DailySummary')}
                         />
+                        <MenuItem
+                            title="Help & Support"
+                            subtitle="Company info, FAQs and IT Technical Support"
+                            icon="help-circle"
+                            color={colors.info}
+                            onPress={() => navigation.navigate('HelpSupport')}
+                        />
                     </View>
 
                     {/* ── Collection Overview ── */}
