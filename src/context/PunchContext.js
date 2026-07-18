@@ -41,7 +41,11 @@ export const PunchProvider = ({ children }) => {
   const [isActive, setIsActive] = useState(false);
   const [capturedLocation, setCapturedLocation] = useState(null);
   const [isMockLocation, setIsMockLocation] = useState(false);
-  
+  // Milestone 2a: the employee's most recent auto-closed session, if any,
+  // that hasn't been submitted for review yet — powers a "request a review"
+  // banner. See apps.punchverification on the backend.
+  const [pendingAutoClosure, setPendingAutoClosure] = useState(null);
+
   const trackingStartTime = useRef(null);
   const routePoints = useRef([]);
 
@@ -82,6 +86,35 @@ export const PunchProvider = ({ children }) => {
       }
     }
   }, []);
+
+  const checkPendingAutoClosure = useCallback(async () => {
+    try {
+      const res = await api.getLastAutoClosure();
+      setPendingAutoClosure(res.data?.pending ? res.data : null);
+    } catch (err) {
+      // Best-effort only — a failure here must never block the punch screen.
+      if (IS_DEV) console.warn('[Punch] checkPendingAutoClosure error:', err.message);
+    }
+  }, []);
+
+  const submitForgotPunchRequest = useCallback(async (employeeRemarks) => {
+    if (!pendingAutoClosure?.session?.id) {
+      return { success: false, error: 'No auto-closed session to submit' };
+    }
+    try {
+      await api.submitForgotPunchRequest({
+        session: pendingAutoClosure.session.id,
+        employee_remarks: employeeRemarks || '',
+      });
+      setPendingAutoClosure(null);
+      return { success: true };
+    } catch (err) {
+      const errorMsg = err?.response?.data?.error ||
+                      err?.response?.data?.detail ||
+                      err?.message || 'Failed to submit review request';
+      return { success: false, error: errorMsg };
+    }
+  }, [pendingAutoClosure]);
 
   const fetchLocation = useCallback(async () => {
     setPunchState(STATES.FETCHING_LOCATION);
@@ -401,7 +434,8 @@ export const PunchProvider = ({ children }) => {
 
   useEffect(() => {
     fetchTodayPunches();
-  }, [fetchTodayPunches]);
+    checkPendingAutoClosure();
+  }, [fetchTodayPunches, checkPendingAutoClosure]);
 
   const value = useMemo(() => ({
     punches,
@@ -427,10 +461,14 @@ export const PunchProvider = ({ children }) => {
     getTotalDistance,
     getTrackingDuration,
     LocationService,
+    pendingAutoClosure,
+    checkPendingAutoClosure,
+    submitForgotPunchRequest,
   }), [
-    punches, loading, error, errorMessage, success, punchState, isActive, 
-    isMockLocation, capturedLocation, fetchTodayPunches, punchIn, punchOut, 
-    fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration
+    punches, loading, error, errorMessage, success, punchState, isActive,
+    isMockLocation, capturedLocation, fetchTodayPunches, punchIn, punchOut,
+    fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration,
+    pendingAutoClosure, checkPendingAutoClosure, submitForgotPunchRequest,
   ]);
 
   return <PunchContext.Provider value={value}>{children}</PunchContext.Provider>;
@@ -464,6 +502,9 @@ export const usePunch = () => {
       getTotalDistance: () => 0,
       getTrackingDuration: () => 0,
       LocationService: null,
+      pendingAutoClosure: null,
+      checkPendingAutoClosure: () => {},
+      submitForgotPunchRequest: () => Promise.resolve({ success: false, error: 'Context not ready' }),
     };
   }
   return ctx;

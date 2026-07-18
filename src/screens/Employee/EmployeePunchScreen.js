@@ -66,6 +66,49 @@ const Banner = ({ message, type, onDismiss }) => {
   );
 };
 
+// Milestone 2a: shown when the employee's last tracking session ended via
+// auto-punch-out (11h max duration / 2.5h inactivity) rather than a manual
+// punch-out — lets them flag it for a Manager/Regional Manager to review
+// against the recorded GPS route instead of relying on remarks alone.
+const AutoClosureBanner = ({ pendingAutoClosure, onSubmit }) => {
+  const [submitting, setSubmitting] = useState(false);
+  if (!pendingAutoClosure?.session) return null;
+
+  const endTime = pendingAutoClosure.session.end_time
+    ? new Date(pendingAutoClosure.session.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '';
+
+  const handlePress = () => {
+    Alert.alert(
+      'Request a Review?',
+      `Your last session ended automatically${endTime ? ` at ${endTime}` : ''}. ` +
+      `A Manager will review the recorded GPS route before approving.`,
+      [
+        { text: 'Not Now', style: 'cancel' },
+        {
+          text: 'Request Review', onPress: async () => {
+            setSubmitting(true);
+            const result = await onSubmit();
+            setSubmitting(false);
+            if (!result.success) {
+              Alert.alert('Could not submit', result.error || 'Please try again later.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  return (
+    <TouchableOpacity style={styles.autoClosureBanner} onPress={handlePress} disabled={submitting}>
+      <Icon name="alert-triangle" size={18} color={colors.warning} />
+      <Text style={styles.autoClosureText}>
+        {submitting ? 'Submitting...' : `Session ended automatically${endTime ? ` at ${endTime}` : ''} — tap to request review`}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
 const GPSBadge = ({ isMock, isFetching }) => {
   if (isFetching) {
     return (
@@ -98,6 +141,7 @@ const EmployeePunchScreen = ({ navigation }) => {
     error, errorMessage, success,
     punchIn, punchOut, fetchLocation, resetForm, dismissError,
     getTotalDistance, getTrackingDuration, LocationService,
+    pendingAutoClosure, submitForgotPunchRequest,
   } = usePunch();
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -479,6 +523,9 @@ const EmployeePunchScreen = ({ navigation }) => {
     <SafeAreaView style={styles.container} edges={['top']}>
       {errorMessage && <Banner message={errorMessage} type="error" onDismiss={dismissError} />}
       {success && <Banner message={isActive ? 'Punch recorded!' : 'Punch Out completed!'} type="success" onDismiss={() => { }} />}
+      {!isActive && (
+        <AutoClosureBanner pendingAutoClosure={pendingAutoClosure} onSubmit={submitForgotPunchRequest} />
+      )}
 
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
@@ -1010,6 +1057,12 @@ const styles = StyleSheet.create({
   errorBg: { backgroundColor: colors.error },
   successBg: { backgroundColor: colors.success },
   bannerText: { flex: 1, fontSize: typography.sizes.sm, color: '#fff', marginHorizontal: spacing.sm },
+  autoClosureBanner: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: colors.warningLight || '#FFF3CD',
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginHorizontal: spacing.md, marginTop: spacing.sm,
+    borderRadius: 10, gap: 8,
+  },
+  autoClosureText: { flex: 1, fontSize: typography.sizes.xs, color: colors.text },
   punchSection: { alignItems: 'center', padding: spacing.lg },
   statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   dot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },

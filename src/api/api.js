@@ -498,6 +498,16 @@ api.sendTrackingHeartbeat = (data) =>
 api.getLiveDailyRoute = (params = {}) =>
     api.get('/livetracking/daily/', { params });
 
+// The employee's most recent auto-closed session with no review request yet
+// (Milestone 2a) — PunchContext polls this to decide whether to show a
+// "request a review" banner.
+api.getLastAutoClosure = () =>
+    api.get('/livetracking/last-auto-closure/');
+
+// Submit a forgot-punch-out review request for an auto-closed session.
+api.submitForgotPunchRequest = (data) =>
+    api.post('/punch-verification/requests/', data);
+
 api.getUserProfile = () => {
     return api.get('/organization/users/me/');
 };
