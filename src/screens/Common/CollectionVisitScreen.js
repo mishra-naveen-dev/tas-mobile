@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Alert, TextInput, Modal, ActivityIndicator, Image, Platform, PermissionsAndroid,
+  Alert, TextInput, Modal, ActivityIndicator, Image, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createSound } from 'react-native-nitro-sound';
 
 import api from '../../api/api';
 import { usePunch } from '../../context/PunchContext';
@@ -15,9 +14,6 @@ import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocati
 import GeocodingService from '../../services/GeocodingService';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import { colors, typography, spacing } from '../../theme/tokens';
-
-const audioRecorderPlayer = createSound();
-const MAX_RECORDING_SECONDS = 120;
 
 // ── Reused presets/options (kept in sync with EmployeePunchScreen.js /
 // CollectionsScreen.js — this screen ports their form logic verbatim rather
@@ -71,20 +67,21 @@ const PHOTO_KINDS = [
 // Per-reason evidence requirements — enforced (hard block) in validate()
 // before "Update & Save" is allowed to submit. Not every reason has a rule;
 // reasons absent here (eKYC, P2P_JLG, free-typed text, ...) have none.
+//
+// audioRequired is temporarily disabled for every reason (including Home
+// Visit) — the in-app conversation recorder (react-native-nitro-sound) hit
+// an upstream native-build bug that blocks Android release builds. Re-enable
+// 'Home Visit': audioRequired: true once that library (or a replacement) is
+// confirmed to build cleanly in release mode again.
 const REASON_MEDIA_REQUIREMENTS = {
   'Collection': { photoKind: 'RECEIPT', minPhotos: 1, audioRequired: false },
-  'Home Visit': { photoKind: 'CUSTOMER', minPhotos: 1, audioRequired: true },
+  'Home Visit': { photoKind: 'CUSTOMER', minPhotos: 1, audioRequired: false },
   'Custil_Aud': { photoKind: 'CUSTOMER', minPhotos: 1, audioRequired: false },
   'CustJLG_Aud': { photoKind: 'CUSTOMER', minPhotos: 1, audioRequired: false },
 };
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-const mmss = (totalSeconds) => {
-  const m = Math.floor(totalSeconds / 60);
-  const s = Math.floor(totalSeconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-};
 
 const CollectionVisitScreen = ({ navigation, route }) => {
   const { collectionId, loanId, customerName, customerAddress, amountDue, initialStatus } = route.params || {};
@@ -127,12 +124,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   const [dupLocationModal, setDupLocationModal] = useState({ visible: false, otherLoanId: '' });
   const [dupLocationReason, setDupLocationReason] = useState('');
   const [dupLocationComment, setDupLocationComment] = useState('');
-
-  // Conversation recording (Home Visit reason) — at most one per visit.
-  const [recordingState, setRecordingState] = useState('idle'); // idle | recording | recorded | playing
-  const [recordingPath, setRecordingPath] = useState(null);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const recordingSecondsRef = useRef(0);
 
   // Synchronous double-tap guard — `saving` (React state) can lag a fast
   // second tap by a frame or two; this ref can't.
@@ -190,17 +181,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
 
   useEffect(() => { fetchLocation(); }, [fetchLocation]);
 
-  // Stop any in-progress recording/playback if the employee navigates away
-  // mid-visit — a leaked native listener/recorder would keep the mic hot.
-  useEffect(() => {
-    return () => {
-      audioRecorderPlayer.stopRecorder().catch(() => {});
-      audioRecorderPlayer.stopPlayer().catch(() => {});
-      audioRecorderPlayer.removeRecordBackListener();
-      audioRecorderPlayer.removePlayBackListener();
-    };
-  }, []);
-
   const updateForm = (key, value) => {
     setForm((prev) => {
       const updated = { ...prev, [key]: value };
@@ -255,93 +235,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const requestAudioPermission = async () => {
-    if (Platform.OS !== 'android') return true;
-    try {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: 'Microphone Permission',
-          message: 'TAS needs microphone access to record the customer conversation for this visit.',
-          buttonPositive: 'Allow',
-        }
-      );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
-    } catch {
-      return false;
-    }
-  };
-
-  const startRecording = async () => {
-    const hasPermission = await requestAudioPermission();
-    if (!hasPermission) {
-      Alert.alert('Permission Needed', 'Microphone access is required to record the conversation.');
-      return;
-    }
-    try {
-      recordingSecondsRef.current = 0;
-      setRecordingSeconds(0);
-      await audioRecorderPlayer.startRecorder();
-      audioRecorderPlayer.addRecordBackListener((e) => {
-        const secs = Math.floor((e.currentPosition || 0) / 1000);
-        recordingSecondsRef.current = secs;
-        setRecordingSeconds(secs);
-        if (secs >= MAX_RECORDING_SECONDS) {
-          stopRecording();
-        }
-      });
-      setRecordingState('recording');
-    } catch (err) {
-      Alert.alert('Error', 'Could not start recording. Please try again.');
-    }
-  };
-
-  const stopRecording = async () => {
-    try {
-      const path = await audioRecorderPlayer.stopRecorder();
-      audioRecorderPlayer.removeRecordBackListener();
-      setRecordingPath(path);
-      setRecordingState('recorded');
-    } catch (err) {
-      audioRecorderPlayer.removeRecordBackListener();
-      setRecordingState('idle');
-    }
-  };
-
-  const playRecording = async () => {
-    if (!recordingPath) return;
-    try {
-      await audioRecorderPlayer.startPlayer(recordingPath);
-      setRecordingState('playing');
-      audioRecorderPlayer.addPlayBackListener((e) => {
-        if (e.currentPosition >= e.duration) {
-          audioRecorderPlayer.stopPlayer();
-          audioRecorderPlayer.removePlayBackListener();
-          setRecordingState('recorded');
-        }
-      });
-    } catch {
-      setRecordingState('recorded');
-    }
-  };
-
-  const stopPlayback = async () => {
-    try {
-      await audioRecorderPlayer.stopPlayer();
-      audioRecorderPlayer.removePlayBackListener();
-    } catch {
-      // no-op — already stopped
-    }
-    setRecordingState('recorded');
-  };
-
-  const deleteRecording = () => {
-    setRecordingPath(null);
-    recordingSecondsRef.current = 0;
-    setRecordingSeconds(0);
-    setRecordingState('idle');
-  };
-
   const validate = () => {
     if (form.status === 'COLLECTED' && form.payment_mode === '') {
       Alert.alert('Required', 'Payment mode is required for a collected visit.');
@@ -372,14 +265,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       if (count < req.minPhotos) {
         const kindLabel = PHOTO_KINDS.find((k) => k.value === req.photoKind)?.label || req.photoKind;
         Alert.alert('Photo Required', `Please add a ${kindLabel} photo for "${form.reason}".`);
-        return false;
-      }
-      if (req.audioRequired && recordingState === 'recording') {
-        Alert.alert('Recording In Progress', 'Please stop the recording before saving.');
-        return false;
-      }
-      if (req.audioRequired && !recordingPath) {
-        Alert.alert('Recording Required', `Please record a short conversation (up to 2 minutes) for "${form.reason}".`);
         return false;
       }
     }
@@ -432,15 +317,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       fd.append('photos', { uri: p.uri, name: p.fileName, type: p.type });
       fd.append('photo_kinds', p.kind);
     });
-
-    if (recordingPath) {
-      fd.append('audio', {
-        uri: Platform.OS === 'android' && !recordingPath.startsWith('file://') ? `file://${recordingPath}` : recordingPath,
-        name: `conversation_${Date.now()}.m4a`,
-        type: 'audio/m4a',
-      });
-      put('audio_duration_seconds', recordingSecondsRef.current);
-    }
 
     return fd;
   };
@@ -757,41 +633,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           })}
         </View>
 
-        {/* Conversation recording — required for Home Visit */}
-        {REASON_MEDIA_REQUIREMENTS[form.reason]?.audioRequired && (
-          <>
-            <Text style={styles.label}>Conversation Recording * (max 2 min)</Text>
-            <View style={styles.audioBox}>
-              {recordingState === 'idle' && (
-                <TouchableOpacity style={styles.audioBtn} onPress={startRecording}>
-                  <Icon name="mic" size={18} color="#fff" />
-                  <Text style={styles.audioBtnText}>Start Recording</Text>
-                </TouchableOpacity>
-              )}
-              {recordingState === 'recording' && (
-                <TouchableOpacity style={[styles.audioBtn, styles.audioBtnStop]} onPress={stopRecording}>
-                  <Icon name="square" size={16} color="#fff" />
-                  <Text style={styles.audioBtnText}>Stop  {mmss(recordingSeconds)} / {mmss(MAX_RECORDING_SECONDS)}</Text>
-                </TouchableOpacity>
-              )}
-              {(recordingState === 'recorded' || recordingState === 'playing') && (
-                <View style={styles.audioPlaybackRow}>
-                  <TouchableOpacity
-                    style={styles.audioPlayBtn}
-                    onPress={recordingState === 'playing' ? stopPlayback : playRecording}
-                  >
-                    <Icon name={recordingState === 'playing' ? 'pause' : 'play'} size={16} color={colors.primary} />
-                  </TouchableOpacity>
-                  <Text style={styles.audioDurationText}>{mmss(recordingSeconds)} recorded</Text>
-                  <TouchableOpacity style={styles.audioDeleteBtn} onPress={deleteRecording}>
-                    <Icon name="trash-2" size={16} color={colors.danger} />
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-          </>
-        )}
-
         {/* Section 8: Travel companion */}
         <Text style={styles.label}>Travel With</Text>
         <View style={styles.chips}>
@@ -954,14 +795,6 @@ const styles = StyleSheet.create({
   photoRemove: { position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center' },
   photoAddBtn: { width: 56, height: 56, borderRadius: 8, borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' },
   photoTimestamp: { fontSize: 9, color: colors.textMuted, marginTop: 2, maxWidth: 70, textAlign: 'center' },
-  audioBox: { marginTop: spacing.xs, marginBottom: spacing.sm },
-  audioBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: spacing.md },
-  audioBtnStop: { backgroundColor: colors.danger },
-  audioBtnText: { color: '#fff', fontWeight: '700', fontSize: typography.sizes.sm },
-  audioPlaybackRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1, borderColor: colors.border, padding: spacing.sm, gap: spacing.sm },
-  audioPlayBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
-  audioDurationText: { flex: 1, fontSize: typography.sizes.sm, color: colors.text },
-  audioDeleteBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   gpsNotice: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.md, marginBottom: spacing.sm, gap: 6 },
   gpsNoticeText: { fontSize: typography.sizes.xs, color: colors.textMuted, flex: 1 },
   saveBtn: { backgroundColor: colors.primary, borderRadius: 12, paddingVertical: spacing.md, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
