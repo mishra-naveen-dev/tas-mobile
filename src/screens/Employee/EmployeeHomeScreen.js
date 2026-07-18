@@ -461,22 +461,41 @@ const EmployeeHomeScreen = ({ navigation }) => {
         try {
             if (!isRefresh) setIsLoading(true);
 
-            const [summaryRes, punchRes, correctionRes, monthlyRes, collectionRes] = await Promise.all([
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const [summaryRes, punchRes, correctionRes, monthlyRes, collectionRes, collectionUpdatesRes] = await Promise.all([
                 api.get('/attendance/punches/daily_summary/'),
                 api.get('/attendance/punches/today_punches/'),
                 api.getCorrectionCounts(),
                 api.getPerformance('monthly').catch(() => null),
                 api.getCollectionDashboardStats().catch(() => null),
-            ]).catch(() => [null, null, null, null, null]);
+                api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }).catch(() => null),
+            ]).catch(() => [null, null, null, null, null, null]);
 
             if (!isMountedRef.current) return;
 
             const liveSummary = summaryRes?.data || {};
             const livePunches = punchRes?.data?.results || punchRes?.data || [];
             const correctionCounts = correctionRes || {};
+            // Field activity (e.g. a collection outcome update) doesn't always
+            // happen inside an explicit punch-tracked GPS session — shape each
+            // update to look like a punch so mapApiResponseToActivities' own
+            // visit_type dispatch (see models/ActivityModel.js) picks it up as
+            // a COLLECTION activity without needing any changes there.
+            const todayCollectionActivities = (collectionUpdatesRes?.data?.results || collectionUpdatesRes?.data || [])
+                .map(c => ({
+                    id: `coll-${c.id}`,
+                    visit_type: 'COLLECTION',
+                    punched_at: c.created_at,
+                    current_address: c.location_address,
+                    latitude: c.latitude,
+                    longitude: c.longitude,
+                    total_amount: c.collected_amount,
+                    client_name: c.customer_name,
+                    reason: c.remarks || c.status_display,
+                }));
 
             setSummary(liveSummary);
-            setPunches(livePunches);
+            setPunches([...livePunches, ...todayCollectionActivities]);
             setCorrectionSummary(correctionCounts);
             setMonthlyCollection(Number(monthlyRes?.data?.total_collection_amount) || 0);
             if (collectionRes?.data) setCollectionStats(collectionRes.data);
@@ -488,7 +507,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 setIsRefreshing(false);
             }
         }
-    }, []);
+    }, [user?.id]);
 
     useFocusEffect(useCallback(() => {
         fetchData(false);

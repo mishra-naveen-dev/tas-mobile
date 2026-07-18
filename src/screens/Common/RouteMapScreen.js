@@ -69,10 +69,14 @@ const RouteMapScreen = ({ navigation, route }) => {
             const liveParams = { date: dateStr };
             if (employeeId) liveParams.employee_id = employeeId;
 
-            // Run both requests in parallel
-            const [punchRes, liveRes] = await Promise.allSettled([
+            const collectionParams = { date_from: dateStr, date_to: dateStr };
+            if (employeeId) collectionParams.updated_by = employeeId;
+
+            // Run all requests in parallel
+            const [punchRes, liveRes, collectionRes] = await Promise.allSettled([
                 api.get('/attendance/punches/', { params: punchParams }),
                 api.getLiveDailyRoute(liveParams),
+                api.getCollectionUpdates(collectionParams),
             ]);
 
             // ── Punch records (markers) ───────────────────────────────────────
@@ -82,8 +86,30 @@ const RouteMapScreen = ({ navigation, route }) => {
                     : Array.isArray(punchRes.value.data?.results)
                     ? punchRes.value.data.results
                     : [];
+
+                // Field activity (e.g. a collection outcome update) doesn't
+                // always happen inside an explicit punch-tracked GPS session
+                // — shape each update to look like a punch (this screen's own
+                // punch_type-based coloring/labeling, see PUNCH_COLORS above,
+                // already has a COLLECTION entry) so it's never silently
+                // dropped from the route/list just because no punch exists.
+                const rawCollections = collectionRes.status === 'fulfilled'
+                    ? (collectionRes.value.data?.results || collectionRes.value.data || [])
+                    : [];
+                const collectionActivities = rawCollections.map(c => ({
+                    id: `coll-${c.id}`,
+                    punch_type: 'COLLECTION',
+                    punched_at: c.created_at,
+                    current_address: c.location_address,
+                    latitude: c.latitude,
+                    longitude: c.longitude,
+                    amount: c.collected_amount,
+                    customer_name: c.customer_name,
+                    reason: c.remarks || c.status_display,
+                }));
+
                 setAllPunches(
-                    [...raw].sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
+                    [...raw, ...collectionActivities].sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
                 );
             }
 

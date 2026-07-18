@@ -642,4 +642,10 @@ api.updateCollectionStatus = (id, data) =>
 api.getCollectionDashboardStats = () =>
     api.get('/loans/collections/dashboard_stats/');
 
+// History of collection updates (an employee's outcome entries on a
+// collection record) — used to surface today's field activity even when it
+// didn't happen inside an explicit punch-tracked GPS session.
+api.getCollectionUpdates = (params = {}) =>
+    api.get('/loans/collection-updates/', { params });
+
 export default api;
