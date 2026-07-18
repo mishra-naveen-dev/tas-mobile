@@ -29,7 +29,7 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
             const res = await api.get('/organization/profile-update/');
             setUserData(res.data);
         } catch (err) {
-            console.log('Error fetching user:', err.message);
+            if (__DEV__) console.log('Error fetching user:', err.message);
         }
     };
 
@@ -42,7 +42,7 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
                 setFilteredEmployees(res.data);
             }
         } catch (err) {
-            console.log('Error fetching employees:', err);
+            if (__DEV__) console.log('Error fetching employees:', err);
         } finally {
             setLoading(false);
             setRefreshing(false);

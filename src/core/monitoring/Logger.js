@@ -77,19 +77,22 @@ class Logger {
       this.logs.shift();
     }
 
-    // Console output
-    const timestamp = new Date(log.timestamp).toLocaleTimeString();
-    const formattedMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
-    
-    switch (level) {
-      case 'error':
-        console.error(formattedMessage, data || '', context || {});
-        break;
-      case 'warn':
-        console.warn(formattedMessage, data || '', context || {});
-        break;
-      default:
-        console.log(formattedMessage, data || '', context || {});
+    // Console output — dev builds only. Logs are still persisted to
+    // AsyncStorage (below) regardless, for in-app log viewing/export.
+    if (__DEV__) {
+      const timestamp = new Date(log.timestamp).toLocaleTimeString();
+      const formattedMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+
+      switch (level) {
+        case 'error':
+          console.error(formattedMessage, data || '', context || {});
+          break;
+        case 'warn':
+          console.warn(formattedMessage, data || '', context || {});
+          break;
+        default:
+          console.log(formattedMessage, data || '', context || {});
+      }
     }
 
     // Notify listeners

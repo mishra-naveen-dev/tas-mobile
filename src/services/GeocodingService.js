@@ -97,7 +97,7 @@ class GeocodingService {
       ]);
 
       if (!fromResult?.latitude || !toResult?.latitude) {
-        console.log('[DistanceCalc] Could not geocode addresses');
+        if (__DEV__) console.log('[DistanceCalc] Could not geocode addresses');
         return 0;
       }
 
@@ -115,7 +115,7 @@ class GeocodingService {
         if (element.status === 'OK') {
           // Distance in meters, convert to km
           const distanceKm = element.distance.value / 1000;
-          console.log('[DistanceCalc] Google API:', distanceKm, 'km');
+          if (__DEV__) console.log('[DistanceCalc] Google API:', distanceKm, 'km');
           return Math.round(distanceKm * 100) / 100;
         }
       }
@@ -125,11 +125,11 @@ class GeocodingService {
         fromResult.latitude, fromResult.longitude,
         toResult.latitude, toResult.longitude
       );
-      console.log('[DistanceCalc] Haversine fallback:', haversineDistance, 'km');
+      if (__DEV__) console.log('[DistanceCalc] Haversine fallback:', haversineDistance, 'km');
       return haversineDistance;
 
     } catch (error) {
-      console.log('[DistanceCalc] Error:', error.message);
+      if (__DEV__) console.log('[DistanceCalc] Error:', error.message);
       return 0;
     }
   }

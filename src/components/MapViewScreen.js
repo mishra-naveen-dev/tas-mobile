@@ -44,7 +44,7 @@ const MapViewScreen = ({ navigation, route }) => {
         .sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at));
       setPunches(sorted);
     } catch (err) {
-      console.log('Failed to fetch punches:', err);
+      if (__DEV__) console.log('Failed to fetch punches:', err);
     } finally {
       setIsLoading(false);
     }
@@ -61,7 +61,7 @@ const MapViewScreen = ({ navigation, route }) => {
         animateToLocation(result.latitude, result.longitude);
       }
     } catch (err) {
-      console.log('Failed to get location:', err);
+      if (__DEV__) console.log('Failed to get location:', err);
     }
   };
 
@@ -170,7 +170,6 @@ const MapViewScreen = ({ navigation, route }) => {
         showsCompass={true}
         showsScale={true}
         onMapReady={() => setMapReady(true)}
-        onPress={(e) => console.log('Map pressed:', e.nativeEvent.coordinate)}
       >
         {coordinates.map((c, i) => (
           <Marker

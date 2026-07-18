@@ -138,7 +138,7 @@ const SuperAdminHomeScreen = ({ navigation }) => {
                 setCollStats(collRes.value.data);
             }
         } catch (err) {
-            console.log('Error fetching stats:', err);
+            if (__DEV__) console.log('Error fetching stats:', err);
         } finally {
             setLoading(false);
         }

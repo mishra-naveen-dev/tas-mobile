@@ -91,7 +91,7 @@ const CollectionDoneScreen = ({ navigation }) => {
             setPage(pageNum);
             setHasMore(!!data?.next);
         } catch (err) {
-            console.log('Collection Done fetch error:', err);
+            if (__DEV__) console.log('Collection Done fetch error:', err);
             setHasError(true);
             if (pageNum === 1) setHasMore(false);
         } finally {

@@ -108,7 +108,7 @@ class LocationService {
   }
 
   static getMockLocation() {
-    console.log('[Location] Using mock location (Dev mode)');
+    if (__DEV__) console.log('[Location] Using mock location (Dev mode)');
     return {
       latitude: CONFIG.mockLocation.latitude,
       longitude: CONFIG.mockLocation.longitude,
@@ -127,7 +127,7 @@ class LocationService {
   }
 
   static async getCurrentLocation() {
-    console.log('[Location] Fetching current location...');
+    if (__DEV__) console.log('[Location] Fetching current location...');
 
     const status = await this.requestForegroundStatus();
     if (status !== 'granted') {
@@ -180,7 +180,7 @@ class LocationService {
             return;
           }
 
-          console.log('[Location] GPS success:', latitude.toFixed(4), longitude.toFixed(4));
+          if (__DEV__) console.log('[Location] GPS success:', latitude.toFixed(4), longitude.toFixed(4));
 
           resolve({
             latitude,
@@ -205,7 +205,7 @@ class LocationService {
           console.error('[Location] GPS error:', error.code, error.message);
 
           if (CONFIG.mockEnabled) {
-            console.log('[Location] Falling back to mock');
+            if (__DEV__) console.log('[Location] Falling back to mock');
             resolve(this.getMockLocation());
           } else {
             // code 1 = permission, 2 = location services (GPS) off, 3 = timeout
@@ -287,7 +287,7 @@ class LocationService {
 
   static async startTracking() {
     if (this.isTracking) {
-      console.log('[Location] Already tracking');
+      if (__DEV__) console.log('[Location] Already tracking');
       return { success: true };
     }
 
@@ -335,7 +335,7 @@ class LocationService {
             if (this.routePoints.length > 500) this.routePoints.shift();
 
             this.notifyListeners(point);
-            console.log('[Location] Route point:', this.routePoints.length);
+            if (__DEV__) console.log('[Location] Route point:', this.routePoints.length);
           } catch (err) {
             console.error('[Location] Point error:', err);
           }
@@ -352,7 +352,7 @@ class LocationService {
       );
 
       this.isTracking = true;
-      console.log('[Location] Tracking started');
+      if (__DEV__) console.log('[Location] Tracking started');
       return { success: true };
     } catch (err) {
       console.error('[Location] Start tracking failed:', err);
@@ -367,7 +367,7 @@ class LocationService {
         this.watchId = null;
       }
       this.isTracking = false;
-      console.log('[Location] Tracking stopped');
+      if (__DEV__) console.log('[Location] Tracking stopped');
     } catch (err) {
       console.error('[Location] Stop tracking error:', err);
       this.watchId = null;

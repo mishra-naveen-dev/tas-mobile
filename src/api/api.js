@@ -141,7 +141,12 @@ api.interceptors.request.use(async (config) => {
     config.headers['X-PLATFORM'] = getPlatform();
     config.headers['X-DEVICE-INFO'] = JSON.stringify(deviceInfo);
     config.headers['X-APP-VERSION'] = '1.0.0';
-    config.headers['Content-Type'] = 'application/json';
+    // Leave FormData bodies (photo/file uploads) alone — axios needs to set
+    // its own multipart boundary, which forcing 'application/json' here
+    // would silently clobber, corrupting the upload.
+    if (!(config.data instanceof FormData)) {
+        config.headers['Content-Type'] = 'application/json';
+    }
 
     return config;
 });
@@ -647,5 +652,12 @@ api.getCollectionDashboardStats = () =>
 // didn't happen inside an explicit punch-tracked GPS session.
 api.getCollectionUpdates = (params = {}) =>
     api.get('/loans/collection-updates/', { params });
+
+// Unified Collection Visit: one punch + one collection-status update (+
+// optional photos) in a single transactional request. `formData` must be a
+// FormData instance (see CollectionVisitScreen) — the request interceptor
+// above leaves its Content-Type alone so axios can set the multipart boundary.
+api.completeVisit = (collectionId, formData) =>
+    api.post(`/loans/collections/${collectionId}/complete_visit/`, formData);
 
 export default api;

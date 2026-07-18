@@ -657,17 +657,22 @@ const CollectionsScreen = ({ route }) => {
         });
     }, [mapRecords, mapSearch]);
 
-    const openUpdate = (record) => {
-        setForm({
-            status: record.status || 'PENDING',
-            collected_amount: record.collected_amount != null ? String(record.collected_amount) : '',
-            remarks: record.remarks || '',
-            promise_date: record.promise_date ? new Date(record.promise_date) : null,
-            visit_reason: record.visit_reason || '',
-            visit_dpd_bucket: record.visit_dpd_bucket || '',
+    // Unified Collection Visit flow: hands off to CollectionVisitScreen (one
+    // combined punch + collection-status screen) instead of opening the
+    // in-screen modal below. The modal/save() logic is left in place,
+    // untouched, purely so the standalone update_status() API path this
+    // screen used to drive keeps working unmodified for any other caller —
+    // it's just no longer reachable from this button.
+    const openUpdate = useCallback((record) => {
+        navigation.navigate('CollectionVisit', {
+            collectionId: record.id,
+            loanId: record.loan_id,
+            customerName: record.customer_name,
+            customerAddress: [record.address, record.area, record.pincode].filter(Boolean).join(', '),
+            amountDue: record.amount_due,
+            initialStatus: record.status,
         });
-        setModal({ open: true, record });
-    };
+    }, [navigation]);
 
     // Deep link: jump straight to a specific customer (e.g. from a
     // "customer assigned to you" notification). Prefer the already-loaded
@@ -688,7 +693,7 @@ const CollectionsScreen = ({ route }) => {
                 .then(res => { if (res?.data) openUpdate(res.data); })
                 .catch(() => Alert.alert('Not Found', 'This customer record could not be loaded.'));
         }
-    }, [deepLinkCollectionId, records, loading]);
+    }, [deepLinkCollectionId, records, loading, openUpdate]);
 
     const navigateToCustomer = useCallback((r) => {
         // Destination priority:

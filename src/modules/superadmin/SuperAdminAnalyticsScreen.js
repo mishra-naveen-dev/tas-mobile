@@ -47,7 +47,7 @@ const SuperAdminAnalyticsScreen = ({ navigation }) => {
                 weekPunches,
             });
         } catch (err) {
-            console.log('Error fetching analytics');
+            if (__DEV__) console.log('Error fetching analytics');
         }
     };
 

@@ -20,6 +20,7 @@ import EmployeeCorrectionScreen from '../screens/Employee/EmployeeCorrectionScre
 import EmployeeMoreScreen from '../screens/Employee/EmployeeMoreScreen';
 import CollectionsScreen from '../screens/Common/CollectionsScreen';
 import CollectionDoneScreen from '../screens/Common/CollectionDoneScreen';
+import CollectionVisitScreen from '../screens/Common/CollectionVisitScreen';
 
 // Admin Screens
 import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
@@ -106,6 +107,7 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="EmployeeTabs" component={EmployeeTabNavigator} />
         <EmployeeStack.Screen name="Punch" component={EmployeePunchScreen} />
         <EmployeeStack.Screen name="CollectionDone" component={CollectionDoneScreen} />
+        <EmployeeStack.Screen name="CollectionVisit" component={CollectionVisitScreen} />
         <EmployeeStack.Screen name="RouteMap" component={RouteMapScreen} />
         <EmployeeStack.Screen name="PunchHistory" component={PunchHistoryScreen} />
         <EmployeeStack.Screen name="PunchCorrection" component={PunchCorrectionScreen} />

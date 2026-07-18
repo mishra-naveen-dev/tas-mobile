@@ -310,6 +310,36 @@ export const PunchProvider = ({ children }) => {
     }
   }, [fetchTodayPunches]);
 
+  // Called by the unified Collection Visit flow (CollectionVisitScreen) after
+  // api.completeVisit() succeeds — that endpoint already did the actual
+  // PUNCH_IN server-side (via AttendancePunchViewSet.create(), reused
+  // internally), so this just mirrors punchIn()'s success branch (client
+  // state + starting the background tracking engine) instead of re-punching.
+  const registerExternalPunchIn = useCallback(async (responseData, locationData = {}) => {
+    setIsActive(true);
+    setPunchState(STATES.IDLE);
+    setSuccess(true);
+    trackingStartTime.current = Date.now();
+    routePoints.current = [];
+
+    LocationService.startTracking().catch((e) => {
+      if (IS_DEV) console.warn('[Punch] Local distance tracking error:', e.message);
+    });
+
+    const liveSessionId = responseData?.live_session_id;
+    if (liveSessionId) {
+      LiveTrackingService.attach(liveSessionId, {
+        battery_level: locationData.battery_level ?? null,
+      }).catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Live attach error:', e.message);
+      });
+    } else if (IS_DEV) {
+      console.warn('[Punch] No live_session_id on complete_visit response — background tracking not started');
+    }
+
+    await fetchTodayPunches();
+  }, [fetchTodayPunches]);
+
   const punchOut = useCallback(async () => {
     setPunchState(STATES.PUNCHING_OUT);
     setErrorMessage(null);
@@ -454,6 +484,7 @@ export const PunchProvider = ({ children }) => {
     addPunch: punchIn,
     punchIn,
     punchOut,
+    registerExternalPunchIn,
     fetchLocation,
     resetForm,
     dismissError,
@@ -466,7 +497,7 @@ export const PunchProvider = ({ children }) => {
     submitForgotPunchRequest,
   }), [
     punches, loading, error, errorMessage, success, punchState, isActive,
-    isMockLocation, capturedLocation, fetchTodayPunches, punchIn, punchOut,
+    isMockLocation, capturedLocation, fetchTodayPunches, punchIn, punchOut, registerExternalPunchIn,
     fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration,
     pendingAutoClosure, checkPendingAutoClosure, submitForgotPunchRequest,
   ]);
@@ -495,6 +526,7 @@ export const usePunch = () => {
       addPunch: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       punchIn: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       punchOut: () => Promise.resolve({ success: false, error: 'Context not ready' }),
+      registerExternalPunchIn: () => Promise.resolve(),
       fetchLocation: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       resetForm: () => {},
       dismissError: () => {},
