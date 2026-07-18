@@ -4,7 +4,6 @@ import api from '../api/api';
 import LocationService from '../services/LocationService';
 import { captureFieldActivityLocation } from '../hooks/useFieldActivityLocation';
 import GeocodingService from '../services/GeocodingService';
-import BackgroundTrackingService from '../services/BackgroundTrackingService';
 import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
 
@@ -213,18 +212,31 @@ export const PunchProvider = ({ children }) => {
       trackingStartTime.current = Date.now();
       routePoints.current = [];
 
-      // Auto-start background route tracking using the session created by the backend
-      const trackingSessionId = res.data?.tracking_session_id;
-      if (trackingSessionId) {
-        BackgroundTrackingService.start(trackingSessionId).catch((e) => {
-          if (IS_DEV) console.warn('[Punch] BTS start error:', e.message);
-        });
-      }
-
-      // Separate live route tracker (10s GPS pings) — independent session.
-      LiveTrackingService.start().catch((e) => {
-        if (IS_DEV) console.warn('[Punch] Live start error:', e.message);
+      // Lightweight, foreground-only live-distance counter powering the "Live
+      // Stats" card on screen (getTotalDistance() below) — independent of the
+      // server-orchestrated tracking engine, which is what actually keeps
+      // recording once the app is backgrounded/killed (see LiveTrackingService
+      // below). Not battery-critical since it only runs while this screen is
+      // open, so a plain JS watch is fine here.
+      LocationService.startTracking().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Local distance tracking error:', e.message);
       });
+
+      // Server-orchestrated GPS tracking engine (Milestone 1): the backend
+      // already opened this employee's LiveSession as part of the punch-in
+      // call above (apps.livetracking.orchestration.start_session_for_punch)
+      // — attach() hands that existing session id to the native/background
+      // capture path instead of opening a second one.
+      const liveSessionId = res.data?.live_session_id;
+      if (liveSessionId) {
+        LiveTrackingService.attach(liveSessionId, {
+          battery_level: locationData.battery_level ?? null,
+        }).catch((e) => {
+          if (IS_DEV) console.warn('[Punch] Live attach error:', e.message);
+        });
+      } else if (IS_DEV) {
+        console.warn('[Punch] No live_session_id on punch-in response — background tracking not started');
+      }
 
       await fetchTodayPunches();
 
@@ -327,14 +339,16 @@ export const PunchProvider = ({ children }) => {
 
       if (IS_DEV) console.log('[Punch] Submitting punch out:', JSON.stringify(payload, null, 2));
 
-      // Flush remaining GPS points to backend before submitting punch-out
-      await BackgroundTrackingService.stop().catch((e) => {
-        if (IS_DEV) console.warn('[Punch] BTS stop error:', e.message);
+      // Stop the local distance-stat tracker.
+      await LocationService.stopTracking().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Local distance tracking stop error:', e.message);
       });
 
-      // Stop the separate live route tracker and flush remaining pings.
-      await LiveTrackingService.stop().catch((e) => {
-        if (IS_DEV) console.warn('[Punch] Live stop error:', e.message);
+      // Detach from the server-orchestrated tracking engine — flushes any
+      // buffered points and stops native capture. The backend itself closes
+      // the LiveSession as part of the punch-out call below.
+      await LiveTrackingService.detach().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Live detach error:', e.message);
       });
 
       await api.post('/attendance/punches/', payload);

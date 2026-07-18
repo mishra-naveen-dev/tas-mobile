@@ -483,6 +483,17 @@ api.sendLivePoints = (data) =>
 api.getActiveLiveSession = () =>
     api.get('/livetracking/sessions/active/');
 
+// Backend-driven tracking config (interval/thresholds/durations) — fetched
+// at app start, on punch-in, and after a native service restart.
+api.getTrackingConfig = () =>
+    api.get('/livetracking/config/');
+
+// Non-GPS lifecycle events (app/service restart, network/GPS lost-restored,
+// manual interaction) — counts as "activity" for the auto-punch-out watcher
+// exactly like a real GPS point does.
+api.sendTrackingHeartbeat = (data) =>
+    api.post('/livetracking/heartbeat/', data);
+
 // Coordinates for one day. Pass { date, employee_id? }.
 api.getLiveDailyRoute = (params = {}) =>
     api.get('/livetracking/daily/', { params });
