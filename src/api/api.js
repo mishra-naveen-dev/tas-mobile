@@ -95,11 +95,13 @@ const getPlatform = () => {
 const getDeviceInfo = async () => {
     try {
         const model = await DeviceInfo.getModel();
+        const manufacturer = await DeviceInfo.getManufacturer();
         const systemVersion = await DeviceInfo.getSystemVersion();
         const appVersion = await DeviceInfo.getVersion();
-        
+
         return {
             model,
+            manufacturer,
             os: Platform.OS,
             osVersion: systemVersion,
             appVersion
@@ -107,6 +109,7 @@ const getDeviceInfo = async () => {
     } catch (error) {
         return {
             model: 'Unknown',
+            manufacturer: 'Unknown',
             os: Platform.OS,
             osVersion: 'Unknown',
             appVersion: '1.0.0'
@@ -541,6 +544,10 @@ api.approveDevice = (id) => api.post(`/organization/devices/${id}/approve/`);
 api.rejectDevice = (id) => api.post(`/organization/devices/${id}/reject/`);
 api.blockDevice = (id) => api.post(`/organization/devices/${id}/block/`);
 api.resetDevice = (id) => api.post(`/organization/devices/${id}/reset/`);
+
+// Application Activity (app open/close lifecycle) — see ApplicationActivityService.
+api.startAppSession = (payload) => api.post('/organization/devices/app_session_start/', payload);
+api.endAppSession = (payload) => api.post('/organization/devices/app_session_end/', payload);
 
 api.getAllowanceRequests = (params = {}) => api.get('/allowance/requests/', { params });
 api.approveAllowanceRequest = (id) => api.post(`/allowance/requests/${id}/approve/`);

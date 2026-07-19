@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { PunchProvider } from './src/context/PunchContext';
 import { NotificationProvider, useNotification, NotificationDuration } from './src/common/components/NotificationProvider';
 import SSEClient from './src/services/SSEClient';
+import ApplicationActivityService from './src/services/ApplicationActivityService';
 import { colors } from './src/theme/tokens';
 import SplashScreen from './src/components/SplashScreen';
 
@@ -65,6 +66,15 @@ const AppContent = () => {
         });
         return unsubscribe;
     }, [notify]);
+
+    // App open/close (foreground/background) session tracking for Device
+    // Management's Application Activity feature — only meaningful once
+    // logged in, same gating PunchProvider itself needs below.
+    useEffect(() => {
+        if (!auth.isAuthenticated) return;
+        ApplicationActivityService.start();
+        return () => ApplicationActivityService.stop();
+    }, [auth.isAuthenticated]);
 
     // Show splash until BOTH the animation finishes AND auth has initialized.
     // Auth check runs in parallel — the longer of the two wins.
