@@ -667,4 +667,26 @@ api.getCollectionUpdates = (params = {}) =>
 api.completeVisit = (collectionId, formData) =>
     api.post(`/loans/collections/${collectionId}/complete_visit/`, formData);
 
+// ── Customer Map ──
+// `bounds` must be { min_lat, max_lat, min_lng, max_lng }; `params` carries
+// the usual CollectionRecordFilter params (status, dpd_bucket, risk_category,
+// branch_name, product_type) plus optional user_lat/user_lng/radius_km.
+api.getMapMarkers = (bounds, params = {}) =>
+    api.get('/loans/collections/map_markers/', { params: { ...bounds, ...params } });
+
+api.getMapDetail = (id, params = {}) =>
+    api.get(`/loans/collections/${id}/map_detail/`, { params });
+
+api.getEta = (id, userLat, userLng) =>
+    api.get(`/loans/collections/${id}/eta/`, { params: { user_lat: userLat, user_lng: userLng } });
+
+api.getMapSearch = (query, params = {}) =>
+    api.get('/loans/collections/map_search/', { params: { q: query, ...params } });
+
+api.getNearbyEmployees = (params = {}) =>
+    api.get('/loans/collections/nearby_employees/', { params });
+
+api.setRiskCategory = (id, riskCategory) =>
+    api.post(`/loans/collections/${id}/set_risk_category/`, { risk_category: riskCategory });
+
 export default api;

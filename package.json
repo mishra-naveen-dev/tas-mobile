@@ -30,7 +30,8 @@
     "react-native-screens": "^4.24.0",
     "react-native-svg": "^15.15.5",
     "react-native-vector-icons": "^10.3.0",
-    "react-native-webview": "^14.0.1"
+    "react-native-webview": "^14.0.1",
+    "rn-maps-clustering": "^0.1.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
