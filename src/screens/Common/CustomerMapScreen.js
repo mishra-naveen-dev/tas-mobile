@@ -186,6 +186,30 @@ const CustomerMapScreen = ({ navigation }) => {
         }
     }, []);
 
+    // Recenter on the employee's current location — same crosshair pattern
+    // CollectionsScreen's map uses.
+    const recenterToMyLocation = useCallback(async () => {
+        try {
+            const loc = await LocationService.getCurrentLocation();
+            if (loc?.latitude && loc?.longitude && !loc?.error) {
+                const here = { latitude: loc.latitude, longitude: loc.longitude };
+                setUserLocation(here);
+                const next = { ...here, latitudeDelta: 0.05, longitudeDelta: 0.05 };
+                setRegion(next);
+                mapRef.current?.animateToRegion(next, 500);
+                recomputeClusters(next);
+                fetchMarkers(next);
+                return;
+            }
+        } catch (_) {}
+        Alert.alert('Location unavailable', 'Could not detect your current location.');
+    }, [fetchMarkers, recomputeClusters]);
+
+    // Manual refresh — reloads markers for whatever's currently on screen.
+    const onRefresh = useCallback(() => {
+        fetchMarkers(region);
+    }, [fetchMarkers, region]);
+
     // Filter changes refetch the current viewport immediately (no debounce —
     // these are deliberate taps, not rapid pan/zoom gestures).
     useEffect(() => {
@@ -354,6 +378,9 @@ const CustomerMapScreen = ({ navigation }) => {
                         {truncated ? ' · zoom in for more' : ''}
                     </Text>
                 </View>
+                <TouchableOpacity onPress={onRefresh} style={styles.refreshBtn} disabled={loading}>
+                    <Icon name="refresh-cw" size={20} color={loading ? colors.textLight : colors.primary} />
+                </TouchableOpacity>
             </View>
 
             <View style={styles.searchRow}>
@@ -447,6 +474,10 @@ const CustomerMapScreen = ({ navigation }) => {
                             <ActivityIndicator size="small" color={colors.primary} />
                         </View>
                     )}
+
+                    <TouchableOpacity style={styles.recenterBtn} onPress={recenterToMyLocation} activeOpacity={0.75}>
+                        <Icon name="crosshair" size={20} color={colors.primary} />
+                    </TouchableOpacity>
 
                     {employeeLayerAvailable && (
                         <TouchableOpacity
@@ -660,6 +691,7 @@ const styles = StyleSheet.create({
         borderBottomColor: colors.border,
     },
     backBtn: { padding: spacing.xs, marginRight: spacing.xs },
+    refreshBtn: { padding: spacing.xs, marginLeft: spacing.xs },
     headerTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     headerSub: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
 
@@ -735,6 +767,14 @@ const styles = StyleSheet.create({
         ...shadows.md,
     },
     employeeLayerBtnActive: { backgroundColor: colors.info },
+    // Stacked directly above employeeLayerBtn (60 = its bottom offset + height)
+    // so the two floating buttons never overlap regardless of role.
+    recenterBtn: {
+        position: 'absolute', right: spacing.md, bottom: 60 + spacing.sm,
+        width: 44, height: 44, borderRadius: 22,
+        backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
+        ...shadows.md,
+    },
 
     legendScroll: { maxHeight: 40, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
     legendRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, gap: spacing.md, height: 40 },

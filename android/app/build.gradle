@@ -89,8 +89,8 @@ android {
         applicationId "com.tasmobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 17
-        versionName "1.16"
+        versionCode 18
+        versionName "1.17"
         manifestPlaceholders = [MAPS_API_KEY: dotenvProps.getProperty("GOOGLE_MAPS_API_KEY", "")]
     }
     // The app's CMake build pulls in every autolinked codegen library (e.g.
