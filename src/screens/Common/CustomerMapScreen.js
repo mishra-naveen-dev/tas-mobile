@@ -21,16 +21,8 @@ import LocationService from '../../services/LocationService';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 
-// Risk-first marker coloring — falls back to the same status colors
-// CollectionsScreen's PIN_COLOR uses, for records that predate risk_category
-// or haven't been recomputed by the nightly Celery task yet.
-const RISK_COLOR = {
-    LOW: '#4CAF50',
-    MEDIUM: '#FF9800',
-    HIGH: '#F44336',
-    LEGAL: '#7B1FA2',
-    WRITE_OFF: '#424242',
-};
+// Marker coloring by collection status — matches CollectionsScreen's
+// PIN_COLOR convention. (Risk-category coloring/filtering removed for now.)
 const STATUS_FALLBACK_COLOR = {
     VISITED: '#2196F3',
     COLLECTED: '#4CAF50',
@@ -38,16 +30,7 @@ const STATUS_FALLBACK_COLOR = {
     NOT_PAID: '#F44336',
     PENDING: '#9E9E9E',
 };
-const markerColorFor = (m) => RISK_COLOR[m.risk_category] || STATUS_FALLBACK_COLOR[m.status] || STATUS_FALLBACK_COLOR.PENDING;
-
-const RISK_FILTER_OPTIONS = [
-    { value: 'ALL', label: 'All Risk' },
-    { value: 'LOW', label: 'Low' },
-    { value: 'MEDIUM', label: 'Medium' },
-    { value: 'HIGH', label: 'High' },
-    { value: 'LEGAL', label: 'Legal' },
-    { value: 'WRITE_OFF', label: 'Write Off' },
-];
+const markerColorFor = (m) => STATUS_FALLBACK_COLOR[m.status] || STATUS_FALLBACK_COLOR.PENDING;
 
 const STATUS_FILTER_OPTIONS = [
     { value: 'ALL', label: 'All' },
@@ -110,7 +93,6 @@ const CustomerMapScreen = ({ navigation }) => {
     const [truncated, setTruncated] = useState(false);
     const [totalMatching, setTotalMatching] = useState(0);
 
-    const [riskFilter, setRiskFilter] = useState('ALL');
     const [statusFilter, setStatusFilter] = useState('ALL');
     const [filterVisible, setFilterVisible] = useState(false);
 
@@ -135,7 +117,6 @@ const CustomerMapScreen = ({ navigation }) => {
 
     const buildFilterParams = useCallback(() => {
         const params = {};
-        if (riskFilter !== 'ALL') params.risk_category = riskFilter;
         if (statusFilter !== 'ALL') params.status = statusFilter;
         if (radiusEnabled && userLocation) {
             params.user_lat = userLocation.latitude;
@@ -143,7 +124,7 @@ const CustomerMapScreen = ({ navigation }) => {
             params.radius_km = radiusKm;
         }
         return params;
-    }, [riskFilter, statusFilter, radiusEnabled, userLocation, radiusKm]);
+    }, [statusFilter, radiusEnabled, userLocation, radiusKm]);
 
     // Bumped per request so a slow, superseded response can never clobber a
     // faster, newer one — same stale-response guard CollectionsScreen uses.
@@ -210,7 +191,7 @@ const CustomerMapScreen = ({ navigation }) => {
     useEffect(() => {
         fetchMarkers(region);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [riskFilter, statusFilter, radiusEnabled, radiusKm]);
+    }, [statusFilter, radiusEnabled, radiusKm]);
 
     useEffect(() => {
         return () => { if (regionFetchTimerRef.current) clearTimeout(regionFetchTimerRef.current); };
@@ -484,9 +465,9 @@ const CustomerMapScreen = ({ navigation }) => {
             </View>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.legendScroll} contentContainerStyle={styles.legendRow}>
-                {RISK_FILTER_OPTIONS.filter(o => o.value !== 'ALL').map(opt => (
+                {STATUS_FILTER_OPTIONS.filter(o => o.value !== 'ALL').map(opt => (
                     <View key={opt.value} style={styles.legendItem}>
-                        <View style={[styles.legendDot, { backgroundColor: RISK_COLOR[opt.value] }]} />
+                        <View style={[styles.legendDot, { backgroundColor: STATUS_FALLBACK_COLOR[opt.value] }]} />
                         <Text style={styles.legendText}>{opt.label}</Text>
                     </View>
                 ))}
@@ -504,19 +485,6 @@ const CustomerMapScreen = ({ navigation }) => {
                         </View>
 
                         <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
-                            <Text style={styles.filterLabel}>Risk Category</Text>
-                            <View style={styles.chipRow}>
-                                {RISK_FILTER_OPTIONS.map(opt => (
-                                    <TouchableOpacity
-                                        key={opt.value}
-                                        style={[styles.chip, riskFilter === opt.value && styles.chipActive]}
-                                        onPress={() => setRiskFilter(opt.value)}
-                                    >
-                                        <Text style={[styles.chipText, riskFilter === opt.value && styles.chipTextActive]}>{opt.label}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
-
                             <Text style={styles.filterLabel}>Status</Text>
                             <View style={styles.chipRow}>
                                 {STATUS_FILTER_OPTIONS.map(opt => (
@@ -609,15 +577,6 @@ const CustomerMapScreen = ({ navigation }) => {
                                     <View style={styles.detailRow}>
                                         <Icon name="alert-circle" size={14} color={colors.warning} />
                                         <Text style={styles.detailRowText}>DPD: {detail.dpd_days} days{detail.dpd_bucket ? ` (${detail.dpd_bucket})` : ''}</Text>
-                                    </View>
-                                )}
-                                {!!detail.risk_category && (
-                                    <View style={styles.detailRow}>
-                                        <View style={[styles.riskBadge, { backgroundColor: (RISK_COLOR[detail.risk_category] || colors.textMuted) + '20' }]}>
-                                            <Text style={[styles.riskBadgeText, { color: RISK_COLOR[detail.risk_category] || colors.textMuted }]}>
-                                                {RISK_FILTER_OPTIONS.find(o => o.value === detail.risk_category)?.label || detail.risk_category} Risk
-                                            </Text>
-                                        </View>
                                     </View>
                                 )}
                                 {!!detail.branch_name && (
@@ -811,8 +770,6 @@ const styles = StyleSheet.create({
     detailSub: { fontSize: typography.sizes.sm, color: colors.textMuted, marginBottom: spacing.sm },
     detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
     detailRowText: { fontSize: typography.sizes.sm, color: colors.textMedium, flex: 1 },
-    riskBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.full },
-    riskBadgeText: { fontSize: typography.sizes.xs, fontWeight: typography.weights.bold },
     etaBox: {
         flexDirection: 'row', alignItems: 'center', gap: 8,
         backgroundColor: colors.successLight, borderRadius: borderRadius.md,
