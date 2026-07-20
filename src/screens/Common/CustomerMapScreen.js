@@ -94,7 +94,7 @@ class MapErrorBoundary extends Component {
     }
 }
 
-const CustomerMapScreen = () => {
+const CustomerMapScreen = ({ navigation }) => {
     const { isManager } = useAuth();
     const employeeLayerAvailable = !!isManager;
 
@@ -363,11 +363,16 @@ const CustomerMapScreen = () => {
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Customer Map</Text>
-                <Text style={styles.headerSub}>
-                    {loading ? 'Loading…' : `${totalMatching} customer${totalMatching === 1 ? '' : 's'} in view`}
-                    {truncated ? ' · zoom in for more' : ''}
-                </Text>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                    <Icon name="arrow-left" size={22} color={colors.textDark} />
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                    <Text style={styles.headerTitle}>Customer Map</Text>
+                    <Text style={styles.headerSub}>
+                        {loading ? 'Loading…' : `${totalMatching} customer${totalMatching === 1 ? '' : 's'} in view`}
+                        {truncated ? ' · zoom in for more' : ''}
+                    </Text>
+                </View>
             </View>
 
             <View style={styles.searchRow}>
@@ -498,65 +503,67 @@ const CustomerMapScreen = () => {
                             </TouchableOpacity>
                         </View>
 
-                        <Text style={styles.filterLabel}>Risk Category</Text>
-                        <View style={styles.chipRow}>
-                            {RISK_FILTER_OPTIONS.map(opt => (
-                                <TouchableOpacity
-                                    key={opt.value}
-                                    style={[styles.chip, riskFilter === opt.value && styles.chipActive]}
-                                    onPress={() => setRiskFilter(opt.value)}
-                                >
-                                    <Text style={[styles.chipText, riskFilter === opt.value && styles.chipTextActive]}>{opt.label}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-
-                        <Text style={styles.filterLabel}>Status</Text>
-                        <View style={styles.chipRow}>
-                            {STATUS_FILTER_OPTIONS.map(opt => (
-                                <TouchableOpacity
-                                    key={opt.value}
-                                    style={[styles.chip, statusFilter === opt.value && styles.chipActive]}
-                                    onPress={() => setStatusFilter(opt.value)}
-                                >
-                                    <Text style={[styles.chipText, statusFilter === opt.value && styles.chipTextActive]}>{opt.label}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-
-                        <View style={styles.filterLabelRow}>
-                            <Text style={styles.filterLabel}>Distance radius</Text>
-                            <TouchableOpacity onPress={async () => {
-                                if (radiusEnabled) { setRadiusEnabled(false); return; }
-                                let loc = userLocation;
-                                if (!loc) {
-                                    const cur = await LocationService.getCurrentLocation();
-                                    if (cur?.latitude && cur?.longitude && !cur?.error) {
-                                        loc = { latitude: cur.latitude, longitude: cur.longitude };
-                                        setUserLocation(loc);
-                                    } else {
-                                        Alert.alert('Location needed', 'Could not detect your location.');
-                                        return;
-                                    }
-                                }
-                                setRadiusEnabled(true);
-                            }}>
-                                <Text style={styles.filterToggleText}>{radiusEnabled ? 'On' : 'Off'}</Text>
-                            </TouchableOpacity>
-                        </View>
-                        {radiusEnabled && (
+                        <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+                            <Text style={styles.filterLabel}>Risk Category</Text>
                             <View style={styles.chipRow}>
-                                {RADIUS_OPTIONS_KM.map(km => (
+                                {RISK_FILTER_OPTIONS.map(opt => (
                                     <TouchableOpacity
-                                        key={km}
-                                        style={[styles.chip, radiusKm === km && styles.chipActive]}
-                                        onPress={() => setRadiusKm(km)}
+                                        key={opt.value}
+                                        style={[styles.chip, riskFilter === opt.value && styles.chipActive]}
+                                        onPress={() => setRiskFilter(opt.value)}
                                     >
-                                        <Text style={[styles.chipText, radiusKm === km && styles.chipTextActive]}>{km} km</Text>
+                                        <Text style={[styles.chipText, riskFilter === opt.value && styles.chipTextActive]}>{opt.label}</Text>
                                     </TouchableOpacity>
                                 ))}
                             </View>
-                        )}
+
+                            <Text style={styles.filterLabel}>Status</Text>
+                            <View style={styles.chipRow}>
+                                {STATUS_FILTER_OPTIONS.map(opt => (
+                                    <TouchableOpacity
+                                        key={opt.value}
+                                        style={[styles.chip, statusFilter === opt.value && styles.chipActive]}
+                                        onPress={() => setStatusFilter(opt.value)}
+                                    >
+                                        <Text style={[styles.chipText, statusFilter === opt.value && styles.chipTextActive]}>{opt.label}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
+                            <View style={styles.filterLabelRow}>
+                                <Text style={styles.filterLabel}>Distance radius</Text>
+                                <TouchableOpacity onPress={async () => {
+                                    if (radiusEnabled) { setRadiusEnabled(false); return; }
+                                    let loc = userLocation;
+                                    if (!loc) {
+                                        const cur = await LocationService.getCurrentLocation();
+                                        if (cur?.latitude && cur?.longitude && !cur?.error) {
+                                            loc = { latitude: cur.latitude, longitude: cur.longitude };
+                                            setUserLocation(loc);
+                                        } else {
+                                            Alert.alert('Location needed', 'Could not detect your location.');
+                                            return;
+                                        }
+                                    }
+                                    setRadiusEnabled(true);
+                                }}>
+                                    <Text style={styles.filterToggleText}>{radiusEnabled ? 'On' : 'Off'}</Text>
+                                </TouchableOpacity>
+                            </View>
+                            {radiusEnabled && (
+                                <View style={styles.chipRow}>
+                                    {RADIUS_OPTIONS_KM.map(km => (
+                                        <TouchableOpacity
+                                            key={km}
+                                            style={[styles.chip, radiusKm === km && styles.chipActive]}
+                                            onPress={() => setRadiusKm(km)}
+                                        >
+                                            <Text style={[styles.chipText, radiusKm === km && styles.chipTextActive]}>{km} km</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            )}
+                        </ScrollView>
 
                         <TouchableOpacity style={styles.applyBtn} onPress={() => setFilterVisible(false)} activeOpacity={0.85}>
                             <Text style={styles.applyBtnText}>Apply</Text>
@@ -578,7 +585,7 @@ const CustomerMapScreen = () => {
                         {detailLoading ? (
                             <ActivityIndicator size="large" color={colors.primary} style={{ marginVertical: spacing.xl }} />
                         ) : detail ? (
-                            <ScrollView showsVerticalScrollIndicator={false}>
+                            <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
                                 <Text style={styles.detailName}>{detail.customer_name}</Text>
                                 <Text style={styles.detailSub}>{detail.loan_id}{detail.product_type ? ` · ${detail.product_type}` : ''}</Text>
 
@@ -684,6 +691,8 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
 
     header: {
+        flexDirection: 'row',
+        alignItems: 'center',
         paddingHorizontal: spacing.md,
         paddingTop: spacing.sm,
         paddingBottom: spacing.xs,
@@ -691,6 +700,7 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
     },
+    backBtn: { padding: spacing.xs, marginRight: spacing.xs },
     headerTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     headerSub: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
 
