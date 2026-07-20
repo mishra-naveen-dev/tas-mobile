@@ -13,8 +13,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
-import { PROVIDER_GOOGLE, Marker, Callout } from 'react-native-maps';
-import ClusteredMapView from 'rn-maps-clustering';
+import MapView, { PROVIDER_GOOGLE, Marker, Callout } from 'react-native-maps';
+import Supercluster from 'supercluster';
 
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
@@ -101,9 +101,11 @@ const CustomerMapScreen = () => {
     const mapRef = useRef(null);
     const regionFetchTimerRef = useRef(null);
     const fetchSeqRef = useRef(0);
+    const clusterIndexRef = useRef(null);
 
     const [region, setRegion] = useState(DEFAULT_REGION);
     const [markers, setMarkers] = useState([]);
+    const [clusters, setClusters] = useState([]);
     const [loading, setLoading] = useState(true);
     const [truncated, setTruncated] = useState(false);
     const [totalMatching, setTotalMatching] = useState(0);
@@ -164,11 +166,44 @@ const CustomerMapScreen = () => {
             });
     }, [buildFilterParams]);
 
+    // Cheap, synchronous, local recompute — no native/network work, so it's
+    // safe to run on every pan/zoom without debouncing (unlike fetchMarkers,
+    // which hits the network and IS debounced below).
+    const recomputeClusters = useCallback((targetRegion) => {
+        const index = clusterIndexRef.current;
+        if (!index) { setClusters([]); return; }
+        const bbox = [
+            targetRegion.longitude - targetRegion.longitudeDelta / 2,
+            targetRegion.latitude - targetRegion.latitudeDelta / 2,
+            targetRegion.longitude + targetRegion.longitudeDelta / 2,
+            targetRegion.latitude + targetRegion.latitudeDelta / 2,
+        ];
+        const zoom = Math.min(20, Math.max(0, Math.round(Math.log2(360 / targetRegion.longitudeDelta))));
+        setClusters(index.getClusters(bbox, zoom));
+    }, []);
+
     const onRegionChangeComplete = useCallback((newRegion) => {
         setRegion(newRegion);
+        recomputeClusters(newRegion);
         if (regionFetchTimerRef.current) clearTimeout(regionFetchTimerRef.current);
         regionFetchTimerRef.current = setTimeout(() => fetchMarkers(newRegion), REGION_FETCH_DEBOUNCE_MS);
-    }, [fetchMarkers]);
+    }, [fetchMarkers, recomputeClusters]);
+
+    const onClusterPress = useCallback((clusterId) => {
+        const index = clusterIndexRef.current;
+        if (!index) return;
+        const leaves = index.getLeaves(clusterId, Infinity);
+        const coords = leaves.map(l => ({
+            latitude: l.geometry.coordinates[1],
+            longitude: l.geometry.coordinates[0],
+        }));
+        if (coords.length) {
+            mapRef.current?.fitToCoordinates(coords, {
+                edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
+                animated: true,
+            });
+        }
+    }, []);
 
     // Filter changes refetch the current viewport immediately (no debounce —
     // these are deliberate taps, not rapid pan/zoom gestures).
@@ -309,16 +344,21 @@ const CustomerMapScreen = () => {
         [employees]
     );
 
-    const renderCluster = useCallback((cluster, onPress) => (
-        <TouchableOpacity
-            key={`cluster-${cluster.id}`}
-            onPress={onPress}
-            style={styles.clusterBubble}
-            activeOpacity={0.8}
-        >
-            <Text style={styles.clusterText}>{cluster.properties.point_count}</Text>
-        </TouchableOpacity>
-    ), []);
+    // Rebuild the cluster index whenever the marker set changes (new
+    // viewport data from the backend, or a filter change) — supercluster's
+    // own load() is cheap even for a few thousand points, well within the
+    // backend's MAP_MARKERS_HARD_LIMIT.
+    useEffect(() => {
+        const index = new Supercluster({ radius: 60, maxZoom: 17, minPoints: 2 });
+        index.load(parsedMarkers.map(m => ({
+            type: 'Feature',
+            properties: { cluster: false, marker: m },
+            geometry: { type: 'Point', coordinates: [m.customer_longitude, m.customer_latitude] },
+        })));
+        clusterIndexRef.current = index;
+        recomputeClusters(region);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [parsedMarkers]);
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
@@ -365,7 +405,7 @@ const CustomerMapScreen = () => {
 
             <View style={{ flex: 1 }}>
                 <MapErrorBoundary>
-                    <ClusteredMapView
+                    <MapView
                         ref={mapRef}
                         provider={PROVIDER_GOOGLE}
                         style={styles.map}
@@ -373,17 +413,33 @@ const CustomerMapScreen = () => {
                         onRegionChangeComplete={onRegionChangeComplete}
                         showsUserLocation
                         showsMyLocationButton={false}
-                        radius={60}
-                        renderCluster={renderCluster}
                     >
-                        {parsedMarkers.map(m => (
-                            <Marker
-                                key={`cust-${m.id}`}
-                                coordinate={{ latitude: m.customer_latitude, longitude: m.customer_longitude }}
-                                pinColor={markerColorFor(m)}
-                                onPress={() => openMarkerDetail(m.id)}
-                            />
-                        ))}
+                        {clusters.map(c => {
+                            const [longitude, latitude] = c.geometry.coordinates;
+                            if (c.properties.cluster) {
+                                const clusterId = c.properties.cluster_id;
+                                return (
+                                    <Marker
+                                        key={`cluster-${clusterId}`}
+                                        coordinate={{ latitude, longitude }}
+                                        onPress={() => onClusterPress(clusterId)}
+                                    >
+                                        <View style={styles.clusterBubble}>
+                                            <Text style={styles.clusterText}>{c.properties.point_count}</Text>
+                                        </View>
+                                    </Marker>
+                                );
+                            }
+                            const m = c.properties.marker;
+                            return (
+                                <Marker
+                                    key={`cust-${m.id}`}
+                                    coordinate={{ latitude, longitude }}
+                                    pinColor={markerColorFor(m)}
+                                    onPress={() => openMarkerDetail(m.id)}
+                                />
+                            );
+                        })}
                         {showEmployees && parsedEmployees.map(e => (
                             <Marker
                                 key={`emp-${e.employee_id}`}
@@ -398,7 +454,7 @@ const CustomerMapScreen = () => {
                                 </Callout>
                             </Marker>
                         ))}
-                    </ClusteredMapView>
+                    </MapView>
 
                     {loading && (
                         <View style={styles.loadingOverlay} pointerEvents="none">
