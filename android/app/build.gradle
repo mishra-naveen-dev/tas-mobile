@@ -89,9 +89,26 @@ android {
         applicationId "com.tasmobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "1.3"
+        versionCode 22
+        versionName "1.21"
         manifestPlaceholders = [MAPS_API_KEY: dotenvProps.getProperty("GOOGLE_MAPS_API_KEY", "")]
+    }
+    // The app's CMake build pulls in every autolinked codegen library (e.g.
+    // react_codegen_safeareacontext) via add_subdirectory() into node_modules,
+    // and ninja mirrors each source's full absolute path under the object
+    // directory. On a deeply-nested Windows checkout (e.g. this repo's own
+    // "F:\d drive\Data\...\tas-mobile\..." path) those mirrored paths can
+    // blow past Windows' 260-char MAX_PATH, failing
+    // :app:buildCMakeRelWithDebInfo. Redirecting the staging directory to a
+    // short, drive-root path avoids it without any system-wide (registry)
+    // change — Windows-only, since macOS/Linux don't have this path-length
+    // limit and "C:/..." isn't a valid path there.
+    if (org.gradle.internal.os.OperatingSystem.current().isWindows()) {
+        externalNativeBuild {
+            cmake {
+                buildStagingDirectory "C:/rnbuild/tasmobile"
+            }
+        }
     }
     signingConfigs {
         debug {

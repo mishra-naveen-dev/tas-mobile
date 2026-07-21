@@ -12,6 +12,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import ScreenHeader from '../../components/ScreenHeader';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const EmployeeTrackingScreen = ({ navigation, route }) => {
     const [employees, setEmployees] = useState([]);
@@ -115,33 +116,39 @@ const EmployeeTrackingScreen = ({ navigation, route }) => {
                 <Text style={styles.infoText}>Click on an employee to view their route</Text>
             </View>
 
-            <FlatList
-                data={employees}
-                keyExtractor={(item, index) => item.id ? `track_${item.id}` : `track-${index}`}
-                renderItem={renderEmployee}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-                }
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    error ? (
-                        <View style={styles.emptyContainer}>
-                            <Icon name="alert-circle" size={48} color={colors.danger} />
-                            <Text style={[styles.emptyText, { color: colors.danger }]}>{error}</Text>
-                            <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
-                                <Text style={styles.retryBtnText}>Try Again</Text>
-                            </TouchableOpacity>
-                        </View>
-                    ) : (
-                        <View style={styles.emptyContainer}>
-                            <Icon name="map-pin" size={48} color={colors.textLight} />
-                            <Text style={styles.emptyText}>
-                                {loading ? 'Loading...' : 'No tracking data available'}
-                            </Text>
-                        </View>
-                    )
-                }
-            />
+            {loading && employees.length === 0 ? (
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
+                </View>
+            ) : (
+                <FlatList
+                    data={employees}
+                    keyExtractor={(item, index) => item.id ? `track_${item.id}` : `track-${index}`}
+                    renderItem={renderEmployee}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                    }
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        error ? (
+                            <View style={styles.emptyContainer}>
+                                <Icon name="alert-circle" size={48} color={colors.danger} />
+                                <Text style={[styles.emptyText, { color: colors.danger }]}>{error}</Text>
+                                <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
+                                    <Text style={styles.retryBtnText}>Try Again</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <View style={styles.emptyContainer}>
+                                <Icon name="map-pin" size={48} color={colors.textLight} />
+                                <Text style={styles.emptyText}>No tracking data available</Text>
+                            </View>
+                        )
+                    }
+                />
+            )}
         </SafeAreaView>
     );
 };

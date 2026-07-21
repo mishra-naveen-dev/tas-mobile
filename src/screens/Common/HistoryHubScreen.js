@@ -44,7 +44,7 @@ const HistoryHubScreen = ({ navigation }) => {
         try {
             navigation.navigate(route);
         } catch (err) {
-            console.log("Navigation Error:", err);
+            if (__DEV__) console.log("Navigation Error:", err);
         }
     };
 

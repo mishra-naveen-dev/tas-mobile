@@ -15,6 +15,7 @@ import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { colors, typography, spacing } from '../../theme/tokens';
 import { parseApiError } from '../../core/error/AppErrorHandler';
+import { SkeletonAvatar, SkeletonText, SkeletonCard } from '../../components/SkeletonComponents';
 
 // ─── Avatar ──────────────────────────────────────────────────────────────────
 const AVATAR_COLORS = [
@@ -163,9 +164,14 @@ const ProfileScreen = ({ navigation }) => {
             </View>
 
             {loading && !data ? (
-                <View style={styles.centered}>
-                    <ActivityIndicator size="large" color={colors.primary} />
-                    <Text style={styles.loadingText}>Loading profile…</Text>
+                <View style={{ padding: spacing.md }}>
+                    <View style={{ alignItems: 'center', marginBottom: spacing.lg }}>
+                        <SkeletonAvatar size={88} />
+                        <SkeletonText width={140} height={20} style={{ marginTop: spacing.md }} />
+                        <SkeletonText width={100} height={14} style={{ marginTop: spacing.sm }} />
+                    </View>
+                    <SkeletonCard style={{ marginBottom: spacing.md }} />
+                    <SkeletonCard />
                 </View>
             ) : error && !data ? (
                 <View style={styles.centered}>

@@ -33,7 +33,7 @@ const AllowanceHistoryScreen = ({ navigation }) => {
             setRequests(rawData);
 
         } catch (err) {
-            console.log("Allowance History Error:", err);
+            if (__DEV__) console.log("Allowance History Error:", err);
             setHasError(true);
         } finally {
             setIsLoading(false);

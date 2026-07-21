@@ -7,11 +7,15 @@ import { NavigationContainer } from '@react-navigation/native';
 import RootNavigator from './src/navigation/RootNavigator';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { PunchProvider } from './src/context/PunchContext';
+import { NotificationProvider, useNotification, NotificationDuration } from './src/common/components/NotificationProvider';
+import SSEClient from './src/services/SSEClient';
+import ApplicationActivityService from './src/services/ApplicationActivityService';
 import { colors } from './src/theme/tokens';
 import SplashScreen from './src/components/SplashScreen';
 
 const AppContent = () => {
     const auth = useAuth();
+    const notify = useNotification();
     const navigationRef = useRef(null);
     const [splashDone, setSplashDone] = useState(false);
 
@@ -20,6 +24,57 @@ const AppContent = () => {
             auth.setNavigationRef(navigationRef.current);
         }
     }, [auth.setNavigationRef]);
+
+    // Real-time "customer assigned to you" toast — tap to jump straight to
+    // that customer in Collections. Falls back gracefully: if the socket
+    // isn't connected when this fires, the user still sees it next time
+    // they open the Notifications list (server-persisted separately).
+    useEffect(() => {
+        const unsubscribe = SSEClient.onNotification((msg) => {
+            if (msg?.notification_type === 'CUSTOMER_ASSIGNED') {
+                notify.info(msg.message || 'You have been assigned a new customer', {
+                    duration: NotificationDuration.LONG,
+                    onPress: () => {
+                        if (!navigationRef.current) return;
+                        // Only employees receive CUSTOMER_ASSIGNED, so EmployeeTabs/
+                        // EmployeeCollections (the real registered route names —
+                        // see RootNavigator.js) is always the right target here.
+                        if (msg.collection_id) {
+                            navigationRef.current.navigate('EmployeeTabs', {
+                                screen: 'EmployeeCollections',
+                                params: { collectionId: msg.collection_id },
+                            });
+                        } else {
+                            navigationRef.current.navigate('EmployeeTabs', { screen: 'EmployeeCollections' });
+                        }
+                    },
+                });
+                return;
+            }
+
+            // "Still working?" nudge — fired server-side when an employee stays
+            // punched-in with no follow-up activity for 2h30m. Tapping it jumps
+            // straight to Punch so they can punch out or continue immediately.
+            if (msg?.notification_type === 'PUNCH_INACTIVITY') {
+                notify.warning(msg.message || "It's been a while since your last punch — please punch out or update your status.", {
+                    duration: NotificationDuration.LONG,
+                    onPress: () => {
+                        navigationRef.current?.navigate('EmployeeTabs', { screen: 'EmployeePunch' });
+                    },
+                });
+            }
+        });
+        return unsubscribe;
+    }, [notify]);
+
+    // App open/close (foreground/background) session tracking for Device
+    // Management's Application Activity feature — only meaningful once
+    // logged in, same gating PunchProvider itself needs below.
+    useEffect(() => {
+        if (!auth.isAuthenticated) return;
+        ApplicationActivityService.start();
+        return () => ApplicationActivityService.stop();
+    }, [auth.isAuthenticated]);
 
     // Show splash until BOTH the animation finishes AND auth has initialized.
     // Auth check runs in parallel — the longer of the two wins.
@@ -53,7 +108,9 @@ const App = () => {
             <SafeAreaProvider>
                 <StatusBar barStyle="light-content" backgroundColor="#C62828" />
                 <AuthProvider>
-                    <AppContent />
+                    <NotificationProvider>
+                        <AppContent />
+                    </NotificationProvider>
                 </AuthProvider>
             </SafeAreaProvider>
         </GestureHandlerRootView>

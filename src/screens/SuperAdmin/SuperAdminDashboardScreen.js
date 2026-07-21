@@ -14,6 +14,7 @@ import { useAuth } from '../../context/AuthContext';
 import api from '../../api/api';
 import ScreenHeader from '../../components/ScreenHeader';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonStatsGrid } from '../../components/SkeletonComponents';
 
 const SuperAdminDashboardScreen = ({ navigation }) => {
     const auth = useAuth();
@@ -110,24 +111,28 @@ const SuperAdminDashboardScreen = ({ navigation }) => {
                     </View>
                 ) : null}
 
-                <View style={styles.statsContainer}>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statValue}>{stats?.total_employees || 0}</Text>
-                        <Text style={styles.statLabel}>Total Employees</Text>
+                {loading ? (
+                    <SkeletonStatsGrid style={{ marginBottom: spacing.md }} />
+                ) : (
+                    <View style={styles.statsContainer}>
+                        <View style={styles.statCard}>
+                            <Text style={styles.statValue}>{stats?.total_employees || 0}</Text>
+                            <Text style={styles.statLabel}>Total Employees</Text>
+                        </View>
+                        <View style={styles.statCard}>
+                            <Text style={styles.statValue}>{stats?.active_employees || 0}</Text>
+                            <Text style={styles.statLabel}>Active Today</Text>
+                        </View>
+                        <View style={styles.statCard}>
+                            <Text style={styles.statValue}>{(stats?.total_distance || 0).toFixed(0)}</Text>
+                            <Text style={styles.statLabel}>Total km</Text>
+                        </View>
+                        <View style={styles.statCard}>
+                            <Text style={styles.statValue}>{stats?.total_punches || 0}</Text>
+                            <Text style={styles.statLabel}>Punches</Text>
+                        </View>
                     </View>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statValue}>{stats?.active_employees || 0}</Text>
-                        <Text style={styles.statLabel}>Active Today</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statValue}>{(stats?.total_distance || 0).toFixed(0)}</Text>
-                        <Text style={styles.statLabel}>Total km</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statValue}>{stats?.total_punches || 0}</Text>
-                        <Text style={styles.statLabel}>Punches</Text>
-                    </View>
-                </View>
+                )}
 
                 <View style={styles.menuSection}>
                     <Text style={styles.sectionTitle}>Management</Text>

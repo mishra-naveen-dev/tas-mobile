@@ -13,10 +13,12 @@ import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import HeroHeader from '../../components/HeroHeader';
+import { SkeletonStatsGrid } from '../../components/SkeletonComponents';
 
 const { width } = Dimensions.get('window');
 
 const SuperAdminAnalyticsScreen = ({ navigation }) => {
+    const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [userData, setUserData] = useState(null);
     const [stats, setStats] = useState({
@@ -60,7 +62,9 @@ const SuperAdminAnalyticsScreen = ({ navigation }) => {
                 weekPunches,
             });
         } catch (err) {
-            console.log('Error fetching analytics:', err.message);
+            if (__DEV__) console.log('Error fetching analytics:', err.message);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -131,35 +135,41 @@ const SuperAdminAnalyticsScreen = ({ navigation }) => {
                         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                     }
                 >
-                    <View style={styles.summaryRow}>
-                        <MetricCard
-                            title="Active Today"
-                            value={stats.activeEmployees}
-                            icon="user-check"
-                            color={colors.success}
-                        />
-                        <MetricCard
-                            title="Punches Today"
-                            value={stats.todayPunches}
-                            icon="clock"
-                            color={colors.primary}
-                        />
-                    </View>
+                    {isLoading ? (
+                        <SkeletonStatsGrid style={{ marginBottom: spacing.md }} />
+                    ) : (
+                        <>
+                            <View style={styles.summaryRow}>
+                                <MetricCard
+                                    title="Active Today"
+                                    value={stats.activeEmployees}
+                                    icon="user-check"
+                                    color={colors.success}
+                                />
+                                <MetricCard
+                                    title="Punches Today"
+                                    value={stats.todayPunches}
+                                    icon="clock"
+                                    color={colors.primary}
+                                />
+                            </View>
 
-                    <View style={styles.summaryRow}>
-                        <MetricCard
-                            title="Collections"
-                            value={`₹${formatCurrency(stats.totalCollections)}`}
-                            icon="trending-up"
-                            color={colors.success}
-                        />
-                        <MetricCard
-                            title="Disbursements"
-                            value={`₹${formatCurrency(stats.totalDisbursements)}`}
-                            icon="trending-down"
-                            color={colors.warning}
-                        />
-                    </View>
+                            <View style={styles.summaryRow}>
+                                <MetricCard
+                                    title="Collections"
+                                    value={`₹${formatCurrency(stats.totalCollections)}`}
+                                    icon="trending-up"
+                                    color={colors.success}
+                                />
+                                <MetricCard
+                                    title="Disbursements"
+                                    value={`₹${formatCurrency(stats.totalDisbursements)}`}
+                                    icon="trending-down"
+                                    color={colors.warning}
+                                />
+                            </View>
+                        </>
+                    )}
 
                     <View style={styles.chartSection}>
                         <Text style={styles.sectionTitle}>Weekly Punch Trends</Text>

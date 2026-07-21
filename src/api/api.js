@@ -95,11 +95,13 @@ const getPlatform = () => {
 const getDeviceInfo = async () => {
     try {
         const model = await DeviceInfo.getModel();
+        const manufacturer = await DeviceInfo.getManufacturer();
         const systemVersion = await DeviceInfo.getSystemVersion();
         const appVersion = await DeviceInfo.getVersion();
-        
+
         return {
             model,
+            manufacturer,
             os: Platform.OS,
             osVersion: systemVersion,
             appVersion
@@ -107,6 +109,7 @@ const getDeviceInfo = async () => {
     } catch (error) {
         return {
             model: 'Unknown',
+            manufacturer: 'Unknown',
             os: Platform.OS,
             osVersion: 'Unknown',
             appVersion: '1.0.0'
@@ -141,7 +144,12 @@ api.interceptors.request.use(async (config) => {
     config.headers['X-PLATFORM'] = getPlatform();
     config.headers['X-DEVICE-INFO'] = JSON.stringify(deviceInfo);
     config.headers['X-APP-VERSION'] = '1.0.0';
-    config.headers['Content-Type'] = 'application/json';
+    // Leave FormData bodies (photo/file uploads) alone — axios needs to set
+    // its own multipart boundary, which forcing 'application/json' here
+    // would silently clobber, corrupting the upload.
+    if (!(config.data instanceof FormData)) {
+        config.headers['Content-Type'] = 'application/json';
+    }
 
     return config;
 });
@@ -176,11 +184,18 @@ export const resetSessionHandler = () => {
     isSessionExpiredHandled = false;
 };
 
+// Endpoints whose params are essentially unique on every call (a map
+// viewport bounding box changes on every pan/zoom, a free-text search on
+// every keystroke) — caching them adds near-zero hit value while being the
+// single biggest driver of unbounded local cache growth (see dataCache.js).
+const UNCACHEABLE_GET_PATTERNS = [/\/map_markers\//, /\/map_search\//];
+
 api.interceptors.response.use(
     async (response) => {
         const method = (response.config?.method || '').toLowerCase();
-        if (method === 'get') {
-            const key = makeCacheKey(response.config.url, response.config.params || {});
+        const url = response.config?.url || '';
+        if (method === 'get' && !UNCACHEABLE_GET_PATTERNS.some(re => re.test(url))) {
+            const key = makeCacheKey(url, response.config.params || {});
             await cacheWrite(key, response.data);
         }
         if (!serverStatus._online) serverStatus.setOnline();
@@ -483,9 +498,30 @@ api.sendLivePoints = (data) =>
 api.getActiveLiveSession = () =>
     api.get('/livetracking/sessions/active/');
 
+// Backend-driven tracking config (interval/thresholds/durations) — fetched
+// at app start, on punch-in, and after a native service restart.
+api.getTrackingConfig = () =>
+    api.get('/livetracking/config/');
+
+// Non-GPS lifecycle events (app/service restart, network/GPS lost-restored,
+// manual interaction) — counts as "activity" for the auto-punch-out watcher
+// exactly like a real GPS point does.
+api.sendTrackingHeartbeat = (data) =>
+    api.post('/livetracking/heartbeat/', data);
+
 // Coordinates for one day. Pass { date, employee_id? }.
 api.getLiveDailyRoute = (params = {}) =>
     api.get('/livetracking/daily/', { params });
+
+// The employee's most recent auto-closed session with no review request yet
+// (Milestone 2a) — PunchContext polls this to decide whether to show a
+// "request a review" banner.
+api.getLastAutoClosure = () =>
+    api.get('/livetracking/last-auto-closure/');
+
+// Submit a forgot-punch-out review request for an auto-closed session.
+api.submitForgotPunchRequest = (data) =>
+    api.post('/punch-verification/requests/', data);
 
 api.getUserProfile = () => {
     return api.get('/organization/users/me/');
@@ -515,6 +551,19 @@ api.approveDevice = (id) => api.post(`/organization/devices/${id}/approve/`);
 api.rejectDevice = (id) => api.post(`/organization/devices/${id}/reject/`);
 api.blockDevice = (id) => api.post(`/organization/devices/${id}/block/`);
 api.resetDevice = (id) => api.post(`/organization/devices/${id}/reset/`);
+
+// Application Activity (app open/close lifecycle) — see ApplicationActivityService.
+api.startAppSession = (payload) => api.post('/organization/devices/app_session_start/', payload);
+api.endAppSession = (payload) => api.post('/organization/devices/app_session_end/', payload);
+
+api.getAllowanceRequests = (params = {}) => api.get('/allowance/requests/', { params });
+api.approveAllowanceRequest = (id) => api.post(`/allowance/requests/${id}/approve/`);
+api.rejectAllowanceRequest = (id, reason = '') => api.post(`/allowance/requests/${id}/reject/`, { reason });
+
+api.getProfileUpdateRequests = (params = {}) => api.get('/organization/profile-update/', { params });
+api.createProfileUpdateRequest = (data) => api.post('/organization/profile-update/', data);
+api.approveProfileUpdateRequest = (id) => api.post(`/organization/profile-update/${id}/approve/`);
+api.rejectProfileUpdateRequest = (id) => api.post(`/organization/profile-update/${id}/reject/`);
 
 api.getOrganizationStats = () => {
     return api.get('/organization/users/stats/');
@@ -571,9 +620,34 @@ api.approveMasterRequest = (id, remarks = '') =>
 api.rejectMasterRequest = (id, remarks = '') =>
     api.post(`/master-data/requests/${id}/reject/`, { remarks });
 
+// ── Notifications ──
+api.getNotifications = (params = {}) =>
+    api.get('/organization/notifications/', { params });
+
+api.getRecentNotifications = () =>
+    api.get('/organization/notifications/recent/');
+
+api.getUnreadNotificationCount = () =>
+    api.get('/organization/notifications/unread_count/');
+
+api.markNotificationRead = (id) =>
+    api.post(`/organization/notifications/${id}/mark_read/`);
+
+api.markAllNotificationsRead = () =>
+    api.post('/organization/notifications/mark_all_read/');
+
+api.deleteNotification = (id) =>
+    api.delete(`/organization/notifications/${id}/`);
+
+api.deleteAllNotifications = () =>
+    api.delete('/organization/notifications/delete_all/');
+
 // ── Customer collections ──
 api.getCollections = (params = {}) =>
     api.get('/loans/collections/', { params });
+
+api.getCollectionRecord = (id) =>
+    api.get(`/loans/collections/${id}/`);
 
 api.getDistinctProducts = () =>
     api.get('/loans/collections/distinct_products/');
@@ -586,5 +660,40 @@ api.updateCollectionStatus = (id, data) =>
 
 api.getCollectionDashboardStats = () =>
     api.get('/loans/collections/dashboard_stats/');
+
+// History of collection updates (an employee's outcome entries on a
+// collection record) — used to surface today's field activity even when it
+// didn't happen inside an explicit punch-tracked GPS session.
+api.getCollectionUpdates = (params = {}) =>
+    api.get('/loans/collection-updates/', { params });
+
+// Unified Collection Visit: one punch + one collection-status update (+
+// optional photos) in a single transactional request. `formData` must be a
+// FormData instance (see CollectionVisitScreen) — the request interceptor
+// above leaves its Content-Type alone so axios can set the multipart boundary.
+api.completeVisit = (collectionId, formData) =>
+    api.post(`/loans/collections/${collectionId}/complete_visit/`, formData);
+
+// ── Customer Map ──
+// `bounds` must be { min_lat, max_lat, min_lng, max_lng }; `params` carries
+// the usual CollectionRecordFilter params (status, dpd_bucket, risk_category,
+// branch_name, product_type) plus optional user_lat/user_lng/radius_km.
+api.getMapMarkers = (bounds, params = {}) =>
+    api.get('/loans/collections/map_markers/', { params: { ...bounds, ...params } });
+
+api.getMapDetail = (id, params = {}) =>
+    api.get(`/loans/collections/${id}/map_detail/`, { params });
+
+api.getEta = (id, userLat, userLng) =>
+    api.get(`/loans/collections/${id}/eta/`, { params: { user_lat: userLat, user_lng: userLng } });
+
+api.getMapSearch = (query, params = {}) =>
+    api.get('/loans/collections/map_search/', { params: { q: query, ...params } });
+
+api.getNearbyEmployees = (params = {}) =>
+    api.get('/loans/collections/nearby_employees/', { params });
+
+api.setRiskCategory = (id, riskCategory) =>
+    api.post(`/loans/collections/${id}/set_risk_category/`, { risk_category: riskCategory });
 
 export default api;

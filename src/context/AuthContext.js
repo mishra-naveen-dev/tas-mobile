@@ -4,7 +4,8 @@ import { Alert } from 'react-native';
 import api, { setSessionExpiredCallback, resetSessionHandler, loadCustomBaseURL } from '../api/api';
 import { parseApiError } from '../core/error/AppErrorHandler';
 import { SSEClient } from '../services/SSEClient';
-import BackgroundTrackingService from '../services/BackgroundTrackingService';
+import LocationService from '../services/LocationService';
+import LiveTrackingService from '../services/LiveTrackingService';
 
 const AuthContext = createContext(null);
 let sessionExpiredAlertShown = false;
@@ -197,7 +198,8 @@ export const AuthProvider = ({ children }) => {
 
     const logout = useCallback(async () => {
         // Stop background GPS tracking if running
-        try { await BackgroundTrackingService.stop(); } catch {}
+        try { await LocationService.stopTracking(); } catch {}
+        try { await LiveTrackingService.detach(); } catch {}
         // Notify backend of logout (best-effort)
         try { await api.logout(); } catch {}
         // Disconnect SSE polling

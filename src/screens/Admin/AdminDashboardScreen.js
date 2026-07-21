@@ -14,10 +14,12 @@ import { useAuth } from '../../context/AuthContext';
 import api from '../../api/api';
 import HeroHeader from '../../components/HeroHeader';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonStatsGrid } from '../../components/SkeletonComponents';
 
 const AdminDashboardScreen = ({ navigation }) => {
     const auth = useAuth();
     const user = auth?.user;
+    const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState(null);
     const [stats, setStats] = useState({
@@ -83,6 +85,8 @@ const AdminDashboardScreen = ({ navigation }) => {
             }
         } catch (err) {
             setError('Could not load dashboard data. Pull down to retry.');
+        } finally {
+            setIsLoading(false);
         }
     }, []);
 
@@ -154,16 +158,20 @@ const AdminDashboardScreen = ({ navigation }) => {
                         </View>
                     ) : null}
 
-                    <View style={styles.kpiSection}>
-                        <View style={styles.kpiRow}>
-                            <StatCard title="Total Employees" value={stats.totalEmployees} icon="users" color={colors.primary} />
-                            <StatCard title="Active Today" value={stats.activeEmployees} icon="user-check" color={colors.success} />
+                    {isLoading ? (
+                        <SkeletonStatsGrid style={{ marginBottom: spacing.md }} />
+                    ) : (
+                        <View style={styles.kpiSection}>
+                            <View style={styles.kpiRow}>
+                                <StatCard title="Total Employees" value={stats.totalEmployees} icon="users" color={colors.primary} />
+                                <StatCard title="Active Today" value={stats.activeEmployees} icon="user-check" color={colors.success} />
+                            </View>
+                            <View style={styles.kpiRow}>
+                                <StatCard title="Distance" value={`${stats.totalDistance.toFixed(0)} km`} icon="navigation" color={colors.info} />
+                                <StatCard title="Collections" value={`₹${formatCurrency(stats.totalCollections)}`} icon="trending-up" color={colors.success} />
+                            </View>
                         </View>
-                        <View style={styles.kpiRow}>
-                            <StatCard title="Distance" value={`${stats.totalDistance.toFixed(0)} km`} icon="navigation" color={colors.info} />
-                            <StatCard title="Collections" value={`₹${formatCurrency(stats.totalCollections)}`} icon="trending-up" color={colors.success} />
-                        </View>
-                    </View>
+                    )}
 
                     <View style={styles.menuSection}>
                         <Text style={styles.sectionTitle}>Quick Actions</Text>
@@ -196,11 +204,25 @@ const AdminDashboardScreen = ({ navigation }) => {
                             onPress={() => navigation.navigate('EmployeeTracking')}
                         />
                         <MenuItem
+                            title="Customer Map"
+                            subtitle="Branch-scoped customer locations"
+                            icon="map"
+                            color={colors.success}
+                            onPress={() => navigation.navigate('CustomerMap')}
+                        />
+                        <MenuItem
                             title="Daily Activity"
                             subtitle="Distance, punches, collection by date"
                             icon="activity"
                             color={colors.info}
                             onPress={() => navigation.navigate('DailySummary')}
+                        />
+                        <MenuItem
+                            title="Help & Support"
+                            subtitle="Company info, FAQs and IT Technical Support"
+                            icon="help-circle"
+                            color={colors.info}
+                            onPress={() => navigation.navigate('HelpSupport')}
                         />
                     </View>
 

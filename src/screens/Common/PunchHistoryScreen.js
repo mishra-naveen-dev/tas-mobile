@@ -8,6 +8,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import { parseApiError } from '../../core/error/AppErrorHandler';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 const fmt = (d) => {
@@ -402,9 +403,10 @@ const PunchHistoryScreen = ({ navigation }) => {
 
             {/* ── Content ── */}
             {isLoading ? (
-                <View style={s.centered}>
-                    <ActivityIndicator size="large" color={colors.primary} />
-                    <Text style={s.loadingTxt}>Loading records…</Text>
+                <View style={{ padding: spacing.md }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
                 </View>
             ) : hasError && punches.length === 0 ? (
                 <View style={s.centered}>

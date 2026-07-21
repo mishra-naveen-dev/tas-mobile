@@ -7,6 +7,7 @@ import {
     ActivityIndicator,
     Dimensions,
     ScrollView,
+    RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -52,12 +53,13 @@ const RouteMapScreen = ({ navigation, route }) => {
     const [gpsRoute,    setGpsRoute]    = useState([]);   // actual 10-s GPS track
     const [routeDist,   setRouteDist]   = useState(null); // km, outlier-filtered
     const [loading,     setLoading]     = useState(true);
+    const [refreshing,  setRefreshing]  = useState(false);
     const [error,       setError]       = useState(null);
 
     const isTodayActive = toDateStr(activeDate) === toDateStr(new Date());
 
-    const fetchData = useCallback(async () => {
-        setLoading(true);
+    const fetchData = useCallback(async (isRefresh = false) => {
+        if (isRefresh) setRefreshing(true); else setLoading(true);
         setError(null);
         try {
             const dateStr = toDateStr(activeDate);
@@ -67,10 +69,14 @@ const RouteMapScreen = ({ navigation, route }) => {
             const liveParams = { date: dateStr };
             if (employeeId) liveParams.employee_id = employeeId;
 
-            // Run both requests in parallel
-            const [punchRes, liveRes] = await Promise.allSettled([
+            const collectionParams = { date_from: dateStr, date_to: dateStr };
+            if (employeeId) collectionParams.updated_by = employeeId;
+
+            // Run all requests in parallel
+            const [punchRes, liveRes, collectionRes] = await Promise.allSettled([
                 api.get('/attendance/punches/', { params: punchParams }),
                 api.getLiveDailyRoute(liveParams),
+                api.getCollectionUpdates(collectionParams),
             ]);
 
             // ── Punch records (markers) ───────────────────────────────────────
@@ -80,8 +86,30 @@ const RouteMapScreen = ({ navigation, route }) => {
                     : Array.isArray(punchRes.value.data?.results)
                     ? punchRes.value.data.results
                     : [];
+
+                // Field activity (e.g. a collection outcome update) doesn't
+                // always happen inside an explicit punch-tracked GPS session
+                // — shape each update to look like a punch (this screen's own
+                // punch_type-based coloring/labeling, see PUNCH_COLORS above,
+                // already has a COLLECTION entry) so it's never silently
+                // dropped from the route/list just because no punch exists.
+                const rawCollections = collectionRes.status === 'fulfilled'
+                    ? (collectionRes.value.data?.results || collectionRes.value.data || [])
+                    : [];
+                const collectionActivities = rawCollections.map(c => ({
+                    id: `coll-${c.id}`,
+                    punch_type: 'COLLECTION',
+                    punched_at: c.created_at,
+                    current_address: c.location_address,
+                    latitude: c.latitude,
+                    longitude: c.longitude,
+                    amount: c.collected_amount,
+                    customer_name: c.customer_name,
+                    reason: c.remarks || c.status_display,
+                }));
+
                 setAllPunches(
-                    [...raw].sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
+                    [...raw, ...collectionActivities].sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
                 );
             }
 
@@ -97,10 +125,13 @@ const RouteMapScreen = ({ navigation, route }) => {
             setError('Failed to load route data. Pull down to retry.');
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     }, [activeDate, employeeId]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    const onRefresh = useCallback(() => fetchData(true), [fetchData]);
 
     // Punch markers — only those with valid GPS
     const mappablePunches = allPunches.filter(
@@ -225,7 +256,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                 <Text style={styles.headerTitle}>
                     {employeeName ? employeeName : 'Route Map'}
                 </Text>
-                <TouchableOpacity onPress={fetchData} style={styles.refreshBtn}>
+                <TouchableOpacity onPress={() => fetchData()} style={styles.refreshBtn}>
                     <Icon name="refresh-cw" size={20} color={loading ? colors.border : colors.primary} />
                 </TouchableOpacity>
             </View>
@@ -374,6 +405,9 @@ const RouteMapScreen = ({ navigation, route }) => {
                 style={styles.list}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+                }
             >
                 {/* Stats row */}
                 <View style={styles.statsRow}>

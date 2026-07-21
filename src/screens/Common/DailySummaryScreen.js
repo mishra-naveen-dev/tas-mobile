@@ -10,6 +10,7 @@ import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import { filterGpsOutliers, calcTotalDistanceKm } from '../../utils/gpsUtils';
+import { SkeletonStatsGrid, SkeletonListItem } from '../../components/SkeletonComponents';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 const fmt = (d) => {
@@ -324,9 +325,11 @@ const DailySummaryScreen = ({ navigation }) => {
 
             {/* ── Content ── */}
             {loading && !fetched ? (
-                <View style={s.centered}>
-                    <ActivityIndicator size="large" color={colors.primary} />
-                    <Text style={s.loadingText}>Loading activity…</Text>
+                <View style={{ padding: spacing.md }}>
+                    <SkeletonStatsGrid style={{ marginBottom: spacing.md }} />
+                    {[1, 2, 3].map(i => (
+                        <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                    ))}
                 </View>
             ) : (
                 <ScrollView

@@ -25,6 +25,7 @@ import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
+import { SkeletonStatsGrid, SkeletonListItem } from '../../components/SkeletonComponents';
 
 const ZOHO_CHART_URL = 'https://analytics.zoho.in/open-view/334082000154073362';
 
@@ -460,22 +461,47 @@ const EmployeeHomeScreen = ({ navigation }) => {
         try {
             if (!isRefresh) setIsLoading(true);
 
-            const [summaryRes, punchRes, correctionRes, monthlyRes, collectionRes] = await Promise.all([
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const [summaryRes, punchRes, correctionRes, monthlyRes, collectionRes, collectionUpdatesRes] = await Promise.all([
                 api.get('/attendance/punches/daily_summary/'),
                 api.get('/attendance/punches/today_punches/'),
                 api.getCorrectionCounts(),
                 api.getPerformance('monthly').catch(() => null),
                 api.getCollectionDashboardStats().catch(() => null),
-            ]).catch(() => [null, null, null, null, null]);
+                api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }).catch(() => null),
+            ]).catch(() => [null, null, null, null, null, null]);
 
             if (!isMountedRef.current) return;
 
             const liveSummary = summaryRes?.data || {};
             const livePunches = punchRes?.data?.results || punchRes?.data || [];
             const correctionCounts = correctionRes || {};
+            // Field activity (e.g. a collection outcome update) doesn't always
+            // happen inside an explicit punch-tracked GPS session — shape each
+            // update to look like a punch so mapApiResponseToActivities' own
+            // visit_type dispatch (see models/ActivityModel.js) picks it up as
+            // a COLLECTION activity without needing any changes there.
+            const todayCollectionActivities = (collectionUpdatesRes?.data?.results || collectionUpdatesRes?.data || [])
+                .map(c => ({
+                    id: `coll-${c.id}`,
+                    visit_type: 'COLLECTION',
+                    punched_at: c.created_at,
+                    current_address: c.location_address,
+                    latitude: c.latitude,
+                    longitude: c.longitude,
+                    total_amount: c.collected_amount,
+                    client_name: c.customer_name,
+                    reason: c.remarks || c.status_display,
+                    // The unified Collection Visit flow (complete_visit) creates
+                    // both this CollectionUpdate AND a PUNCH_IN AttendancePunch
+                    // for the same real-world visit — c.punch links back to it
+                    // so allPunches (below) can drop that raw punch instead of
+                    // showing the same visit as two separate activity rows.
+                    linked_punch_id: c.punch,
+                }));
 
             setSummary(liveSummary);
-            setPunches(livePunches);
+            setPunches([...livePunches, ...todayCollectionActivities]);
             setCorrectionSummary(correctionCounts);
             setMonthlyCollection(Number(monthlyRes?.data?.total_collection_amount) || 0);
             if (collectionRes?.data) setCollectionStats(collectionRes.data);
@@ -487,7 +513,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 setIsRefreshing(false);
             }
         }
-    }, []);
+    }, [user?.id]);
 
     useFocusEffect(useCallback(() => {
         fetchData(false);
@@ -561,7 +587,15 @@ const EmployeeHomeScreen = ({ navigation }) => {
     }), [correctionSummary]);
 
     const allPunches = useMemo(() => {
-        const combined = [...(punches || []), ...(todayPunches || [])];
+        // Drop any raw punch already represented by its own CollectionUpdate-
+        // derived activity entry (see linked_punch_id above) — without this,
+        // a single Collection Visit shows up as two rows: the punch itself
+        // (from today_punches / PunchContext) and its collection outcome.
+        const linkedPunchIds = new Set(
+            (punches || []).filter(p => p?.linked_punch_id).map(p => p.linked_punch_id)
+        );
+        const combined = [...(punches || []), ...(todayPunches || [])]
+            .filter(p => !linkedPunchIds.has(p?.id));
         const map = new Map();
         combined.forEach(p => {
             if (p?.id && !map.has(p.id)) {
@@ -721,18 +755,22 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     </View>
                 )}
 
-                <View style={styles.statsSection}>
-                    <View style={styles.statsRow}>
-                        {statsData.slice(0, 2).map((stat) => (
-                            <StatCard key={stat.id} {...stat} />
-                        ))}
+                {isLoading ? (
+                    <SkeletonStatsGrid style={{ marginBottom: spacing.md }} />
+                ) : (
+                    <View style={styles.statsSection}>
+                        <View style={styles.statsRow}>
+                            {statsData.slice(0, 2).map((stat) => (
+                                <StatCard key={stat.id} {...stat} />
+                            ))}
+                        </View>
+                        <View style={styles.statsRow}>
+                            {statsData.slice(2, 4).map((stat) => (
+                                <StatCard key={stat.id} {...stat} />
+                            ))}
+                        </View>
                     </View>
-                    <View style={styles.statsRow}>
-                        {statsData.slice(2, 4).map((stat) => (
-                            <StatCard key={stat.id} {...stat} />
-                        ))}
-                    </View>
-                </View>
+                )}
 
                 {/* ── Collection Stats Widget ── */}
                 <CollectionWidget
@@ -786,12 +824,18 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         onFilterChange={handleFilterChange} 
                     />
 
-                    {activities.length === 0 ? (
+                    {isLoading ? (
+                        <View>
+                            {[1, 2, 3].map(i => (
+                                <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                            ))}
+                        </View>
+                    ) : activities.length === 0 ? (
                         <View style={styles.emptyState}>
                             <Icon name="inbox" size={48} color={colors.textLight} />
                             <Text style={styles.emptyText}>
-                                {selectedFilter === 'ALL' 
-                                    ? 'No activity recorded yet today' 
+                                {selectedFilter === 'ALL'
+                                    ? 'No activity recorded yet today'
                                     : 'No activities match the selected filter'}
                             </Text>
                         </View>

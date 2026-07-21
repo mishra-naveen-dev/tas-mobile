@@ -2,8 +2,8 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/api';
 import LocationService from '../services/LocationService';
+import { captureFieldActivityLocation } from '../hooks/useFieldActivityLocation';
 import GeocodingService from '../services/GeocodingService';
-import BackgroundTrackingService from '../services/BackgroundTrackingService';
 import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
 
@@ -41,7 +41,11 @@ export const PunchProvider = ({ children }) => {
   const [isActive, setIsActive] = useState(false);
   const [capturedLocation, setCapturedLocation] = useState(null);
   const [isMockLocation, setIsMockLocation] = useState(false);
-  
+  // Milestone 2a: the employee's most recent auto-closed session, if any,
+  // that hasn't been submitted for review yet — powers a "request a review"
+  // banner. See apps.punchverification on the backend.
+  const [pendingAutoClosure, setPendingAutoClosure] = useState(null);
+
   const trackingStartTime = useRef(null);
   const routePoints = useRef([]);
 
@@ -83,6 +87,35 @@ export const PunchProvider = ({ children }) => {
     }
   }, []);
 
+  const checkPendingAutoClosure = useCallback(async () => {
+    try {
+      const res = await api.getLastAutoClosure();
+      setPendingAutoClosure(res.data?.pending ? res.data : null);
+    } catch (err) {
+      // Best-effort only — a failure here must never block the punch screen.
+      if (IS_DEV) console.warn('[Punch] checkPendingAutoClosure error:', err.message);
+    }
+  }, []);
+
+  const submitForgotPunchRequest = useCallback(async (employeeRemarks) => {
+    if (!pendingAutoClosure?.session?.id) {
+      return { success: false, error: 'No auto-closed session to submit' };
+    }
+    try {
+      await api.submitForgotPunchRequest({
+        session: pendingAutoClosure.session.id,
+        employee_remarks: employeeRemarks || '',
+      });
+      setPendingAutoClosure(null);
+      return { success: true };
+    } catch (err) {
+      const errorMsg = err?.response?.data?.error ||
+                      err?.response?.data?.detail ||
+                      err?.message || 'Failed to submit review request';
+      return { success: false, error: errorMsg };
+    }
+  }, [pendingAutoClosure]);
+
   const fetchLocation = useCallback(async () => {
     setPunchState(STATES.FETCHING_LOCATION);
     setErrorMessage(null);
@@ -102,14 +135,14 @@ export const PunchProvider = ({ children }) => {
         if (IS_DEV) console.warn('[Punch] Permission bootstrap error:', e.message);
       }
 
-      const location = await LocationService.getCurrentLocation();
+      const location = await captureFieldActivityLocation();
 
       if (location.error) {
         setPunchState(STATES.ERROR);
         setErrorMessage(location.error);
         return { success: false, error: location.error, errorType: location.errorType };
       }
-      
+
       // Reverse-geocode the fix into a human-readable address (Google, with
       // an on-device coordinate fallback if the API/network is unavailable).
       let address = location.address || '';
@@ -130,6 +163,14 @@ export const PunchProvider = ({ children }) => {
         accuracy: location.accuracy,
         speed: location.speed,
         isMock: location.isMock,
+        altitude: location.altitude,
+        heading: location.heading,
+        battery_level: location.battery_level,
+        is_mock_location: location.is_mock_location,
+        mock_detection_method: location.mock_detection_method,
+        gps_provider: location.gps_provider,
+        network_status: location.network_status,
+        device_timestamp: location.device_timestamp,
       });
       
       setIsMockLocation(location.isMock || false);
@@ -156,7 +197,14 @@ export const PunchProvider = ({ children }) => {
         longitude: locationData.longitude,
         address: locationData.current_address || '',
         accuracy: locationData.accuracy ?? null,
-        customer_address: formData.customer_address || '',
+        altitude: locationData.altitude ?? null,
+        heading: locationData.heading ?? null,
+        battery_level: locationData.battery_level ?? null,
+        is_mock_location: locationData.is_mock_location ?? false,
+        mock_detection_method: locationData.mock_detection_method || '',
+        gps_provider: locationData.gps_provider || '',
+        network_status: locationData.network_status || '',
+        device_timestamp: locationData.device_timestamp || undefined,
         customer_name: formData.customer_name || '',
         reason: formData.reason || '',
         visit_type: formData.visit_type || 'VISIT',
@@ -168,8 +216,22 @@ export const PunchProvider = ({ children }) => {
         travel_type: formData.travel_with || 'ALONE',
         co_employee_id: formData.co_employee_id || '',
         companion_name: formData.co_employee_name || '',
+        companion_phone: formData.co_employee_phone || '',
         vehicle_number: formData.vehicle_number || '',
       };
+      // Only sent on resubmission after the operator confirms an out-of-range
+      // punch with a reason (see the location_out_of_range handling below).
+      if (formData.out_of_range_reason) {
+        payload.out_of_range_reason = formData.out_of_range_reason;
+        payload.out_of_range_comment = formData.out_of_range_comment || '';
+      }
+      // Only sent on resubmission after the operator confirms punching from
+      // the same spot as another customer today (see same_location_duplicate
+      // handling below).
+      if (formData.duplicate_location_reason) {
+        payload.duplicate_location_reason = formData.duplicate_location_reason;
+        payload.duplicate_location_comment = formData.duplicate_location_comment || '';
+      }
       
       if (IS_DEV) console.log('[Punch] Submitting punch:', JSON.stringify(payload, null, 2));
       
@@ -183,33 +245,99 @@ export const PunchProvider = ({ children }) => {
       trackingStartTime.current = Date.now();
       routePoints.current = [];
 
-      // Auto-start background route tracking using the session created by the backend
-      const trackingSessionId = res.data?.tracking_session_id;
-      if (trackingSessionId) {
-        BackgroundTrackingService.start(trackingSessionId).catch((e) => {
-          if (IS_DEV) console.warn('[Punch] BTS start error:', e.message);
-        });
-      }
-
-      // Separate live route tracker (10s GPS pings) — independent session.
-      LiveTrackingService.start().catch((e) => {
-        if (IS_DEV) console.warn('[Punch] Live start error:', e.message);
+      // Lightweight, foreground-only live-distance counter powering the "Live
+      // Stats" card on screen (getTotalDistance() below) — independent of the
+      // server-orchestrated tracking engine, which is what actually keeps
+      // recording once the app is backgrounded/killed (see LiveTrackingService
+      // below). Not battery-critical since it only runs while this screen is
+      // open, so a plain JS watch is fine here.
+      LocationService.startTracking().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Local distance tracking error:', e.message);
       });
+
+      // Server-orchestrated GPS tracking engine (Milestone 1): the backend
+      // already opened this employee's LiveSession as part of the punch-in
+      // call above (apps.livetracking.orchestration.start_session_for_punch)
+      // — attach() hands that existing session id to the native/background
+      // capture path instead of opening a second one.
+      const liveSessionId = res.data?.live_session_id;
+      if (liveSessionId) {
+        LiveTrackingService.attach(liveSessionId, {
+          battery_level: locationData.battery_level ?? null,
+        }).catch((e) => {
+          if (IS_DEV) console.warn('[Punch] Live attach error:', e.message);
+        });
+      } else if (IS_DEV) {
+        console.warn('[Punch] No live_session_id on punch-in response — background tracking not started');
+      }
 
       await fetchTodayPunches();
 
       return { success: true, data: res.data };
     } catch (err) {
       if (IS_DEV) console.error('[Punch] Error:', err?.response?.data || err.message);
-      const errorMsg = err?.response?.data?.error ||
-                      err?.response?.data?.detail ||
-                      err?.response?.data?.message ||
-                      JSON.stringify(err?.response?.data) ||
+      const respData = err?.response?.data;
+
+      // Distinct from a hard failure — the operator can still punch after
+      // picking a reason, so don't drop into the generic error state.
+      if (respData?.error === 'location_out_of_range') {
+        setPunchState(STATES.FORM_OPEN);
+        return {
+          success: false,
+          locationOutOfRange: true,
+          distanceM: respData.distance_m,
+          error: respData.message,
+        };
+      }
+      if (respData?.error === 'same_location_duplicate') {
+        setPunchState(STATES.FORM_OPEN);
+        return {
+          success: false,
+          sameLocationDuplicate: true,
+          otherLoanId: respData.other_loan_id,
+          error: respData.message,
+        };
+      }
+
+      const errorMsg = respData?.error ||
+                      respData?.detail ||
+                      respData?.message ||
+                      JSON.stringify(respData) ||
                       err?.message || 'Failed to punch in';
       setPunchState(STATES.ERROR);
       setErrorMessage(errorMsg);
       return { success: false, error: errorMsg };
     }
+  }, [fetchTodayPunches]);
+
+  // Called by the unified Collection Visit flow (CollectionVisitScreen) after
+  // api.completeVisit() succeeds — that endpoint already did the actual
+  // PUNCH_IN server-side (via AttendancePunchViewSet.create(), reused
+  // internally), so this just mirrors punchIn()'s success branch (client
+  // state + starting the background tracking engine) instead of re-punching.
+  const registerExternalPunchIn = useCallback(async (responseData, locationData = {}) => {
+    setIsActive(true);
+    setPunchState(STATES.IDLE);
+    setSuccess(true);
+    trackingStartTime.current = Date.now();
+    routePoints.current = [];
+
+    LocationService.startTracking().catch((e) => {
+      if (IS_DEV) console.warn('[Punch] Local distance tracking error:', e.message);
+    });
+
+    const liveSessionId = responseData?.live_session_id;
+    if (liveSessionId) {
+      LiveTrackingService.attach(liveSessionId, {
+        battery_level: locationData.battery_level ?? null,
+      }).catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Live attach error:', e.message);
+      });
+    } else if (IS_DEV) {
+      console.warn('[Punch] No live_session_id on complete_visit response — background tracking not started');
+    }
+
+    await fetchTodayPunches();
   }, [fetchTodayPunches]);
 
   const punchOut = useCallback(async () => {
@@ -223,13 +351,33 @@ export const PunchProvider = ({ children }) => {
       let lng = capturedLocation?.longitude || 0;
       let address = capturedLocation?.current_address || '';
       let accuracy = capturedLocation?.accuracy ?? null;
+      let gpsExtra = {
+        altitude: capturedLocation?.altitude ?? null,
+        heading: capturedLocation?.heading ?? null,
+        battery_level: capturedLocation?.battery_level ?? null,
+        is_mock_location: capturedLocation?.is_mock_location ?? false,
+        mock_detection_method: capturedLocation?.mock_detection_method || '',
+        gps_provider: capturedLocation?.gps_provider || '',
+        network_status: capturedLocation?.network_status || '',
+        device_timestamp: capturedLocation?.device_timestamp || undefined,
+      };
 
       try {
-        const currentLocation = await LocationService.getCurrentLocation();
+        const currentLocation = await captureFieldActivityLocation();
         if (!currentLocation.error) {
           lat = currentLocation.latitude;
           lng = currentLocation.longitude;
           accuracy = currentLocation.accuracy ?? accuracy;
+          gpsExtra = {
+            altitude: currentLocation.altitude ?? null,
+            heading: currentLocation.heading ?? null,
+            battery_level: currentLocation.battery_level ?? null,
+            is_mock_location: currentLocation.is_mock_location ?? false,
+            mock_detection_method: currentLocation.mock_detection_method || '',
+            gps_provider: currentLocation.gps_provider || '',
+            network_status: currentLocation.network_status || '',
+            device_timestamp: currentLocation.device_timestamp || undefined,
+          };
           try {
             const geo = await reverseGeocodeWithTimeout(lat, lng);
             address = geo?.fullAddress || geo?.shortAddress || address;
@@ -248,19 +396,23 @@ export const PunchProvider = ({ children }) => {
         longitude: lng,
         address,
         accuracy,
+        ...gpsExtra,
         notes: 'Punch Out',
       };
 
       if (IS_DEV) console.log('[Punch] Submitting punch out:', JSON.stringify(payload, null, 2));
 
-      // Flush remaining GPS points to backend before submitting punch-out
-      await BackgroundTrackingService.stop().catch((e) => {
-        if (IS_DEV) console.warn('[Punch] BTS stop error:', e.message);
-      });
+      // Stop the local distance-stat tracker. Synchronous (not Promise-based)
+      // — it already catches its own errors internally and never throws, so
+      // no .catch() here (chaining one on a non-Promise return value throws
+      // "Cannot read property 'catch' of undefined" on every call).
+      LocationService.stopTracking();
 
-      // Stop the separate live route tracker and flush remaining pings.
-      await LiveTrackingService.stop().catch((e) => {
-        if (IS_DEV) console.warn('[Punch] Live stop error:', e.message);
+      // Detach from the server-orchestrated tracking engine — flushes any
+      // buffered points and stops native capture. The backend itself closes
+      // the LiveSession as part of the punch-out call below.
+      await LiveTrackingService.detach().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Live detach error:', e.message);
       });
 
       await api.post('/attendance/punches/', payload);
@@ -313,7 +465,8 @@ export const PunchProvider = ({ children }) => {
 
   useEffect(() => {
     fetchTodayPunches();
-  }, [fetchTodayPunches]);
+    checkPendingAutoClosure();
+  }, [fetchTodayPunches, checkPendingAutoClosure]);
 
   const value = useMemo(() => ({
     punches,
@@ -332,6 +485,7 @@ export const PunchProvider = ({ children }) => {
     addPunch: punchIn,
     punchIn,
     punchOut,
+    registerExternalPunchIn,
     fetchLocation,
     resetForm,
     dismissError,
@@ -339,10 +493,14 @@ export const PunchProvider = ({ children }) => {
     getTotalDistance,
     getTrackingDuration,
     LocationService,
+    pendingAutoClosure,
+    checkPendingAutoClosure,
+    submitForgotPunchRequest,
   }), [
-    punches, loading, error, errorMessage, success, punchState, isActive, 
-    isMockLocation, capturedLocation, fetchTodayPunches, punchIn, punchOut, 
-    fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration
+    punches, loading, error, errorMessage, success, punchState, isActive,
+    isMockLocation, capturedLocation, fetchTodayPunches, punchIn, punchOut, registerExternalPunchIn,
+    fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration,
+    pendingAutoClosure, checkPendingAutoClosure, submitForgotPunchRequest,
   ]);
 
   return <PunchContext.Provider value={value}>{children}</PunchContext.Provider>;
@@ -369,6 +527,7 @@ export const usePunch = () => {
       addPunch: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       punchIn: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       punchOut: () => Promise.resolve({ success: false, error: 'Context not ready' }),
+      registerExternalPunchIn: () => Promise.resolve(),
       fetchLocation: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       resetForm: () => {},
       dismissError: () => {},
@@ -376,6 +535,9 @@ export const usePunch = () => {
       getTotalDistance: () => 0,
       getTrackingDuration: () => 0,
       LocationService: null,
+      pendingAutoClosure: null,
+      checkPendingAutoClosure: () => {},
+      submitForgotPunchRequest: () => Promise.resolve({ success: false, error: 'Context not ready' }),
     };
   }
   return ctx;

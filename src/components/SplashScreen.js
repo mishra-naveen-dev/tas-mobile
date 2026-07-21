@@ -129,7 +129,7 @@ const SplashScreen = ({ onComplete }) => {
                     <Animated.View style={[styles.shimmerRing, { opacity: shimmerOpacity }]} />
                     <View style={styles.logoBg}>
                         <Image
-                            source={require('../image/Namralogo.jpeg')}
+                            source={require('../image/namra-logo.png')}
                             style={styles.logoImg}
                             resizeMode="contain"
                         />

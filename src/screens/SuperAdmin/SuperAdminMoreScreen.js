@@ -5,6 +5,7 @@ import {
     StyleSheet,
     ScrollView,
     TouchableOpacity,
+    RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -16,12 +17,23 @@ import { colors, typography, spacing } from '../../theme/tokens';
 const SuperAdminMoreScreen = ({ navigation }) => {
     const { user } = useAuth();
     const [userData, setUserData] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
 
-    useEffect(() => {
-        api.get('/organization/profile-update/')
+    const loadUserData = () => {
+        return api.get('/organization/profile-update/')
             .then(res => setUserData(res.data))
             .catch(() => {});
+    };
+
+    useEffect(() => {
+        loadUserData();
     }, []);
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await loadUserData();
+        setRefreshing(false);
+    };
 
     const MenuItem = ({ title, subtitle, icon, color, badge, onPress }) => (
         <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.7}>
@@ -142,6 +154,13 @@ const SuperAdminMoreScreen = ({ navigation }) => {
                         color={colors.warning}
                         onPress={() => navigation.navigate('EmployeeTracking')}
                     />
+                    <MenuItem
+                        title="Customer Map"
+                        subtitle="Hierarchy-scoped customer locations"
+                        icon="map"
+                        color={colors.success}
+                        onPress={() => navigation.navigate('CustomerMap')}
+                    />
 
                     <SectionTitle title="Reports" />
                     <MenuItem
@@ -164,6 +183,15 @@ const SuperAdminMoreScreen = ({ navigation }) => {
                         icon="check-circle"
                         color={colors.danger}
                         onPress={() => navigation.navigate('AdminApprovals')}
+                    />
+
+                    <SectionTitle title="Support" />
+                    <MenuItem
+                        title="Help & Support"
+                        subtitle="Company info, FAQs and IT Technical Support"
+                        icon="help-circle"
+                        color={colors.info}
+                        onPress={() => navigation.navigate('HelpSupport')}
                     />
 
                     <View style={styles.footer}>

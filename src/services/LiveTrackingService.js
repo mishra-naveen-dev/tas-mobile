@@ -6,37 +6,50 @@ import api, { getBaseURL } from '../api/api';
 const IS_DEV = __DEV__;
 
 /**
- * Live route tracking — a standalone system, independent of the existing
- * BackgroundTrackingService. It captures one GPS ping every 10 seconds from
- * punch-in until punch-out and streams them to the `livetracking` backend so
- * the full daily route can be replayed.
+ * Live route tracking — captures GPS pings from punch-in until punch-out and
+ * streams them to the `livetracking` backend so the full daily route can be
+ * replayed.
+ *
+ * Milestone 1 (server-orchestrated tracking engine): the session itself is no
+ * longer opened/closed by this service — PUNCH_IN/PUNCH_OUT
+ * (POST /attendance/punches/) now open and close the LiveSession server-side
+ * (see apps.livetracking.orchestration), returning `live_session_id` on the
+ * punch response. PunchContext calls attach()/detach() (not start()/stop())
+ * to hand that already-existing session id to this service, instead of this
+ * service calling /livetracking/sessions/start//stop/ itself.
  *
  * Lifecycle (wired from PunchContext):
- *   - start()  -> after a successful PUNCH_IN
- *   - stop()   -> on PUNCH_OUT
+ *   - attach(sessionId, { battery_level }) -> after a successful PUNCH_IN
+ *   - detach()                              -> on PUNCH_OUT
  *
  * Reliability:
  *   - Pings are queued and flushed to the server in small batches.
  *   - The queue is persisted to AsyncStorage so it survives an app/OS kill.
- *   - On Android we (re)use the existing native foreground service bridge,
- *     when present, so the OS keeps the process alive while the screen is off.
+ *   - On Android capture is handed to the native foreground service
+ *     (TrackingService.kt), which keeps running (and keeps the OS process
+ *     alive) while the screen is off or the app is backgrounded — a JS timer
+ *     alone does not survive either state. The JS timer path below only ever
+ *     runs on iOS, or as a degraded Android fallback if the native bridge
+ *     call itself fails (logged as a heartbeat so it's visible server-side,
+ *     not silent).
+ *   - The capture interval is backend-configurable (GET /livetracking/config/)
+ *     rather than a fixed constant — see fetchAndApplyConfig().
  */
 
-const CONFIG = {
-  pingIntervalMs:    10 * 1000,  // capture a fresh fix every 10 seconds (per spec)
-  fixTimeoutMs:       9 * 1000,  // per-fix GPS timeout — must be < pingIntervalMs
-  syncIntervalMs:    60 * 1000,  // flush queued pings to server once a minute (low server load)
-  maxBatchSize:               6, // ...or sooner once this many are queued (~60s)
-  maxQueueRetained:        2000, // safety cap on the in-memory/persisted queue
-  maxAccuracyMetres:         80, // reject fixes worse than 80 m (server also checks this)
-  maxSpeedKmh:              200, // reject device-reported speed above this
-  duplicateDistMetres:        3, // suppress if < 3 m from last queued fix…
-  duplicateTimeSecs:         10, // …within 10 seconds
-  stationaryDistMetres:       5, // suppress if < 5 m from last queued fix…
-  stationaryWindowSecs:      60, // …and we already queued a fix within this window
+const DEFAULT_CONFIG = {
+  interval_moving_s: 10,
+  interval_walking_s: 15,
+  interval_stationary_s: 30,
+  interval_low_battery_s: 60,
+  low_battery_threshold_pct: 20,
+  max_accuracy_m: 80,
+  max_speed_kmh: 200,
+  batch_upload_interval_s: 60,
+  batch_max_points: 6,
 };
 
 const QUEUE_KEY = '@tas_live_tracking_queue';
+const CONFIG_CACHE_KEY = '@tas_tracking_config';
 
 // Haversine distance between two coordinates in metres (client-side copy)
 function _distanceM(lat1, lng1, lat2, lng2) {
@@ -51,6 +64,17 @@ function _distanceM(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.asin(Math.sqrt(Math.min(1, a)));
 }
 
+function _uuid() {
+  // RFC-4122-ish v4 UUID, good enough as a client-generated idempotency key
+  // (no crypto dependency needed — the server only needs it to be unique
+  // per session, not cryptographically random).
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 class LiveTrackingService {
   static sessionId = null;
   static isRunning = false;
@@ -58,6 +82,8 @@ class LiveTrackingService {
   static pingTimer = null;
   static syncTimer = null;
   static lastBattery = null;
+  static config = DEFAULT_CONFIG;
+  static usingJsFallback = false;
 
   // Client-side state for pre-queue validation
   static _lastQueuedLat = null;
@@ -65,17 +91,54 @@ class LiveTrackingService {
   static _lastQueuedTs  = null;       // Date.now() ms
   static _lastStationaryKeepTs = null; // Date.now() ms
 
-  static async start(battery_level = null) {
-    // An employee can punch in many times a day. If a session is still running
-    // (e.g. a second punch-in without a punch-out in between), close the old one
-    // cleanly first so we never stream pings into a stale session. The backend's
-    // start endpoint also force-closes any prior active session, so the two stay
-    // in sync and at most one session is ever active.
+  /** Fetch the backend-driven tracking config, cache it, and (if capture is
+   * already running) push it down to the native service. Safe to call
+   * whenever — falls back to the last-cached (or hardcoded default) config
+   * on any failure, so a config-fetch outage never stops tracking. */
+  static async fetchAndApplyConfig() {
+    try {
+      const res = await api.getTrackingConfig();
+      if (res?.data) {
+        this.config = { ...DEFAULT_CONFIG, ...res.data };
+        await AsyncStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(this.config));
+      }
+    } catch (err) {
+      if (IS_DEV) console.warn('[Live] Config fetch failed, using cached/default:', err.message);
+      try {
+        const cached = await AsyncStorage.getItem(CONFIG_CACHE_KEY);
+        if (cached) this.config = { ...DEFAULT_CONFIG, ...JSON.parse(cached) };
+      } catch {}
+    }
+
+    if (Platform.OS === 'android' && this.isRunning && !this.usingJsFallback) {
+      try {
+        NativeModules.TrackingBridge?.updateConfig?.(JSON.stringify(this.config));
+      } catch (e) {
+        if (IS_DEV) console.warn('[Live] updateConfig bridge call failed:', e.message);
+      }
+    }
+    return this.config;
+  }
+
+  /** Attach to an already-open, server-created LiveSession (its id comes
+   * back on the PUNCH_IN response) and start capturing. Does NOT call
+   * /livetracking/sessions/start/ — the server already opened the session
+   * from inside the punch flow. */
+  static async attach(sessionId, { battery_level = null } = {}) {
+    if (!sessionId) {
+      if (IS_DEV) console.warn('[Live] attach() called without a session id');
+      return { success: false, error: 'No session id' };
+    }
+
+    // An employee can punch in many times a day; if we're somehow still
+    // attached to a previous session, detach cleanly first so pings never
+    // stream into a stale one.
     if (this.isRunning || this.sessionId) {
-      await this.stop(battery_level);
+      await this.detach();
     }
 
     this.lastBattery = battery_level;
+    this.sessionId = sessionId;
 
     // Restore any pings left over from a previous crash/kill.
     await this._loadQueue();
@@ -84,67 +147,58 @@ class LiveTrackingService {
     // in foreground without it.
     await this._requestBackgroundPermission();
 
-    try {
-      const res = await api.startLiveSession({ battery_level });
-      this.sessionId = res.data?.session_id || null;
-    } catch (err) {
-      if (IS_DEV) console.warn('[Live] start session failed:', err.message);
-      return { success: false, error: err.message };
-    }
-
-    if (!this.sessionId) {
-      return { success: false, error: 'No session id returned' };
-    }
+    await this.fetchAndApplyConfig();
 
     this.isRunning = true;
+    this.usingJsFallback = false;
 
     if (Platform.OS === 'android') {
-      // Hand capture to the native foreground service: it records a fix every
-      // 10s and POSTs directly, so tracking continues when the app is in the
-      // background, the screen is off, or the app has been closed — none of
-      // which a JS timer survives. JS does NOT capture on Android (would
-      // double-count). Token lifetime is 8h, enough for a full shift.
+      // Hand capture to the native foreground service: it records fixes at a
+      // config-driven, movement-adaptive interval and POSTs directly, so
+      // tracking continues when the app is in the background, the screen is
+      // off, or the app has been closed — none of which a JS timer survives.
+      // JS does NOT capture on Android (would double-count).
       try {
         const token = await AsyncStorage.getItem('access');
         NativeModules.TrackingBridge?.startLiveTracking?.(
           getBaseURL(),
           token || '',
-          this.sessionId
+          this.sessionId,
+          JSON.stringify(this.config),
         );
         if (IS_DEV) console.log('[Live] Native capture started');
       } catch (e) {
         if (IS_DEV) console.warn('[Live] Native start failed, falling back to JS timer:', e.message);
+        this.usingJsFallback = true;
+        this._sendHeartbeat('SERVICE_RESTARTED', 'Native tracking bridge unavailable — JS fallback engaged');
         this._startJsCapture();
       }
     } else {
       // iOS: JS timers run in the background for location apps, so capture here.
+      // (iOS native background tracking is a separate, later phase — see
+      // Milestone 1 scope notes; this JS-timer path is today's best effort.)
       this._startJsCapture();
     }
 
-    if (IS_DEV) console.log('[Live] Started — session:', this.sessionId);
+    if (IS_DEV) console.log('[Live] Attached — session:', this.sessionId);
     return { success: true, sessionId: this.sessionId };
   }
 
-  static async stop(battery_level = null) {
+  /** Stop capturing and detach from the session. Does NOT call
+   * /livetracking/sessions/stop/ — the server already closed the session
+   * from inside the punch-out flow (or a background watcher already did,
+   * for an auto-punch-out). */
+  static async detach() {
     if (!this.isRunning && !this.sessionId) return { success: true };
-    if (IS_DEV) console.log('[Live] Stopping...');
+    if (IS_DEV) console.log('[Live] Detaching...');
 
     if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
     if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null; }
 
     this.isRunning = false;
 
-    // Final flush of any remaining pings before closing the session.
+    // Final flush of any remaining pings before letting go of the session.
     await this._sync(true);
-
-    try {
-      await api.stopLiveSession({
-        session_id: this.sessionId,
-        battery_level: battery_level ?? this.lastBattery,
-      });
-    } catch (err) {
-      if (IS_DEV) console.warn('[Live] stop session failed:', err.message);
-    }
 
     if (Platform.OS === 'android') {
       try {
@@ -156,33 +210,39 @@ class LiveTrackingService {
 
     this.sessionId = null;
     this.queue     = [];
+    this.usingJsFallback = false;
     this._lastQueuedLat       = null;
     this._lastQueuedLng       = null;
     this._lastQueuedTs        = null;
     this._lastStationaryKeepTs = null;
     try { await AsyncStorage.removeItem(QUEUE_KEY); } catch {}
 
-    if (IS_DEV) console.log('[Live] Stopped');
+    if (IS_DEV) console.log('[Live] Detached');
     return { success: true };
   }
 
   // JS-timer capture (iOS, and Android fallback if the native bridge is absent).
-  // Fixed-clock getCurrentPosition every 10s — NOT watchPosition, which is
-  // movement-driven and goes silent when the user is stationary.
+  // Fixed-clock getCurrentPosition on a config-driven interval — NOT
+  // watchPosition, which is movement-driven and goes silent when the user is
+  // stationary. Uses the conservative "stationary" interval rather than the
+  // full moving/walking/stationary/low-battery state machine the native
+  // Android service runs — this path is either iOS (a separate future phase)
+  // or a rare native-bridge-failure fallback, not the primary engine.
   static _startJsCapture() {
+    const intervalMs = (this.config.interval_stationary_s || 30) * 1000;
     this._captureFix();
-    this.pingTimer = setInterval(() => this._captureFix(), CONFIG.pingIntervalMs);
-    this.syncTimer = setInterval(() => this._sync(), CONFIG.syncIntervalMs);
+    this.pingTimer = setInterval(() => this._captureFix(), intervalMs);
+    const syncMs = (this.config.batch_upload_interval_s || 60) * 1000;
+    this.syncTimer = setInterval(() => this._sync(), syncMs);
   }
 
-  // Ask the OS for one fresh fix. Called immediately at start and then every
-  // 10s by the interval timer.
+  // Ask the OS for one fresh fix.
   static _captureFix() {
     if (!this.isRunning) return;
     Geolocation.getCurrentPosition(
       (position) => this._enqueue(position),
       (error) => { if (IS_DEV) console.warn('[Live] GPS error:', error.code, error.message); },
-      { enableHighAccuracy: true, timeout: CONFIG.fixTimeoutMs, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 }
     );
   }
 
@@ -194,8 +254,11 @@ class LiveTrackingService {
     const { latitude, longitude, accuracy, speed, altitude, heading } = coords;
     if (!this._isValidCoord(latitude, longitude)) return;
 
+    const maxAccuracy = this.config.max_accuracy_m ?? 80;
+    const maxSpeed = this.config.max_speed_kmh ?? 200;
+
     // 1 — Accuracy gate (matches server threshold)
-    if (accuracy != null && accuracy > CONFIG.maxAccuracyMetres) {
+    if (accuracy != null && accuracy > maxAccuracy) {
       if (IS_DEV) console.log('[Live] Skipped low-accuracy fix:', accuracy.toFixed(0), 'm');
       return;
     }
@@ -203,7 +266,7 @@ class LiveTrackingService {
     const speedKmh = speed != null ? speed * 3.6 : null; // m/s → km/h
 
     // 2 — Speed gate
-    if (speedKmh != null && speedKmh > CONFIG.maxSpeedKmh) {
+    if (speedKmh != null && speedKmh > maxSpeed) {
       if (IS_DEV) console.log('[Live] Skipped high-speed fix:', speedKmh.toFixed(0), 'km/h');
       return;
     }
@@ -218,17 +281,17 @@ class LiveTrackingService {
       const deltaS = (now - this._lastQueuedTs) / 1000;
 
       // Exact duplicate — same spot within 10 s
-      if (distM < CONFIG.duplicateDistMetres && deltaS < CONFIG.duplicateTimeSecs) {
+      if (distM < 3 && deltaS < 10) {
         if (IS_DEV) console.log('[Live] Skipped duplicate fix:', distM.toFixed(1), 'm');
         return;
       }
 
       // Stationary — barely moved within the stationary window
-      if (distM < CONFIG.stationaryDistMetres) {
+      if (distM < 5) {
         const lastKeepAge = this._lastStationaryKeepTs != null
           ? (now - this._lastStationaryKeepTs) / 1000
           : Infinity;
-        if (lastKeepAge < CONFIG.stationaryWindowSecs) {
+        if (lastKeepAge < 60) {
           if (IS_DEV) console.log('[Live] Skipped stationary fix:', distM.toFixed(1), 'm');
           return;
         }
@@ -251,18 +314,23 @@ class LiveTrackingService {
       heading:       heading ?? null,
       battery_level: this.lastBattery,
       timestamp:     new Date(position.timestamp || now).toISOString(),
+      // Idempotency key (Milestone 1) — lets the server dedup a batch that
+      // gets resent after its HTTP response was lost in transit.
+      client_point_id: _uuid(),
     });
 
-    if (this.queue.length > CONFIG.maxQueueRetained) {
-      this.queue = this.queue.slice(-CONFIG.maxQueueRetained);
+    const maxQueueRetained = 2000;
+    if (this.queue.length > maxQueueRetained) {
+      this.queue = this.queue.slice(-maxQueueRetained);
     }
 
     if (IS_DEV) console.log('[Live] Ping queued, total:', this.queue.length);
 
     // Persist immediately so an OS kill never loses captured points, then flush
-    // once we have a small batch (the 30s timer is unreliable in background).
+    // once we have a small batch (the timer is unreliable in background).
     this._saveQueue();
-    if (this.queue.length >= CONFIG.maxBatchSize) this._sync();
+    const maxBatch = this.config.batch_max_points || 6;
+    if (this.queue.length >= maxBatch) this._sync();
   }
 
   static async _sync(isFinal = false) {
@@ -274,13 +342,22 @@ class LiveTrackingService {
 
     if (IS_DEV) console.log('[Live] Syncing', batch.length, 'pings', isFinal ? '(final)' : '');
 
+    // A batch whose oldest point is well older than one normal sync interval
+    // accumulated while offline — flag it for the server's sync audit trail.
+    const syncMs = (this.config.batch_upload_interval_s || 60) * 1000;
+    const oldestAgeMs = Date.now() - new Date(batch[0]?.timestamp || Date.now()).getTime();
+    const source = oldestAgeMs > syncMs * 2 ? 'offline_sync' : 'live';
+
     try {
-      await api.sendLivePoints({ session_id: this.sessionId, points: batch });
+      await api.sendLivePoints({ session_id: this.sessionId, points: batch, source });
       // Re-persist whatever arrived while the request was in flight (may be empty).
       await this._saveQueue();
     } catch (err) {
       if (IS_DEV) console.warn('[Live] Sync failed, will retry:', err.message);
       // Requeue (preserving chronological order) and persist for crash recovery.
+      // Each point kept its client_point_id, so if the request actually
+      // succeeded server-side before this error (e.g. the response itself
+      // was lost), the retry is a safe no-op for those points server-side.
       this.queue = [...batch, ...this.queue];
       await this._saveQueue();
     }
@@ -306,6 +383,21 @@ class LiveTrackingService {
         if (IS_DEV) console.log('[Live] Restored', points.length, 'offline pings');
       }
     } catch {}
+  }
+
+  /** Fire-and-forget non-GPS lifecycle event — see /livetracking/heartbeat/.
+   * Never throws; a telemetry failure must never affect tracking itself. */
+  static async _sendHeartbeat(eventType, detail = '') {
+    try {
+      await api.sendTrackingHeartbeat({
+        session_id: this.sessionId,
+        event_type: eventType,
+        battery_level: this.lastBattery,
+        detail,
+      });
+    } catch (err) {
+      if (IS_DEV) console.warn('[Live] Heartbeat failed:', eventType, err.message);
+    }
   }
 
   /**

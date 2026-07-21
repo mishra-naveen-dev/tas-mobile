@@ -19,6 +19,9 @@ import PunchScreen from '../screens/Employee/PunchScreen';
 import EmployeeCorrectionScreen from '../screens/Employee/EmployeeCorrectionScreen';
 import EmployeeMoreScreen from '../screens/Employee/EmployeeMoreScreen';
 import CollectionsScreen from '../screens/Common/CollectionsScreen';
+import CollectionDoneScreen from '../screens/Common/CollectionDoneScreen';
+import CollectionVisitScreen from '../screens/Common/CollectionVisitScreen';
+import HelpSupportScreen from '../screens/Common/HelpSupportScreen';
 
 // Admin Screens
 import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
@@ -40,6 +43,7 @@ import ReportsScreen from '../screens/SuperAdmin/ReportsScreen';
 
 // Common Screens
 import RouteMapScreen from '../screens/Common/RouteMapScreen';
+import CustomerMapScreen from '../screens/Common/CustomerMapScreen';
 import PunchHistoryScreen from '../screens/Common/PunchHistoryScreen';
 import PunchCorrectionScreen from '../screens/Common/PunchCorrectionScreen';
 import AllowanceHistoryScreen from '../screens/Common/AllowanceHistoryScreen';
@@ -48,8 +52,11 @@ import DailySummaryScreen from '../screens/Common/DailySummaryScreen';
 import DashboardScreen from '../screens/Common/DashboardScreen';
 import EmployeeListScreen from '../screens/Common/EmployeeListScreen';
 import ProfileScreen from '../screens/Common/ProfileScreen';
+import ProfileUpdateRequestScreen from '../screens/Common/ProfileUpdateRequestScreen';
+import MyRequestsScreen from '../screens/Common/MyRequestsScreen';
 import MyPerformanceScreen from '../screens/Employee/MyPerformanceScreen';
 import MissedPunchDashboardScreen from '../screens/Employee/MissedPunchDashboardScreen';
+import NotificationsScreen from '../screens/Common/NotificationsScreen';
 
 
 import CustomTabBar from '../components/CustomTabBar';
@@ -89,9 +96,9 @@ const EmployeeTabNavigator = () => {
             }}
         >
             <EmployeeTab.Screen name="EmployeeHome" component={EmployeeHomeScreen} />
-            <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
-            <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
             <EmployeeTab.Screen name="EmployeeCollections" component={CollectionsScreen} />
+            <EmployeeTab.Screen name="EmployeePunch" component={EmployeePunchScreen} />
+            <EmployeeTab.Screen name="EmployeeCorrection" component={EmployeeCorrectionScreen} />
             <EmployeeTab.Screen name="EmployeeMore" component={EmployeeMoreScreen} />
         </EmployeeTab.Navigator>
     );
@@ -101,7 +108,10 @@ const EmployeeStackNavigator = () => (
     <EmployeeStack.Navigator screenOptions={commonScreenOptions}>
         <EmployeeStack.Screen name="EmployeeTabs" component={EmployeeTabNavigator} />
         <EmployeeStack.Screen name="Punch" component={EmployeePunchScreen} />
+        <EmployeeStack.Screen name="CollectionDone" component={CollectionDoneScreen} />
+        <EmployeeStack.Screen name="CollectionVisit" component={CollectionVisitScreen} />
         <EmployeeStack.Screen name="RouteMap" component={RouteMapScreen} />
+        <EmployeeStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <EmployeeStack.Screen name="PunchHistory" component={PunchHistoryScreen} />
         <EmployeeStack.Screen name="PunchCorrection" component={PunchCorrectionScreen} />
         <EmployeeStack.Screen name="AllowanceHistory" component={AllowanceHistoryScreen} />
@@ -111,6 +121,10 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="MissedPunchDashboard" component={MissedPunchDashboardScreen} />
         <EmployeeStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <EmployeeStack.Screen name="Profile" component={ProfileScreen} />
+        <EmployeeStack.Screen name="ProfileUpdateRequest" component={ProfileUpdateRequestScreen} />
+        <EmployeeStack.Screen name="MyRequests" component={MyRequestsScreen} />
+        <EmployeeStack.Screen name="Notifications" component={NotificationsScreen} />
+        <EmployeeStack.Screen name="HelpSupport" component={HelpSupportScreen} />
     </EmployeeStack.Navigator>
 );
 
@@ -120,9 +134,12 @@ const AdminStackNavigator = () => (
         <AdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
         <AdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <AdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <AdminStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <AdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <AdminStack.Screen name="Profile" component={ProfileScreen} />
+        <AdminStack.Screen name="Notifications" component={NotificationsScreen} />
+        <AdminStack.Screen name="HelpSupport" component={HelpSupportScreen} />
     </AdminStack.Navigator>
 );
 
@@ -207,6 +224,7 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
         <SuperAdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <SuperAdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <SuperAdminStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <SuperAdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <SuperAdminStack.Screen name="UserManagement" component={UserManagementScreen} />
         <SuperAdminStack.Screen name="EmployeeList" component={EmployeeListScreen} />
@@ -216,6 +234,8 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="CreateUser" component={CreateUserScreen} />
         <SuperAdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <SuperAdminStack.Screen name="Profile" component={ProfileScreen} />
+        <SuperAdminStack.Screen name="Notifications" component={NotificationsScreen} />
+        <SuperAdminStack.Screen name="HelpSupport" component={HelpSupportScreen} />
     </SuperAdminStack.Navigator>
 );
 

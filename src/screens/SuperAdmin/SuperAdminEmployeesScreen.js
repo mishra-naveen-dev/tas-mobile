@@ -6,17 +6,20 @@ import {
     FlatList,
     TouchableOpacity,
     TextInput,
-    SafeAreaView
+    SafeAreaView,
+    RefreshControl
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import HeroHeader from '../../components/HeroHeader';
 import { colors, typography, spacing } from '../../theme/tokens';
+import { SkeletonListItem } from '../../components/SkeletonComponents';
 
 const SuperAdminEmployeesScreen = ({ navigation }) => {
     const [employees, setEmployees] = useState([]);
     const [filteredEmployees, setFilteredEmployees] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [filter, setFilter] = useState('all');
     const [userData, setUserData] = useState(null);
@@ -26,11 +29,12 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
             const res = await api.get('/organization/profile-update/');
             setUserData(res.data);
         } catch (err) {
-            console.log('Error fetching user:', err.message);
+            if (__DEV__) console.log('Error fetching user:', err.message);
         }
     };
 
-    const fetchEmployees = async () => {
+    const fetchEmployees = async (isRefresh = false) => {
+        if (isRefresh) setRefreshing(true); else setLoading(true);
         try {
             const res = await api.get('/organization/users/');
             if (res.data && Array.isArray(res.data)) {
@@ -38,10 +42,16 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
                 setFilteredEmployees(res.data);
             }
         } catch (err) {
-            console.log('Error fetching employees:', err);
+            if (__DEV__) console.log('Error fetching employees:', err);
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
+    };
+
+    const onRefresh = () => {
+        fetchUserData();
+        fetchEmployees(true);
     };
 
     useEffect(() => {
@@ -181,21 +191,30 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
                     ))}
                 </View>
 
-                <FlatList
-                    data={filteredEmployees}
-                    renderItem={({ item }) => <EmployeeCard item={item} />}
-                    keyExtractor={(item, index) => item.id ? item.id.toString() : `emp-${index}`}
-                    contentContainerStyle={styles.listContent}
-                    showsVerticalScrollIndicator={false}
-                    ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <Icon name="users" size={64} color={colors.textLight} />
-                            <Text style={styles.emptyText}>
-                                {loading ? 'Loading employees...' : 'No employees found'}
-                            </Text>
-                        </View>
-                    }
-                />
+                {loading && filteredEmployees.length === 0 ? (
+                    <View style={{ padding: spacing.md }}>
+                        {[1, 2, 3, 4, 5].map(i => (
+                            <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                        ))}
+                    </View>
+                ) : (
+                    <FlatList
+                        data={filteredEmployees}
+                        renderItem={({ item }) => <EmployeeCard item={item} />}
+                        keyExtractor={(item, index) => item.id ? item.id.toString() : `emp-${index}`}
+                        contentContainerStyle={styles.listContent}
+                        showsVerticalScrollIndicator={false}
+                        refreshControl={
+                            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+                        }
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <Icon name="users" size={64} color={colors.textLight} />
+                                <Text style={styles.emptyText}>No employees found</Text>
+                            </View>
+                        }
+                    />
+                )}
             </View>
         </SafeAreaView>
     );

@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { usePunch, STATES } from '../../context/PunchContext';
+import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 
@@ -65,6 +66,49 @@ const Banner = ({ message, type, onDismiss }) => {
   );
 };
 
+// Milestone 2a: shown when the employee's last tracking session ended via
+// auto-punch-out (11h max duration / 2.5h inactivity) rather than a manual
+// punch-out — lets them flag it for a Manager/Regional Manager to review
+// against the recorded GPS route instead of relying on remarks alone.
+const AutoClosureBanner = ({ pendingAutoClosure, onSubmit }) => {
+  const [submitting, setSubmitting] = useState(false);
+  if (!pendingAutoClosure?.session) return null;
+
+  const endTime = pendingAutoClosure.session.end_time
+    ? new Date(pendingAutoClosure.session.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '';
+
+  const handlePress = () => {
+    Alert.alert(
+      'Request a Review?',
+      `Your last session ended automatically${endTime ? ` at ${endTime}` : ''}. ` +
+      `A Manager will review the recorded GPS route before approving.`,
+      [
+        { text: 'Not Now', style: 'cancel' },
+        {
+          text: 'Request Review', onPress: async () => {
+            setSubmitting(true);
+            const result = await onSubmit();
+            setSubmitting(false);
+            if (!result.success) {
+              Alert.alert('Could not submit', result.error || 'Please try again later.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  return (
+    <TouchableOpacity style={styles.autoClosureBanner} onPress={handlePress} disabled={submitting}>
+      <Icon name="alert-triangle" size={18} color={colors.warning} />
+      <Text style={styles.autoClosureText}>
+        {submitting ? 'Submitting...' : `Session ended automatically${endTime ? ` at ${endTime}` : ''} — tap to request review`}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
 const GPSBadge = ({ isMock, isFetching }) => {
   if (isFetching) {
     return (
@@ -97,6 +141,7 @@ const EmployeePunchScreen = ({ navigation }) => {
     error, errorMessage, success,
     punchIn, punchOut, fetchLocation, resetForm, dismissError,
     getTotalDistance, getTrackingDuration, LocationService,
+    pendingAutoClosure, submitForgotPunchRequest,
   } = usePunch();
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -110,145 +155,25 @@ const EmployeePunchScreen = ({ navigation }) => {
     payment_mode: '',
     upi_ref: '',
     cheque_no: '',
-    customer_address: '',
     customer_name: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
+    co_employee_phone: '',
     vehicle_number: '',
   });
 
-  // ── Address proximity helpers ──────────────────────────────────────────────
-  // Haversine distance between two GPS points, returns metres.
-  const haversineMeters = (lat1, lon1, lat2, lon2) => {
-    const R = 6371000;
-    const toRad = (d) => (d * Math.PI) / 180;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  };
+  // Out-of-range geofence confirmation (shown when the backend reports the
+  // punch is more than 200m from the customer's stored geo-tag).
+  const [outOfRangeModal, setOutOfRangeModal] = useState({ visible: false, distanceM: 0 });
+  const [outOfRangeReason, setOutOfRangeReason] = useState('');
+  const [outOfRangeComment, setOutOfRangeComment] = useState('');
 
-  // Bounding box ~250 m around a point — used for the on-focus nearby fetch.
-  const bbox250m = (lat, lng) => {
-    const d = 0.00225;
-    return `${lng - d},${lat - d},${lng + d},${lat + d}`;
-  };
-
-  // ~200 m bounding box — used with bounded=1 for typed queries.
-  const bbox100m = (lat, lng) => {
-    const d = 0.0018; // ~200 m
-    return `${lng - d},${lat - d},${lng + d},${lat + d}`;
-  };
-
-  // Nearby address suggestions (OpenStreetMap Nominatim — no API key needed).
-  const [addressSuggestions, setAddressSuggestions] = useState([]);
-  const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
-  const [addressVerified, setAddressVerified] = useState(false);
-  const [addressLoading, setAddressLoading] = useState(false);
-  const [addressWarn, setAddressWarn] = useState('');
-  const addressDebounceRef = useRef(null);
-  const selectingAddressRef = useRef(false);
-
-  const fetchNearbyAddresses = useCallback(async (query = '') => {
-    if (!localLocation) return;
-    setAddressLoading(true);
-    try {
-      const { latitude, longitude } = localLocation;
-      const bb = bbox250m(latitude, longitude);
-      const headers = { 'User-Agent': 'TAS-Enterprise/1.0 (field-operations)' };
-
-      if (!query || query.length < 2) {
-        // On focus: reverse-geocode current position + nearby places.
-        const [revRes, nearRes] = await Promise.all([
-          fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1&zoom=18`,
-            { headers }
-          ),
-          fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&bounded=1&viewbox=${bb}&limit=6&countrycodes=in`,
-            { headers }
-          ),
-        ]);
-        const rev = await revRes.json();
-        const near = await nearRes.json();
-
-        const list = [];
-        if (rev?.display_name) {
-          list.push({ id: '__current__', label: rev.display_name, lat: latitude, lng: longitude, isCurrent: true });
-        }
-        (near || []).forEach((p, i) => {
-          if (p.display_name !== rev?.display_name) {
-            list.push({ id: `n${i}`, label: p.display_name, lat: parseFloat(p.lat), lng: parseFloat(p.lon) });
-          }
-        });
-        setAddressSuggestions(list.slice(0, 6));
-      } else {
-        // Typed query: wide search biased toward the user's area (no bounded
-        // restriction so "Sakar 3", "Main Road", etc. resolve correctly).
-        const wideBb = bbox100m(latitude, longitude);
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&bounded=1&viewbox=${wideBb}&countrycodes=in&limit=8`,
-          { headers }
-        );
-        const results = await res.json();
-        setAddressSuggestions(
-          (results || []).map((p, i) => ({
-            id: `s${i}`,
-            label: p.display_name,
-            lat: parseFloat(p.lat),
-            lng: parseFloat(p.lon),
-          }))
-        );
-      }
-      setShowAddressSuggestions(true);
-    } catch {
-      setAddressSuggestions([]);
-    } finally {
-      setAddressLoading(false);
-    }
-  }, [localLocation]);
-
-  const applyAddressSuggestion = (s) => {
-    selectingAddressRef.current = false;
-    updateForm('customer_address', s.label);
-    setAddressVerified(true);
-    setAddressWarn('');
-    setShowAddressSuggestions(false);
-    setAddressSuggestions([]);
-  };
-
-  // Called on submit: geocode a manually typed address and verify proximity.
-  const verifyAddressOnSubmit = useCallback(async () => {
-    if (!localLocation || !form.customer_address || addressVerified) return true;
-    try {
-      const { latitude, longitude } = localLocation;
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(form.customer_address)}&format=json&limit=1&countrycodes=in`,
-        { headers: { 'User-Agent': 'TAS-Enterprise/1.0' } }
-      );
-      const results = await res.json();
-      if (!results?.length) return true; // Can't geocode → allow, no data
-      const dist = haversineMeters(latitude, longitude, parseFloat(results[0].lat), parseFloat(results[0].lon));
-      if (dist > 250) {
-        return await new Promise((resolve) =>
-          Alert.alert(
-            'Address Out of Range',
-            `The address you entered is ~${Math.round(dist)} m from your GPS location (limit 250 m). It may be incorrect.\n\nProceed anyway?`,
-            [
-              { text: 'Fix Address', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Proceed', style: 'destructive', onPress: () => resolve(true) },
-            ]
-          )
-        );
-      }
-      return true;
-    } catch {
-      return true; // Network error → allow
-    }
-  }, [localLocation, form.customer_address, addressVerified]);
+  // Same-location confirmation (shown when this punch lands within ~20m of
+  // another customer already punched today).
+  const [dupLocationModal, setDupLocationModal] = useState({ visible: false, otherLoanId: '' });
+  const [dupLocationReason, setDupLocationReason] = useState('');
+  const [dupLocationComment, setDupLocationComment] = useState('');
 
   // Loan ID autocomplete from the employee's uploaded collection records.
   const [loanSuggestions, setLoanSuggestions] = useState([]);
@@ -279,7 +204,6 @@ const EmployeePunchScreen = ({ navigation }) => {
       ...prev,
       loan_id: rec.loan_id,
       customer_name: rec.customer_name && rec.customer_name !== 'Unknown' ? rec.customer_name : prev.customer_name,
-      customer_address: [rec.address, rec.pincode].filter(Boolean).join(', ') || prev.customer_address,
       amount: rec.amount_due ? String(rec.amount_due) : prev.amount,
     }));
     setShowLoanSuggestions(false);
@@ -410,60 +334,22 @@ const EmployeePunchScreen = ({ navigation }) => {
       }
     }
 
+    if (form.travel_with === 'WITH_EMPLOYEE') {
+      if (!form.co_employee_phone) {
+        Alert.alert('Required', 'Employee phone number is required');
+        return false;
+      }
+      if (!isPhone(form.co_employee_phone)) {
+        Alert.alert('Invalid', 'Enter a valid 10-digit phone number');
+        return false;
+      }
+    }
+
     return true;
   };
 
-  const handleSubmit = async () => {
-    if (!validateForm()) return;
-    if (!localLocation) {
-      Alert.alert('Error', 'Location not captured');
-      return;
-    }
-    if (form.customer_address) {
-      const ok = await verifyAddressOnSubmit();
-      if (!ok) return;
-    }
-
-    const locationData = {
-      ...localLocation,
-      current_address: localLocation.current_address,
-    };
-
-    const result = await punchIn(form, locationData);
-
-    if (result.success) {
-      // Auto-close the dialog once the punch is recorded, instead of leaving
-      // it open for another entry.
-      setModalVisible(false);
-      setReasonDropdownOpen(false);
-      setForm({
-        reason: '',
-        visit_type: '',
-        loan_id: '',
-        amount: '',
-        payment_mode: '',
-        upi_ref: '',
-        cheque_no: '',
-        customer_address: '',
-        customer_name: '',
-        travel_with: 'ALONE',
-        co_employee_id: '',
-        co_employee_name: '',
-        vehicle_number: '',
-      });
-      setLocalLocation(null);
-      setAddressVerified(false);
-      setAddressWarn('');
-      setAddressSuggestions([]);
-      setShowAddressSuggestions(false);
-      resetForm();
-      Alert.alert('Success', 'Punch recorded!');
-    }
-  };
-
-  const closeModal = () => {
+  const resetPunchForm = () => {
     setModalVisible(false);
-    setLocalLocation(null);
     setReasonDropdownOpen(false);
     setForm({
       reason: '',
@@ -473,11 +359,107 @@ const EmployeePunchScreen = ({ navigation }) => {
       payment_mode: '',
       upi_ref: '',
       cheque_no: '',
-      customer_address: '',
       customer_name: '',
       travel_with: 'ALONE',
       co_employee_id: '',
       co_employee_name: '',
+      co_employee_phone: '',
+      vehicle_number: '',
+    });
+    setLocalLocation(null);
+    setOutOfRangeModal({ visible: false, distanceM: 0 });
+    setOutOfRangeReason('');
+    setOutOfRangeComment('');
+    setDupLocationModal({ visible: false, otherLoanId: '' });
+    setDupLocationReason('');
+    setDupLocationComment('');
+  };
+
+  const submitPunch = async (extra = {}) => {
+    const locationData = {
+      ...localLocation,
+      current_address: localLocation.current_address,
+    };
+
+    const result = await punchIn({ ...form, ...extra }, locationData);
+
+    if (result.success) {
+      // Auto-close the dialog once the punch is recorded, instead of leaving
+      // it open for another entry.
+      resetPunchForm();
+      resetForm();
+      Alert.alert('Success', 'Punch recorded!');
+      return;
+    }
+
+    if (result.locationOutOfRange) {
+      setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
+      return;
+    }
+    if (result.sameLocationDuplicate) {
+      setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
+      return;
+    }
+    // Any other failure already surfaces via the error Banner (errorMessage
+    // state set in PunchContext) — nothing else to do here.
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
+    if (!localLocation) {
+      Alert.alert('Error', 'Location not captured');
+      return;
+    }
+    await submitPunch();
+  };
+
+  const handleConfirmOutOfRange = async () => {
+    if (!outOfRangeReason) {
+      Alert.alert('Required', 'Please select a reason.');
+      return;
+    }
+    if (outOfRangeReason === 'OTHER' && !outOfRangeComment.trim()) {
+      Alert.alert('Required', 'Please add a comment for "Other".');
+      return;
+    }
+    await submitPunch({ out_of_range_reason: outOfRangeReason, out_of_range_comment: outOfRangeComment });
+  };
+
+  const handleConfirmDupLocation = async () => {
+    if (!dupLocationReason) {
+      Alert.alert('Required', 'Please select a reason.');
+      return;
+    }
+    if (dupLocationReason === 'OTHER' && !dupLocationComment.trim()) {
+      Alert.alert('Required', 'Please add a comment for "Other".');
+      return;
+    }
+    await submitPunch({ duplicate_location_reason: dupLocationReason, duplicate_location_comment: dupLocationComment });
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    setLocalLocation(null);
+    setReasonDropdownOpen(false);
+    setOutOfRangeModal({ visible: false, distanceM: 0 });
+    setOutOfRangeReason('');
+    setOutOfRangeComment('');
+    setDupLocationModal({ visible: false, otherLoanId: '' });
+    setDupLocationReason('');
+    setDupLocationComment('');
+    setForm({
+      reason: '',
+      visit_type: '',
+      loan_id: '',
+      amount: '',
+      payment_mode: '',
+      upi_ref: '',
+      cheque_no: '',
+      customer_name: '',
+      travel_with: 'ALONE',
+      co_employee_id: '',
+      co_employee_name: '',
+      co_employee_phone: '',
       vehicle_number: '',
     });
     resetForm();
@@ -500,6 +482,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       if (key === 'travel_with') {
         updated.co_employee_id = '';
         updated.co_employee_name = '';
+        updated.co_employee_phone = '';
         updated.vehicle_number = '';
       }
       return updated;
@@ -540,30 +523,40 @@ const EmployeePunchScreen = ({ navigation }) => {
     <SafeAreaView style={styles.container} edges={['top']}>
       {errorMessage && <Banner message={errorMessage} type="error" onDismiss={dismissError} />}
       {success && <Banner message={isActive ? 'Punch recorded!' : 'Punch Out completed!'} type="success" onDismiss={() => { }} />}
+      {!isActive && (
+        <AutoClosureBanner pendingAutoClosure={pendingAutoClosure} onSubmit={submitForgotPunchRequest} />
+      )}
 
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <Icon name="arrow-left" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.title}>{isActive ? 'Tracking' : 'Punch'}</Text>
-        {isActive ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TouchableOpacity
-            style={[styles.punchOutHeaderBtn, isPunchingOut && styles.disabled]}
-            onPress={handlePunchOutPress}
-            disabled={isPunchingOut}
+            style={styles.forgotPunchBtn}
+            onPress={() => navigation.navigate('PunchCorrection')}
+            accessibilityLabel="Forgot to punch? Request a correction"
           >
-            {isPunchingOut ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Icon name="log-out" size={14} color="#fff" />
-                <Text style={styles.punchOutHeaderText}>Punch Out</Text>
-              </>
-            )}
+            <Icon name="edit-3" size={18} color={colors.primary} />
           </TouchableOpacity>
-        ) : (
-          <View style={{ width: 80 }} />
-        )}
+          {isActive && (
+            <TouchableOpacity
+              style={[styles.punchOutHeaderBtn, isPunchingOut && styles.disabled]}
+              onPress={handlePunchOutPress}
+              disabled={isPunchingOut}
+            >
+              {isPunchingOut ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Icon name="log-out" size={14} color="#fff" />
+                  <Text style={styles.punchOutHeaderText}>Punch Out</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
@@ -695,10 +688,27 @@ const EmployeePunchScreen = ({ navigation }) => {
                 <TextInput
                   style={styles.reasonInput}
                   value={form.reason}
-                  onChangeText={(t) => updateForm('reason', t)}
+                  onChangeText={(t) => {
+                    updateForm('reason', t);
+                    // The dropdown only ever lists fixed presets (no filtering
+                    // as you type) — once the typed text no longer matches one
+                    // exactly, those suggestions are irrelevant, so close it
+                    // automatically instead of leaving it open over a custom,
+                    // free-typed reason.
+                    if (reasonDropdownOpen && !REASON_PRESETS.some((r) => r.value === t)) {
+                      setReasonDropdownOpen(false);
+                    }
+                  }}
                   placeholder="Type or select a reason..."
                   placeholderTextColor={colors.textMuted}
                   onFocus={() => setReasonDropdownOpen(true)}
+                  onBlur={() => {
+                    // Slight delay so a tap on a dropdown option still
+                    // registers its onPress before the list unmounts — closing
+                    // synchronously on blur can race ahead of the touch and
+                    // swallow the tap on some Android devices.
+                    setTimeout(() => setReasonDropdownOpen(false), 150);
+                  }}
                 />
                 <TouchableOpacity
                   style={styles.reasonToggle}
@@ -844,108 +854,6 @@ const EmployeePunchScreen = ({ navigation }) => {
                 </>
               )}
 
-              <Text style={styles.label}>Customer Address</Text>
-              {/* Smart address input — shows nearby addresses (within 250 m of GPS) */}
-              <View style={{ position: 'relative', zIndex: 50 }}>
-                <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', paddingVertical: 0, paddingHorizontal: 0 }]}>
-                  <TextInput
-                    style={{ flex: 1, color: colors.text, fontSize: 14, paddingVertical: 10, paddingHorizontal: 12 }}
-                    value={form.customer_address}
-                    onChangeText={(t) => {
-                      updateForm('customer_address', t);
-                      setAddressVerified(false);
-                      setAddressWarn('');
-                      if (addressDebounceRef.current) clearTimeout(addressDebounceRef.current);
-                      addressDebounceRef.current = setTimeout(() => fetchNearbyAddresses(t), 400);
-                    }}
-                    onFocus={() => fetchNearbyAddresses('')}
-                    onBlur={() => {
-                      setTimeout(() => {
-                        if (!selectingAddressRef.current) setShowAddressSuggestions(false);
-                      }, 300);
-                    }}
-                    placeholder="Tap to see nearby addresses…"
-                    placeholderTextColor={colors.textMuted}
-                    multiline={false}
-                  />
-                  {addressLoading
-                    ? <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 10 }} />
-                    : addressVerified
-                      ? <Icon name="check-circle" size={16} color="#16a34a" style={{ marginRight: 10 }} />
-                      : <Icon name="map-pin" size={16} color={colors.textMuted} style={{ marginRight: 10 }} />
-                  }
-                </View>
-
-                {/* GPS-verified badge */}
-                {addressVerified && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3, marginLeft: 2, gap: 4 }}>
-                    <Icon name="shield" size={10} color="#16a34a" />
-                    <Text style={{ fontSize: 10, color: '#16a34a', fontWeight: '700', letterSpacing: 0.3 }}>
-                      GPS VERIFIED · WITHIN 250 m
-                    </Text>
-                  </View>
-                )}
-
-                {/* Out-of-range warning */}
-                {!!addressWarn && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3, marginLeft: 2, gap: 4 }}>
-                    <Icon name="alert-triangle" size={10} color="#d97706" />
-                    <Text style={{ fontSize: 10, color: '#d97706', fontWeight: '600' }}>{addressWarn}</Text>
-                  </View>
-                )}
-
-                {/* Nearby suggestions dropdown */}
-                {showAddressSuggestions && addressSuggestions.length > 0 && (
-                  <View style={{
-                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 999,
-                    backgroundColor: colors.surface || '#fff',
-                    borderRadius: 10,
-                    borderWidth: 1, borderColor: colors.border || '#e5e7eb',
-                    elevation: 12,
-                    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.18, shadowRadius: 10,
-                    maxHeight: 240, overflow: 'hidden',
-                  }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', padding: 8, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: colors.border || '#f3f4f6' }}>
-                      <Icon name="map-pin" size={11} color={colors.primary} />
-                      <Text style={{ fontSize: 10, color: colors.primary, fontWeight: '700', marginLeft: 4, letterSpacing: 0.4 }}>
-                        NEARBY ADDRESSES · 250 m RADIUS
-                      </Text>
-                    </View>
-                    <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
-                      {addressSuggestions.map((s) => (
-                        <TouchableOpacity
-                          key={s.id}
-                          style={{
-                            flexDirection: 'row', alignItems: 'flex-start',
-                            paddingHorizontal: 12, paddingVertical: 10,
-                            borderBottomWidth: 1, borderBottomColor: colors.border || '#f3f4f6', gap: 8,
-                          }}
-                          onPressIn={() => { selectingAddressRef.current = true; }}
-                          onPress={() => applyAddressSuggestion(s)}
-                          onPressOut={() => { if (!selectingAddressRef.current) return; }}
-                        >
-                          <Icon
-                            name={s.isCurrent ? 'crosshair' : 'map'}
-                            size={13}
-                            color={s.isCurrent ? colors.primary : colors.textMuted}
-                            style={{ marginTop: 1 }}
-                          />
-                          <Text style={{ flex: 1, fontSize: 12, color: colors.text, lineHeight: 16 }} numberOfLines={3}>
-                            {s.label}
-                          </Text>
-                          {s.isCurrent && (
-                            <View style={{ backgroundColor: (colors.primary || '#dc2626') + '18', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' }}>
-                              <Text style={{ fontSize: 9, color: colors.primary, fontWeight: '800', letterSpacing: 0.3 }}>YOU</Text>
-                            </View>
-                          )}
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  </View>
-                )}
-              </View>
-
               <Text style={styles.label}>Travel With</Text>
               <View style={styles.chips}>
                 {TRAVEL_WITH.map((t) => (
@@ -961,6 +869,16 @@ const EmployeePunchScreen = ({ navigation }) => {
                   <TextInput style={styles.input} value={form.co_employee_id} onChangeText={(t) => updateForm('co_employee_id', t)} placeholder="Employee ID" placeholderTextColor={colors.textMuted} />
                   <Text style={styles.label}>Employee Name</Text>
                   <TextInput style={styles.input} value={form.co_employee_name} onChangeText={(t) => updateForm('co_employee_name', t)} placeholder="Employee Name" placeholderTextColor={colors.textMuted} />
+                  <Text style={styles.label}>Employee Phone Number</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={form.co_employee_phone}
+                    onChangeText={(t) => updateForm('co_employee_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                    placeholder="10-digit mobile number"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="number-pad"
+                    maxLength={10}
+                  />
                 </>
               )}
             </ScrollView>
@@ -974,14 +892,152 @@ const EmployeePunchScreen = ({ navigation }) => {
           </View>
         </View>
       </Modal>
+
+      {/* Out-of-range geofence confirmation — shown when the punch is more
+          than 200m from the customer's stored location. */}
+      <Modal visible={outOfRangeModal.visible} transparent animationType="fade" onRequestClose={() => setOutOfRangeModal({ visible: false, distanceM: 0 })}>
+        <View style={styles.oorOverlay}>
+          <View style={styles.oorCard}>
+            <View style={styles.oorHeader}>
+              <Icon name="alert-triangle" size={22} color={colors.warning} />
+              <Text style={styles.oorTitle}>Location Out of Range</Text>
+            </View>
+            <Text style={styles.oorMessage}>
+              Your location is out of range by {Math.round(outOfRangeModal.distanceM || 0)}m from the customer location.
+              You can still punch by selecting a reason below — it will be sent for supervisor review.
+            </Text>
+
+            <Text style={styles.label}>Reason *</Text>
+            {[
+              { value: 'FORGOT', label: 'Forgot to punch at customer location' },
+              { value: 'WRONG_LOCATION', label: 'At customer location — existing customer location is wrong' },
+              { value: 'OTHER', label: 'Others' },
+            ].map((r) => (
+              <TouchableOpacity
+                key={r.value}
+                style={styles.oorReasonRow}
+                onPress={() => setOutOfRangeReason(r.value)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.oorRadio, outOfRangeReason === r.value && styles.oorRadioActive]}>
+                  {outOfRangeReason === r.value && <View style={styles.oorRadioDot} />}
+                </View>
+                <Text style={styles.oorReasonText}>{r.label}</Text>
+              </TouchableOpacity>
+            ))}
+
+            {outOfRangeReason === 'OTHER' && (
+              <TextInput
+                style={[styles.input, { height: 70, textAlignVertical: 'top', marginTop: spacing.xs }]}
+                value={outOfRangeComment}
+                onChangeText={setOutOfRangeComment}
+                placeholder="Please describe the reason..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+              />
+            )}
+
+            <View style={[styles.modalFooter, { paddingHorizontal: 0 }]}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => setOutOfRangeModal({ visible: false, distanceM: 0 })}
+              >
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.submitBtn, isSubmitting && styles.disabled]}
+                onPress={handleConfirmOutOfRange}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.submitText}>Confirm & Punch</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Same-location confirmation — shown when this punch lands within
+          ~20m of another customer already punched today. */}
+      <Modal visible={dupLocationModal.visible} transparent animationType="fade" onRequestClose={() => setDupLocationModal({ visible: false, otherLoanId: '' })}>
+        <View style={styles.oorOverlay}>
+          <View style={styles.oorCard}>
+            <View style={styles.oorHeader}>
+              <Icon name="users" size={22} color={colors.warning} />
+              <Text style={styles.oorTitle}>Same Location as Another Customer</Text>
+            </View>
+            <Text style={styles.oorMessage}>
+              Another customer (Loan {dupLocationModal.otherLoanId}) was already punched from this exact
+              location today. You can still punch by selecting a reason below — it will be sent for
+              supervisor review.
+            </Text>
+
+            <Text style={styles.label}>Reason *</Text>
+            {[
+              { value: 'GROUP_MEETING', label: 'Group / joint meeting — multiple customers at this location' },
+              { value: 'SHARED_BUILDING', label: 'Shared building or complex — customer is also here' },
+              { value: 'OTHER', label: 'Others' },
+            ].map((r) => (
+              <TouchableOpacity
+                key={r.value}
+                style={styles.oorReasonRow}
+                onPress={() => setDupLocationReason(r.value)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.oorRadio, dupLocationReason === r.value && styles.oorRadioActive]}>
+                  {dupLocationReason === r.value && <View style={styles.oorRadioDot} />}
+                </View>
+                <Text style={styles.oorReasonText}>{r.label}</Text>
+              </TouchableOpacity>
+            ))}
+
+            {dupLocationReason === 'OTHER' && (
+              <TextInput
+                style={[styles.input, { height: 70, textAlignVertical: 'top', marginTop: spacing.xs }]}
+                value={dupLocationComment}
+                onChangeText={setDupLocationComment}
+                placeholder="Please describe the reason..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+              />
+            )}
+
+            <View style={[styles.modalFooter, { paddingHorizontal: 0 }]}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => setDupLocationModal({ visible: false, otherLoanId: '' })}
+              >
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.submitBtn, isSubmitting && styles.disabled]}
+                onPress={handleConfirmDupLocation}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.submitText}>Confirm & Punch</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  oorOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+  oorCard: { width: '100%', maxWidth: 420, backgroundColor: colors.surface, borderRadius: 16, padding: spacing.lg },
+  oorHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: spacing.sm },
+  oorTitle: { fontSize: typography.sizes.md, fontWeight: '700', color: colors.text },
+  oorMessage: { fontSize: typography.sizes.sm, color: colors.textMuted, marginBottom: spacing.md, lineHeight: 20 },
+  oorReasonRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 10 },
+  oorRadio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  oorRadioActive: { borderColor: colors.primary },
+  oorRadioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary },
+  oorReasonText: { flex: 1, fontSize: typography.sizes.sm, color: colors.text },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: spacing.md, backgroundColor: colors.surface, elevation: 2 },
   backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
+  forgotPunchBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: typography.sizes.lg, fontWeight: 'bold', color: colors.text },
   punchOutHeaderBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E53935', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, gap: 4, elevation: 3 },
   punchOutHeaderText: { fontSize: typography.sizes.xs, fontWeight: '700', color: '#fff' },
@@ -1001,6 +1057,12 @@ const styles = StyleSheet.create({
   errorBg: { backgroundColor: colors.error },
   successBg: { backgroundColor: colors.success },
   bannerText: { flex: 1, fontSize: typography.sizes.sm, color: '#fff', marginHorizontal: spacing.sm },
+  autoClosureBanner: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: colors.warningLight || '#FFF3CD',
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginHorizontal: spacing.md, marginTop: spacing.sm,
+    borderRadius: 10, gap: 8,
+  },
+  autoClosureText: { flex: 1, fontSize: typography.sizes.xs, color: colors.text },
   punchSection: { alignItems: 'center', padding: spacing.lg },
   statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   dot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },

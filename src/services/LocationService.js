@@ -108,20 +108,26 @@ class LocationService {
   }
 
   static getMockLocation() {
-    console.log('[Location] Using mock location (Dev mode)');
+    if (__DEV__) console.log('[Location] Using mock location (Dev mode)');
     return {
       latitude: CONFIG.mockLocation.latitude,
       longitude: CONFIG.mockLocation.longitude,
       address: CONFIG.mockLocation.address,
       accuracy: CONFIG.mockLocation.accuracy,
       speed: CONFIG.mockLocation.speed,
+      altitude: null,
+      heading: null,
+      // This IS a fake location (dev-mode fallback with no real GPS) — flag
+      // it the same way a device-mocked fix would be, so a dev build never
+      // silently passes off a fabricated point as a genuine reading.
+      coordsMocked: true,
       timestamp: Date.now(),
       isMock: true,
     };
   }
 
   static async getCurrentLocation() {
-    console.log('[Location] Fetching current location...');
+    if (__DEV__) console.log('[Location] Fetching current location...');
 
     const status = await this.requestForegroundStatus();
     if (status !== 'granted') {
@@ -162,7 +168,7 @@ class LocationService {
           clearTimeout(timeout);
           resolved = true;
 
-          const { latitude, longitude, accuracy, speed } = position.coords;
+          const { latitude, longitude, accuracy, speed, altitude, heading, mocked } = position.coords;
 
           if (!this.isValidCoord(latitude, longitude)) {
             console.warn('[Location] Invalid coordinates');
@@ -174,13 +180,18 @@ class LocationService {
             return;
           }
 
-          console.log('[Location] GPS success:', latitude.toFixed(4), longitude.toFixed(4));
-          
+          if (__DEV__) console.log('[Location] GPS success:', latitude.toFixed(4), longitude.toFixed(4));
+
           resolve({
             latitude,
             longitude,
             accuracy: accuracy || 50,
             speed: speed ? speed * 3.6 : 0,
+            altitude: altitude ?? null,
+            heading: heading ?? null,
+            // Real device/OS mock-location signal (Android only — `mocked` is
+            // undefined on iOS, which has no equivalent OS-level flag).
+            coordsMocked: mocked === true,
             timestamp: Date.now(),
             isMock: false,
             address: '',
@@ -194,7 +205,7 @@ class LocationService {
           console.error('[Location] GPS error:', error.code, error.message);
 
           if (CONFIG.mockEnabled) {
-            console.log('[Location] Falling back to mock');
+            if (__DEV__) console.log('[Location] Falling back to mock');
             resolve(this.getMockLocation());
           } else {
             // code 1 = permission, 2 = location services (GPS) off, 3 = timeout
@@ -276,7 +287,7 @@ class LocationService {
 
   static async startTracking() {
     if (this.isTracking) {
-      console.log('[Location] Already tracking');
+      if (__DEV__) console.log('[Location] Already tracking');
       return { success: true };
     }
 
@@ -324,7 +335,7 @@ class LocationService {
             if (this.routePoints.length > 500) this.routePoints.shift();
 
             this.notifyListeners(point);
-            console.log('[Location] Route point:', this.routePoints.length);
+            if (__DEV__) console.log('[Location] Route point:', this.routePoints.length);
           } catch (err) {
             console.error('[Location] Point error:', err);
           }
@@ -341,7 +352,7 @@ class LocationService {
       );
 
       this.isTracking = true;
-      console.log('[Location] Tracking started');
+      if (__DEV__) console.log('[Location] Tracking started');
       return { success: true };
     } catch (err) {
       console.error('[Location] Start tracking failed:', err);
@@ -356,7 +367,7 @@ class LocationService {
         this.watchId = null;
       }
       this.isTracking = false;
-      console.log('[Location] Tracking stopped');
+      if (__DEV__) console.log('[Location] Tracking stopped');
     } catch (err) {
       console.error('[Location] Stop tracking error:', err);
       this.watchId = null;

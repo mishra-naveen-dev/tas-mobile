@@ -96,6 +96,13 @@ const Notification = ({ notification, onDismiss }) => {
 
   const config = getConfig();
 
+  const handlePress = () => {
+    if (notification.onPress) {
+      notification.onPress();
+      handleDismiss();
+    }
+  };
+
   return (
     <Animated.View
       style={[
@@ -103,8 +110,15 @@ const Notification = ({ notification, onDismiss }) => {
         { backgroundColor: config.bgColor, opacity: fadeAnim, transform: [{ translateY }] },
       ]}
     >
-      <Icon name={config.icon} size={20} color="#FFFFFF" style={styles.icon} />
-      <Text style={styles.message}>{notification.message}</Text>
+      <TouchableOpacity
+        style={styles.notificationBody}
+        activeOpacity={notification.onPress ? 0.7 : 1}
+        onPress={handlePress}
+        disabled={!notification.onPress}
+      >
+        <Icon name={config.icon} size={20} color="#FFFFFF" style={styles.icon} />
+        <Text style={styles.message}>{notification.message}</Text>
+      </TouchableOpacity>
       <TouchableOpacity onPress={handleDismiss} style={styles.closeBtn}>
         <Icon name="x" size={18} color="#FFFFFF" />
       </TouchableOpacity>
@@ -124,6 +138,7 @@ export const NotificationProvider = ({ children }) => {
       type,
       duration: options.duration ?? NotificationDuration.MEDIUM,
       persistent: options.persistent ?? false,
+      onPress: options.onPress,
     };
 
     setNotifications(prev => [...prev, notification]);
@@ -225,6 +240,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 5,
+  },
+  notificationBody: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   icon: {
     marginRight: spacing.sm,

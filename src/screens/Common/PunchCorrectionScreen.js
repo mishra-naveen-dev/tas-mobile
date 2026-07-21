@@ -39,6 +39,12 @@ const VISIT_TYPES = [
     { value: 'OTHER', label: 'Other' },
 ];
 
+const PAYMENT_METHODS = [
+    { value: 'CASH', label: 'Cash' },
+    { value: 'UPI', label: 'UPI' },
+    { value: 'CHEQUE', label: 'Cheque' },
+];
+
 const PunchCorrectionScreen = ({ navigation, route }) => {
     const auth = useAuth();
 
@@ -247,6 +253,21 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
             return false;
         }
 
+        if (formData.visit_type === 'COLLECTION' || formData.visit_type === 'DISBURSEMENT') {
+            if (!formData.loan_id) {
+                setError('Loan ID is required for Collection/Disbursement');
+                return false;
+            }
+            if (!formData.amount) {
+                setError('Amount is required for Collection/Disbursement');
+                return false;
+            }
+            if (!formData.payment_method) {
+                setError('Payment Method is required for Collection/Disbursement');
+                return false;
+            }
+        }
+
         return true;
     };
 
@@ -421,7 +442,15 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
                                     styles.visitTypeItem,
                                     formData.visit_type === type.value && styles.visitTypeItemActive
                                 ]}
-                                onPress={() => updateForm('visit_type', type.value)}
+                                onPress={() => setFormData(prev => ({
+                                    ...prev,
+                                    visit_type: type.value,
+                                    // Loan/amount/payment method only apply to Collection & Disbursement —
+                                    // clear them when switching to any other visit type.
+                                    ...(type.value !== 'COLLECTION' && type.value !== 'DISBURSEMENT'
+                                        ? { loan_id: '', amount: '', payment_method: 'CASH' }
+                                        : {}),
+                                }))}
                             >
                                 <Text style={[
                                     styles.visitTypeText,
@@ -609,32 +638,55 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
                     </View>
                 )}
 
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Financial Details</Text>
-                    <View style={styles.financialRow}>
-                        <View style={styles.financialItem}>
-                            <FieldLabel>Loan ID</FieldLabel>
-                            <TextInput
-                                style={styles.input}
-                                value={formData.loan_id}
-                                onChangeText={(text) => updateForm('loan_id', text)}
-                                placeholder="Enter Loan ID"
-                                placeholderTextColor={colors.textMuted}
-                            />
+                {(formData.visit_type === 'COLLECTION' || formData.visit_type === 'DISBURSEMENT') && (
+                    <View style={styles.section}>
+                        <Text style={styles.sectionTitle}>Financial Details</Text>
+                        <View style={styles.financialRow}>
+                            <View style={styles.financialItem}>
+                                <FieldLabel required>Loan ID</FieldLabel>
+                                <TextInput
+                                    style={styles.input}
+                                    value={formData.loan_id}
+                                    onChangeText={(text) => updateForm('loan_id', text)}
+                                    placeholder="Enter Loan ID"
+                                    placeholderTextColor={colors.textMuted}
+                                />
+                            </View>
+                            <View style={styles.financialItem}>
+                                <FieldLabel required>Amount</FieldLabel>
+                                <TextInput
+                                    style={styles.input}
+                                    value={formData.amount}
+                                    onChangeText={(text) => updateForm('amount', text)}
+                                    placeholder="Enter Amount"
+                                    placeholderTextColor={colors.textMuted}
+                                    keyboardType="numeric"
+                                />
+                            </View>
                         </View>
-                        <View style={styles.financialItem}>
-                            <FieldLabel>Amount</FieldLabel>
-                            <TextInput
-                                style={styles.input}
-                                value={formData.amount}
-                                onChangeText={(text) => updateForm('amount', text)}
-                                placeholder="Enter Amount"
-                                placeholderTextColor={colors.textMuted}
-                                keyboardType="numeric"
-                            />
+
+                        <FieldLabel required>Payment Method</FieldLabel>
+                        <View style={styles.visitTypeGrid}>
+                            {PAYMENT_METHODS.map((m) => (
+                                <TouchableOpacity
+                                    key={m.value}
+                                    style={[
+                                        styles.visitTypeItem,
+                                        formData.payment_method === m.value && styles.visitTypeItemActive
+                                    ]}
+                                    onPress={() => updateForm('payment_method', m.value)}
+                                >
+                                    <Text style={[
+                                        styles.visitTypeText,
+                                        formData.payment_method === m.value && styles.visitTypeTextActive
+                                    ]}>
+                                        {m.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
                         </View>
                     </View>
-                </View>
+                )}
 
                 <View style={styles.section}>
                     <FieldLabel required>Reason</FieldLabel>

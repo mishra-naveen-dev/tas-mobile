@@ -20,12 +20,15 @@ import {
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Callout, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
+import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
+import { SkeletonListItem, SkeletonMapPreview } from '../../components/SkeletonComponents';
 import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 
@@ -124,12 +127,22 @@ const fmtCompact = (n) => {
     return `₹${v}`;
 };
 
-const KpiPill = ({ label, value, accent }) => (
-    <View style={styles.kpiPill}>
-        <Text style={[styles.kpiValue, accent && { color: accent }]}>{value}</Text>
-        <Text style={styles.kpiLabel}>{label}</Text>
-    </View>
-);
+const KpiPill = ({ label, value, accent, onPress }) => {
+    const content = (
+        <>
+            <Text style={[styles.kpiValue, accent && { color: accent }]}>{value}</Text>
+            <Text style={styles.kpiLabel}>{label}</Text>
+        </>
+    );
+    if (onPress) {
+        return (
+            <TouchableOpacity style={styles.kpiPill} onPress={onPress} activeOpacity={0.7}>
+                {content}
+            </TouchableOpacity>
+        );
+    }
+    return <View style={styles.kpiPill}>{content}</View>;
+};
 
 // ── Map tab ─────────────────────────────────────────────────────────────────
 const CollectionsMap = ({ records, navigateToCustomer, openUpdate, userLocation }) => {
@@ -355,8 +368,13 @@ const AnimatedCard = React.memo(({ index, children }) => {
 });
 
 // ── Main screen ──────────────────────────────────────────────────────────────
-const CollectionsScreen = () => {
+const CollectionsScreen = ({ route }) => {
+    const navigation = useNavigation();
     const { user } = useAuth();
+    // Deep-linked here (e.g. from a "customer assigned to you" notification)
+    // with a specific record to jump straight to.
+    const deepLinkCollectionId = route?.params?.collectionId;
+    const deepLinkHandled = useRef(false);
     // Super Admin controls this per role/user via Feature Assignment
     // (APP_NEAR_ME_COLLECTIONS) — defaults ON for employees.
     const nearMeFeatureEnabled = !!user?.near_me_enabled;
@@ -388,7 +406,7 @@ const CollectionsScreen = () => {
     const [mapLoading, setMapLoading] = useState(false);
 
     const [modal, setModal] = useState({ open: false, record: null });
-    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null, visit_reason: '' });
+    const [form, setForm] = useState({ status: 'PENDING', collected_amount: '', remarks: '', promise_date: null, visit_reason: '', visit_dpd_bucket: '' });
     const [saving, setSaving] = useState(false);
     const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
@@ -421,7 +439,15 @@ const CollectionsScreen = () => {
     // loaded client-side.
     const buildFilterParams = useCallback(() => {
         const params = {};
-        if (activeFilter !== 'ALL') params.status = activeFilter;
+        if (activeFilter !== 'ALL') {
+            params.status = activeFilter;
+        } else {
+            // Default (All) view is the working list — once a customer is marked
+            // Collected/Partially Collected they move to the Done screen instead
+            // of lingering here. Selecting the Collected/Partial chip explicitly
+            // still shows them (handled by the branch above).
+            params.is_done = false;
+        }
         if (typeFilter !== 'ALL') params.collection_type = typeFilter;
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
         if (productFilter !== 'ALL') params.product_type = productFilter;
@@ -631,46 +657,111 @@ const CollectionsScreen = () => {
         });
     }, [mapRecords, mapSearch]);
 
-    const openUpdate = (record) => {
-        setForm({
-            status: record.status || 'PENDING',
-            collected_amount: record.collected_amount != null ? String(record.collected_amount) : '',
-            remarks: record.remarks || '',
-            promise_date: record.promise_date ? new Date(record.promise_date) : null,
-            visit_reason: record.visit_reason || '',
+    // Unified Collection Visit flow: hands off to CollectionVisitScreen (one
+    // combined punch + collection-status screen) instead of opening the
+    // in-screen modal below. The modal/save() logic is left in place,
+    // untouched, purely so the standalone update_status() API path this
+    // screen used to drive keeps working unmodified for any other caller —
+    // it's just no longer reachable from this button.
+    const openUpdate = useCallback((record) => {
+        navigation.navigate('CollectionVisit', {
+            collectionId: record.id,
+            loanId: record.loan_id,
+            customerName: record.customer_name,
+            customerAddress: [record.address, record.area, record.pincode].filter(Boolean).join(', '),
+            amountDue: record.amount_due,
+            initialStatus: record.status,
         });
-        setModal({ open: true, record });
-    };
+    }, [navigation]);
+
+    // Deep link: jump straight to a specific customer (e.g. from a
+    // "customer assigned to you" notification). Prefer the already-loaded
+    // list (instant, no extra request); fall back to fetching the record
+    // directly since it may not be on the currently loaded page/filter.
+    useEffect(() => {
+        if (!deepLinkCollectionId || deepLinkHandled.current) return;
+
+        const fromList = records.find(r => r.id === deepLinkCollectionId);
+        if (fromList) {
+            deepLinkHandled.current = true;
+            openUpdate(fromList);
+            return;
+        }
+        if (!loading) {
+            deepLinkHandled.current = true;
+            api.getCollectionRecord(deepLinkCollectionId)
+                .then(res => { if (res?.data) openUpdate(res.data); })
+                .catch(() => Alert.alert('Not Found', 'This customer record could not be loaded.'));
+        }
+    }, [deepLinkCollectionId, records, loading, openUpdate]);
 
     const navigateToCustomer = useCallback((r) => {
-        // Prefer GPS coords (captured on prior visit); fall back to text address
+        // Destination priority:
+        //   1. customer_latitude/longitude — the authoritative geo-tag for this
+        //      customer. Not populated for most records yet (a bulk upload
+        //      feature to set this directly is planned); currently only ever
+        //      gets seeded as a side effect of the first GPS-bearing visit
+        //      (see backend CollectionRecordViewSet.update_status). Checked
+        //      first so navigation automatically switches to the precise,
+        //      upload-provided coordinate the moment that feature ships —
+        //      no further code change needed here when it does.
+        //   2. visit_latitude/longitude — wherever an employee's own device
+        //      stood during a prior visit; a reasonable proxy today, but not
+        //      guaranteed to be the customer's actual location.
+        //   3. Text address — last resort when no GPS exists at all.
+        //
+        // Uses the same modern "dir/?api=1" Google Maps URL as LocationService.openMaps —
+        // the legacy `google.navigation:q=`/`daddr=` schemes used here previously are
+        // deprecated and unreliable on current Google Maps versions (some builds
+        // collapse both origin and destination to "current location" instead of
+        // routing from the user's current position to the customer). The dir/?api=1
+        // endpoint reliably defaults the omitted origin to the user's current location.
+        if (r.customer_latitude && r.customer_longitude) {
+            LocationService.openMaps(r.customer_latitude, r.customer_longitude);
+            return;
+        }
         if (r.visit_latitude && r.visit_longitude) {
-            const lat = r.visit_latitude;
-            const lng = r.visit_longitude;
-            Linking.openURL(`google.navigation:q=${lat},${lng}&mode=d`).catch(() =>
-                Linking.openURL(`https://maps.google.com/maps?daddr=${lat},${lng}`)
-            );
+            LocationService.openMaps(r.visit_latitude, r.visit_longitude);
             return;
         }
         const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
         if (addr) {
-            Linking.openURL(`https://maps.google.com/maps?q=${encodeURIComponent(addr)}&mode=d`);
+            Linking.openURL(
+                `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving`
+            ).catch(() => {});
         } else {
             Alert.alert('No Location', 'No address or GPS data available for this customer.');
         }
     }, []);
 
     const save = async () => {
+        if (form.status === 'PENDING' && !form.promise_date) {
+            Alert.alert('Promise Date Required', 'Please select the date the customer promised to pay.');
+            return;
+        }
+        if (form.status === 'NOT_PAID' && !form.remarks.trim()) {
+            Alert.alert('Reason Required', 'Please enter the reason the customer did not pay.');
+            return;
+        }
         setSaving(true);
         try {
             // Auto-capture GPS at the moment of save
             let gpsPayload = {};
             try {
-                const loc = await LocationService.getCurrentLocation();
+                const loc = await captureFieldActivityLocation();
                 if (loc?.latitude && loc?.longitude && !loc?.error) {
                     gpsPayload.latitude = loc.latitude;
                     gpsPayload.longitude = loc.longitude;
                     gpsPayload.location_address = loc.address || '';
+                    gpsPayload.accuracy = loc.accuracy ?? null;
+                    gpsPayload.altitude = loc.altitude ?? null;
+                    gpsPayload.speed = loc.speed ?? null;
+                    gpsPayload.is_mock_location = loc.is_mock_location ?? false;
+                    gpsPayload.mock_detection_method = loc.mock_detection_method || '';
+                    gpsPayload.network_status = loc.network_status || '';
+                    gpsPayload.device_timestamp = loc.device_timestamp || undefined;
+                } else {
+                    console.warn('[Collections] GPS unavailable for this visit update:', loc?.error);
                 }
             } catch (_) {
                 // GPS optional — don't block the save
@@ -682,6 +773,9 @@ const CollectionsScreen = () => {
                 ? form.promise_date.toISOString().split('T')[0]
                 : null;
             payload.visit_reason = form.status === 'VISITED' ? form.visit_reason : '';
+            payload.visit_dpd_bucket = form.status === 'VISITED' && form.visit_reason === 'OD_VISIT'
+                ? form.visit_dpd_bucket
+                : '';
 
             await api.updateCollectionStatus(modal.record.id, payload);
             setModal({ open: false, record: null });
@@ -828,6 +922,15 @@ const CollectionsScreen = () => {
                         </View>
                     )}
 
+                    {!!item.visit_dpd_bucket && (
+                        <View style={styles.row}>
+                            <Icon name="alert-triangle" size={15} color={colors.warning} />
+                            <Text style={[styles.rowText, { color: colors.warning }]}>
+                                DPD: {item.visit_dpd_bucket}
+                            </Text>
+                        </View>
+                    )}
+
                     <View style={styles.row}>
                         <Icon name="clock" size={15} color={colors.textMuted} />
                         <Text style={styles.rowText}>Last collection: {fmtDate(item.last_collection_date)}</Text>
@@ -913,7 +1016,11 @@ const CollectionsScreen = () => {
                     <KpiPill label="To Collect" value={fmtCompact(summary?.total_due_amount || 0)} />
                     <KpiPill label="Collected" value={fmtCompact(summary?.total_collected_amount || 0)} accent={colors.successLight} />
                     <KpiPill label="Pending" value={summary?.pending || 0} />
-                    <KpiPill label="Done" value={(summary?.collected || 0) + (summary?.partially_collected || 0)} />
+                    <KpiPill
+                        label="Done"
+                        value={(summary?.collected || 0) + (summary?.partially_collected || 0)}
+                        onPress={() => navigation.navigate('CollectionDone')}
+                    />
                 </View>
             </View>
 
@@ -937,7 +1044,7 @@ const CollectionsScreen = () => {
                     {/* Map — fixed height so list is visible below */}
                     <View style={{ height: SCREEN_HEIGHT * 0.52 }}>
                         {mapLoading && mapRecords.length === 0 ? (
-                            <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+                            <SkeletonMapPreview style={{ height: '100%', borderRadius: 0 }} />
                         ) : (
                             <CollectionsMap
                                 records={mapRecords}
@@ -1285,7 +1392,11 @@ const CollectionsScreen = () => {
                     </Modal>
 
                     {loading ? (
-                        <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+                        <View style={{ padding: spacing.md }}>
+                            {[1, 2, 3, 4, 5].map(i => (
+                                <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
+                            ))}
+                        </View>
                     ) : listError ? (
                         /* ── Inline error state: no alert, always retryable ── */
                         <View style={styles.center}>
@@ -1390,9 +1501,10 @@ const CollectionsScreen = () => {
                                             if (o.value !== 'PENDING') {
                                                 next.promise_date = null;
                                             }
-                                            // Clear visit reason when switching away from Visited
+                                            // Clear visit reason (and its DPD bucket) when switching away from Visited
                                             if (o.value !== 'VISITED') {
                                                 next.visit_reason = '';
+                                                next.visit_dpd_bucket = '';
                                             }
                                             return next;
                                         })}
@@ -1403,36 +1515,50 @@ const CollectionsScreen = () => {
                             })}
                         </View>
 
-                        {form.status === 'PENDING' && (
-                            <>
-                                <Text style={styles.fieldLabel}>Promise to Pay Date</Text>
-                                <TouchableOpacity
-                                    style={styles.input}
-                                    onPress={() => setShowPromiseDatePicker(true)}
-                                >
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
-                                        <Icon name="calendar" size={16} color={colors.textMuted} />
-                                        <Text style={{ color: form.promise_date ? colors.textDark : colors.textMuted }}>
-                                            {form.promise_date ? fmtDate(form.promise_date) : 'Select date customer will pay'}
-                                        </Text>
-                                    </View>
-                                </TouchableOpacity>
-                                {showPromiseDatePicker && (
-                                    <DateTimePicker
-                                        value={form.promise_date || new Date()}
-                                        mode="date"
-                                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                        minimumDate={new Date()}
-                                        onChange={(event, selectedDate) => {
-                                            setShowPromiseDatePicker(Platform.OS === 'ios');
-                                            if (selectedDate) {
-                                                setForm(f => ({ ...f, promise_date: selectedDate }));
-                                            }
-                                        }}
-                                    />
-                                )}
-                            </>
-                        )}
+                        {form.status === 'PENDING' && (() => {
+                            // Promise date is capped to a 1-month window starting at the
+                            // customer's planned/demand date (due_date) — an employee can't
+                            // promise a payment before that date or more than a month past
+                            // it. Falls back to today when the record has no planned date.
+                            const plannedDate = modal.record?.due_date ? new Date(modal.record.due_date) : new Date();
+                            plannedDate.setHours(0, 0, 0, 0);
+                            const maxPromiseDate = new Date(plannedDate);
+                            maxPromiseDate.setMonth(maxPromiseDate.getMonth() + 1);
+                            return (
+                                <>
+                                    <Text style={styles.fieldLabel}>Promise to Pay Date *</Text>
+                                    <TouchableOpacity
+                                        style={[styles.input, !form.promise_date && styles.inputRequired]}
+                                        onPress={() => setShowPromiseDatePicker(true)}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                                            <Icon name="calendar" size={16} color={colors.textMuted} />
+                                            <Text style={{ color: form.promise_date ? colors.textDark : colors.textMuted }}>
+                                                {form.promise_date ? fmtDate(form.promise_date) : 'Select date customer will pay (required)'}
+                                            </Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                    <Text style={styles.dateHintText}>
+                                        Allowed: {fmtDate(plannedDate)} – {fmtDate(maxPromiseDate)}
+                                    </Text>
+                                    {showPromiseDatePicker && (
+                                        <DateTimePicker
+                                            value={form.promise_date || plannedDate}
+                                            mode="date"
+                                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                            minimumDate={plannedDate}
+                                            maximumDate={maxPromiseDate}
+                                            onChange={(event, selectedDate) => {
+                                                setShowPromiseDatePicker(Platform.OS === 'ios');
+                                                if (selectedDate) {
+                                                    setForm(f => ({ ...f, promise_date: selectedDate }));
+                                                }
+                                            }}
+                                        />
+                                    )}
+                                </>
+                            );
+                        })()}
 
                         {form.status === 'VISITED' && (
                             <>
@@ -1444,7 +1570,32 @@ const CollectionsScreen = () => {
                                             <TouchableOpacity
                                                 key={o.value}
                                                 style={[styles.statusOption, active && { backgroundColor: colors.info, borderColor: colors.info }]}
-                                                onPress={() => setForm(f => ({ ...f, visit_reason: o.value }))}
+                                                onPress={() => setForm(f => ({
+                                                    ...f,
+                                                    visit_reason: o.value,
+                                                    // Clear the DPD bucket when switching away from OD Visit
+                                                    visit_dpd_bucket: o.value === 'OD_VISIT' ? f.visit_dpd_bucket : '',
+                                                }))}
+                                            >
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </>
+                        )}
+
+                        {form.status === 'VISITED' && form.visit_reason === 'OD_VISIT' && (
+                            <>
+                                <Text style={styles.fieldLabel}>DPD Bucket</Text>
+                                <View style={styles.statusGrid}>
+                                    {DPD_BUCKET_OPTIONS.map(o => {
+                                        const active = form.visit_dpd_bucket === o.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={o.value}
+                                                style={[styles.statusOption, active && { backgroundColor: colors.warning, borderColor: colors.warning }]}
+                                                onPress={() => setForm(f => ({ ...f, visit_dpd_bucket: o.value }))}
                                             >
                                                 <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{o.label}</Text>
                                             </TouchableOpacity>
@@ -1481,13 +1632,15 @@ const CollectionsScreen = () => {
                             </>
                         )}
 
-                        <Text style={styles.fieldLabel}>Remarks</Text>
+                        <Text style={styles.fieldLabel}>
+                            {form.status === 'NOT_PAID' ? 'Reason Why Not Paid *' : 'Remarks'}
+                        </Text>
                         <TextInput
-                            style={[styles.input, styles.remarksInput]}
+                            style={[styles.input, styles.remarksInput, form.status === 'NOT_PAID' && !form.remarks.trim() && styles.inputRequired]}
                             multiline
                             value={form.remarks}
                             onChangeText={(v) => setForm(f => ({ ...f, remarks: v }))}
-                            placeholder="Optional notes"
+                            placeholder={form.status === 'NOT_PAID' ? 'Why did the customer not pay? (required)' : 'Optional notes'}
                             placeholderTextColor={colors.textMuted}
                         />
 
@@ -1731,6 +1884,7 @@ const styles = StyleSheet.create({
     emiHint: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
     emiHintText: { fontSize: 10, fontWeight: '600', color: colors.success },
     emiSub: { fontSize: 11, color: colors.textMuted, marginTop: 4, marginBottom: 2 },
+    dateHintText: { fontSize: 11, color: colors.textMuted, marginTop: 4, marginBottom: 2 },
     statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
     statusOption: {
         paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
@@ -1741,6 +1895,7 @@ const styles = StyleSheet.create({
         borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md,
         paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, fontSize: typography.sizes.sm, color: colors.textDark,
     },
+    inputRequired: { borderColor: colors.error },
     remarksInput: { height: 70, textAlignVertical: 'top' },
     gpsNotice: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
