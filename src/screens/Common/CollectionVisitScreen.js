@@ -363,9 +363,9 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           return false;
         }
         if (form.payment_mode === 'CASH') {
-          const missing = ['CUSTOMER', 'RECEIPT', 'DOCUMENT'].filter((k) => !photos.some((p) => p.kind === k));
-          if (missing.length) {
-            Alert.alert('Photos Required', 'Please add Customer, Receipt, and Document photos.');
+          const hasAny = ['CUSTOMER', 'RECEIPT', 'DOCUMENT'].some((k) => photos.some((p) => p.kind === k));
+          if (!hasAny) {
+            Alert.alert('Photo Required', 'Please add at least one photo — Customer, Receipt, or Document.');
             return false;
           }
         }
@@ -711,7 +711,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         ))}
       </View>
-      {form.payment_mode === 'CASH' && renderPhotoColumns(PHOTO_KINDS)}
+      {form.payment_mode === 'CASH' && (
+        <>
+          <Text style={styles.photoHint}>Add at least one photo — the other two are optional.</Text>
+          {renderPhotoColumns(PHOTO_KINDS)}
+        </>
+      )}
       {form.payment_mode === 'UPI' && (
         <>
           <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Reference Number" placeholderTextColor={colors.textMuted} />
@@ -1141,6 +1146,7 @@ const styles = StyleSheet.create({
   photoColumns: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
   photoColumn: { flex: 1, alignItems: 'center' },
   photoKindLabel: { fontSize: typography.sizes.xs, color: colors.textMuted, marginBottom: spacing.xs, textAlign: 'center' },
+  photoHint: { fontSize: typography.sizes.xs, color: colors.textMuted, marginBottom: spacing.xs },
   photoThumbWrap: { marginTop: spacing.sm, alignItems: 'center' },
   photoThumb: { width: 56, height: 56, borderRadius: 8 },
   photoRemove: { position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center' },

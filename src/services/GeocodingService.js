@@ -1,6 +1,6 @@
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { GOOGLE_MAPS_API_KEY } from '@env';
+import { GOOGLE_MAPS_API_KEY, GOOGLE_GEOCODING_API_KEY } from '@env';
 import { logger } from '../core/monitoring/Logger';
 
 // Sourced from .env (gitignored) at build time — see .env.example for setup.
@@ -8,6 +8,20 @@ const GOOGLE_API_KEY = GOOGLE_MAPS_API_KEY;
 export { GOOGLE_API_KEY };
 if (!GOOGLE_API_KEY) {
   logger.warn('[GeocodingService] GOOGLE_MAPS_API_KEY is not set — copy .env.example to .env and add it.');
+}
+
+// GOOGLE_MAPS_API_KEY is restricted to Android apps (package + SHA-1) for
+// the native Maps SDK — that restriction requires X-Android-Package/
+// X-Android-Cert headers that Google Play services attaches automatically,
+// which a plain `fetch()` REST call (below) never sends. Using that key here
+// makes every Geocoding/Distance Matrix request fail silently (falls back to
+// raw coordinates), which is exactly what broke the in-app address display.
+// GOOGLE_GEOCODING_API_KEY must be a separate key with NO Application
+// restriction (only an API restriction to Geocoding API + Distance Matrix
+// API) so these REST calls actually authenticate.
+const GEOCODING_API_KEY = GOOGLE_GEOCODING_API_KEY || GOOGLE_API_KEY;
+if (!GOOGLE_GEOCODING_API_KEY) {
+  logger.warn('[GeocodingService] GOOGLE_GEOCODING_API_KEY is not set — falling back to the Android-SDK-restricted GOOGLE_MAPS_API_KEY, which will reject these REST calls. Add a separate, unrestricted-application key to .env.');
 }
 const GEOCODE_CACHE_PREFIX = '@geocode_cache_';
 const CACHE_DURATION = 24 * 60 * 60 * 1000;
@@ -23,7 +37,7 @@ class GeocodingService {
         return cached;
       }
 
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_API_KEY}&result_type=street_address|premise|establishment`;
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GEOCODING_API_KEY}&result_type=street_address|premise|establishment`;
       
       const response = await fetch(url);
       
@@ -59,7 +73,7 @@ class GeocodingService {
         return cached;
       }
 
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_API_KEY}`;
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GEOCODING_API_KEY}`;
       
       const response = await fetch(url);
       
@@ -105,7 +119,7 @@ class GeocodingService {
       const fromLoc = `${fromResult.latitude},${fromResult.longitude}`;
       const toLoc = `${toResult.latitude},${toResult.longitude}`;
 
-      const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${fromLoc}&destinations=${toLoc}&mode=driving&key=${GOOGLE_API_KEY}`;
+      const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${fromLoc}&destinations=${toLoc}&mode=driving&key=${GEOCODING_API_KEY}`;
 
       const response = await fetch(url);
       const data = await response.json();
