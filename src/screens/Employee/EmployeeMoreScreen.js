@@ -203,6 +203,13 @@ const EmployeeMoreScreen = ({ navigation }) => {
                     onPress={() => navigation.navigate('RouteMap')}
                 />
                 <MenuRow
+                    title="Customer Map"
+                    subtitle="See assigned customers on the map"
+                    icon="map-pin"
+                    iconColor={colors.success}
+                    onPress={() => navigation.navigate('CustomerMap')}
+                />
+                <MenuRow
                     title="My Profile"
                     subtitle="View personal and work details"
                     icon="user"

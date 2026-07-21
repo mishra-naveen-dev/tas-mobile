@@ -154,6 +154,13 @@ const SuperAdminMoreScreen = ({ navigation }) => {
                         color={colors.warning}
                         onPress={() => navigation.navigate('EmployeeTracking')}
                     />
+                    <MenuItem
+                        title="Customer Map"
+                        subtitle="Hierarchy-scoped customer locations"
+                        icon="map"
+                        color={colors.success}
+                        onPress={() => navigation.navigate('CustomerMap')}
+                    />
 
                     <SectionTitle title="Reports" />
                     <MenuItem

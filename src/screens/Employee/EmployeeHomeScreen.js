@@ -492,6 +492,12 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     total_amount: c.collected_amount,
                     client_name: c.customer_name,
                     reason: c.remarks || c.status_display,
+                    // The unified Collection Visit flow (complete_visit) creates
+                    // both this CollectionUpdate AND a PUNCH_IN AttendancePunch
+                    // for the same real-world visit — c.punch links back to it
+                    // so allPunches (below) can drop that raw punch instead of
+                    // showing the same visit as two separate activity rows.
+                    linked_punch_id: c.punch,
                 }));
 
             setSummary(liveSummary);
@@ -581,7 +587,15 @@ const EmployeeHomeScreen = ({ navigation }) => {
     }), [correctionSummary]);
 
     const allPunches = useMemo(() => {
-        const combined = [...(punches || []), ...(todayPunches || [])];
+        // Drop any raw punch already represented by its own CollectionUpdate-
+        // derived activity entry (see linked_punch_id above) — without this,
+        // a single Collection Visit shows up as two rows: the punch itself
+        // (from today_punches / PunchContext) and its collection outcome.
+        const linkedPunchIds = new Set(
+            (punches || []).filter(p => p?.linked_punch_id).map(p => p.linked_punch_id)
+        );
+        const combined = [...(punches || []), ...(todayPunches || [])]
+            .filter(p => !linkedPunchIds.has(p?.id));
         const map = new Map();
         combined.forEach(p => {
             if (p?.id && !map.has(p.id)) {

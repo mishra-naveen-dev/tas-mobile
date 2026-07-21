@@ -184,11 +184,18 @@ export const resetSessionHandler = () => {
     isSessionExpiredHandled = false;
 };
 
+// Endpoints whose params are essentially unique on every call (a map
+// viewport bounding box changes on every pan/zoom, a free-text search on
+// every keystroke) — caching them adds near-zero hit value while being the
+// single biggest driver of unbounded local cache growth (see dataCache.js).
+const UNCACHEABLE_GET_PATTERNS = [/\/map_markers\//, /\/map_search\//];
+
 api.interceptors.response.use(
     async (response) => {
         const method = (response.config?.method || '').toLowerCase();
-        if (method === 'get') {
-            const key = makeCacheKey(response.config.url, response.config.params || {});
+        const url = response.config?.url || '';
+        if (method === 'get' && !UNCACHEABLE_GET_PATTERNS.some(re => re.test(url))) {
+            const key = makeCacheKey(url, response.config.params || {});
             await cacheWrite(key, response.data);
         }
         if (!serverStatus._online) serverStatus.setOnline();
@@ -666,5 +673,27 @@ api.getCollectionUpdates = (params = {}) =>
 // above leaves its Content-Type alone so axios can set the multipart boundary.
 api.completeVisit = (collectionId, formData) =>
     api.post(`/loans/collections/${collectionId}/complete_visit/`, formData);
+
+// ── Customer Map ──
+// `bounds` must be { min_lat, max_lat, min_lng, max_lng }; `params` carries
+// the usual CollectionRecordFilter params (status, dpd_bucket, risk_category,
+// branch_name, product_type) plus optional user_lat/user_lng/radius_km.
+api.getMapMarkers = (bounds, params = {}) =>
+    api.get('/loans/collections/map_markers/', { params: { ...bounds, ...params } });
+
+api.getMapDetail = (id, params = {}) =>
+    api.get(`/loans/collections/${id}/map_detail/`, { params });
+
+api.getEta = (id, userLat, userLng) =>
+    api.get(`/loans/collections/${id}/eta/`, { params: { user_lat: userLat, user_lng: userLng } });
+
+api.getMapSearch = (query, params = {}) =>
+    api.get('/loans/collections/map_search/', { params: { q: query, ...params } });
+
+api.getNearbyEmployees = (params = {}) =>
+    api.get('/loans/collections/nearby_employees/', { params });
+
+api.setRiskCategory = (id, riskCategory) =>
+    api.post(`/loans/collections/${id}/set_risk_category/`, { risk_category: riskCategory });
 
 export default api;

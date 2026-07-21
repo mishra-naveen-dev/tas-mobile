@@ -402,10 +402,11 @@ export const PunchProvider = ({ children }) => {
 
       if (IS_DEV) console.log('[Punch] Submitting punch out:', JSON.stringify(payload, null, 2));
 
-      // Stop the local distance-stat tracker.
-      await LocationService.stopTracking().catch((e) => {
-        if (IS_DEV) console.warn('[Punch] Local distance tracking stop error:', e.message);
-      });
+      // Stop the local distance-stat tracker. Synchronous (not Promise-based)
+      // — it already catches its own errors internally and never throws, so
+      // no .catch() here (chaining one on a non-Promise return value throws
+      // "Cannot read property 'catch' of undefined" on every call).
+      LocationService.stopTracking();
 
       // Detach from the server-orchestrated tracking engine — flushes any
       // buffered points and stops native capture. The backend itself closes

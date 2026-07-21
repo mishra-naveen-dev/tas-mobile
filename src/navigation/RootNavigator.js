@@ -43,6 +43,7 @@ import ReportsScreen from '../screens/SuperAdmin/ReportsScreen';
 
 // Common Screens
 import RouteMapScreen from '../screens/Common/RouteMapScreen';
+import CustomerMapScreen from '../screens/Common/CustomerMapScreen';
 import PunchHistoryScreen from '../screens/Common/PunchHistoryScreen';
 import PunchCorrectionScreen from '../screens/Common/PunchCorrectionScreen';
 import AllowanceHistoryScreen from '../screens/Common/AllowanceHistoryScreen';
@@ -110,6 +111,7 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="CollectionDone" component={CollectionDoneScreen} />
         <EmployeeStack.Screen name="CollectionVisit" component={CollectionVisitScreen} />
         <EmployeeStack.Screen name="RouteMap" component={RouteMapScreen} />
+        <EmployeeStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <EmployeeStack.Screen name="PunchHistory" component={PunchHistoryScreen} />
         <EmployeeStack.Screen name="PunchCorrection" component={PunchCorrectionScreen} />
         <EmployeeStack.Screen name="AllowanceHistory" component={AllowanceHistoryScreen} />
@@ -132,6 +134,7 @@ const AdminStackNavigator = () => (
         <AdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
         <AdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <AdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <AdminStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <AdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <AdminStack.Screen name="Profile" component={ProfileScreen} />
@@ -221,6 +224,7 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
         <SuperAdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <SuperAdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <SuperAdminStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <SuperAdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <SuperAdminStack.Screen name="UserManagement" component={UserManagementScreen} />
         <SuperAdminStack.Screen name="EmployeeList" component={EmployeeListScreen} />
