@@ -184,11 +184,18 @@ export const resetSessionHandler = () => {
     isSessionExpiredHandled = false;
 };
 
+// Endpoints whose params are essentially unique on every call (a map
+// viewport bounding box changes on every pan/zoom, a free-text search on
+// every keystroke) — caching them adds near-zero hit value while being the
+// single biggest driver of unbounded local cache growth (see dataCache.js).
+const UNCACHEABLE_GET_PATTERNS = [/\/map_markers\//, /\/map_search\//];
+
 api.interceptors.response.use(
     async (response) => {
         const method = (response.config?.method || '').toLowerCase();
-        if (method === 'get') {
-            const key = makeCacheKey(response.config.url, response.config.params || {});
+        const url = response.config?.url || '';
+        if (method === 'get' && !UNCACHEABLE_GET_PATTERNS.some(re => re.test(url))) {
+            const key = makeCacheKey(url, response.config.params || {});
             await cacheWrite(key, response.data);
         }
         if (!serverStatus._online) serverStatus.setOnline();
