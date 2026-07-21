@@ -15,16 +15,22 @@ import GeocodingService from '../../services/GeocodingService';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import { colors, typography, spacing } from '../../theme/tokens';
 
-// ── Reused presets/options (kept in sync with EmployeePunchScreen.js /
-// CollectionsScreen.js — this screen ports their form logic verbatim rather
-// than importing, since neither file exports these as shared constants). ──
-const REASON_PRESETS = [
-  { value: 'Collection',    label: 'Collection' },
-  { value: 'Home Visit',    label: 'Home Visit' },
-  { value: 'eKYC',          label: 'eKYC' },
-  { value: 'P2P_JLG',       label: 'P2P JLG' },
-  { value: 'Custil_Aud',    label: 'Custil Aud' },
-  { value: 'CustJLG_Aud',   label: 'CustJLG Aud' },
+// ── Reason is now a 3-way bucket. "Collection" and "Visit" are dedicated,
+// dynamic workflows (below); "Other" reveals the exact same free-text reason
+// picker this screen has always had, for every reason that isn't Collection
+// or Visit (eKYC / P2P JLG / Custil Aud / CustJLG Aud / anything typed) — so
+// none of that existing functionality is removed, just nested one level. ──
+const REASON_BUCKETS = [
+  { value: 'COLLECTION', label: 'Collection' },
+  { value: 'VISIT', label: 'Visit' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+const OTHER_REASON_PRESETS = [
+  { value: 'eKYC', label: 'eKYC' },
+  { value: 'P2P_JLG', label: 'P2P JLG' },
+  { value: 'Custil_Aud', label: 'Custil Aud' },
+  { value: 'CustJLG_Aud', label: 'CustJLG Aud' },
 ];
 
 const PAYMENT_MODES = [
@@ -38,15 +44,19 @@ const TRAVEL_WITH = [
   { value: 'WITH_EMPLOYEE', label: 'With Employee' },
 ];
 
+// Collection Status — shared by the Collection bucket and the Other bucket
+// (Visited/OD-Visit moved out to its own "Visit" bucket below, so this list
+// only ever represents genuine collection outcomes now).
 const STATUS_OPTIONS = [
   { value: 'PENDING', label: 'P2P', color: colors.textMuted },
-  { value: 'VISITED', label: 'Visited', color: colors.info },
   { value: 'COLLECTED', label: 'Collected', color: colors.success },
   { value: 'PARTIALLY_COLLECTED', label: 'Partial', color: colors.warning },
   { value: 'NOT_PAID', label: 'Not Paid', color: colors.danger },
 ];
 
-const VISIT_REASON_OPTIONS = [
+// Visit Type — shown only when Reason = Visit.
+const VISIT_TYPE_OPTIONS = [
+  { value: 'HOME_VISIT', label: 'Home Visit' },
   { value: 'OD_VISIT', label: 'OD Visit' },
   { value: 'OTHER', label: 'Other' },
 ];
@@ -58,30 +68,38 @@ const DPD_BUCKET_OPTIONS = [
   { value: '91+', label: '91+' },
 ];
 
+const YES_NO_OPTIONS = [
+  { value: true, label: 'Yes' },
+  { value: false, label: 'No' },
+];
+
+// Cash-collection evidence (Collected/Partial) + the legacy Other-bucket set.
 const PHOTO_KINDS = [
   { value: 'CUSTOMER', label: 'Customer' },
   { value: 'RECEIPT', label: 'Receipt' },
   { value: 'DOCUMENT', label: 'Document' },
 ];
 
-// Per-reason evidence requirements — enforced (hard block) in validate()
-// before "Update & Save" is allowed to submit. Not every reason has a rule;
-// reasons absent here (eKYC, P2P_JLG, free-typed text, ...) have none.
-//
-// audioRequired is temporarily disabled for every reason (including Home
-// Visit) — the in-app conversation recorder (react-native-nitro-sound) hit
-// an upstream native-build bug that blocks Android release builds. Re-enable
-// 'Home Visit': audioRequired: true once that library (or a replacement) is
-// confirmed to build cleanly in release mode again.
+// Home Visit evidence — no receipt (no payment involved), house photo instead.
+const HOME_VISIT_PHOTO_KINDS = [
+  { value: 'CUSTOMER', label: 'Customer' },
+  { value: 'HOUSE', label: 'House' },
+  { value: 'DOCUMENT', label: 'Document' },
+];
+
+// Per-reason evidence requirement, independent of Collection Status — only
+// meaningful for the two "Other" reasons that already carried this rule.
+// Naturally satisfied for free if the Collected+Cash flow already collected
+// a Customer photo for the same visit (same underlying `photos` array).
 const REASON_MEDIA_REQUIREMENTS = {
-  'Collection': { photoKind: 'RECEIPT', minPhotos: 1, audioRequired: false },
-  'Home Visit': { photoKind: 'CUSTOMER', minPhotos: 1, audioRequired: false },
-  'Custil_Aud': { photoKind: 'CUSTOMER', minPhotos: 1, audioRequired: false },
-  'CustJLG_Aud': { photoKind: 'CUSTOMER', minPhotos: 1, audioRequired: false },
+  'Custil_Aud': { photoKind: 'CUSTOMER', minPhotos: 1 },
+  'CustJLG_Aud': { photoKind: 'CUSTOMER', minPhotos: 1 },
 };
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+
+const COLLECTION_STATUS_VALUES = ['PENDING', 'COLLECTED', 'PARTIALLY_COLLECTED', 'NOT_PAID'];
 
 const CollectionVisitScreen = ({ navigation, route }) => {
   const { collectionId, loanId, customerName, customerAddress, amountDue, initialStatus } = route.params || {};
@@ -97,8 +115,15 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   const [reasonOpen, setReasonOpen] = useState(false);
   const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
+  // Visit Start Time — auto-captured the moment this screen is opened, used
+  // only for the Home Visit rich form's auto GPS/start/end/duration capture.
+  const visitStartTimeRef = useRef(new Date());
+
+  const prefillCollection = COLLECTION_STATUS_VALUES.includes(initialStatus);
+
   const [form, setForm] = useState({
-    reason: '',
+    reasonBucket: prefillCollection ? 'COLLECTION' : '',
+    reason: prefillCollection ? 'Collection' : '',
     payment_mode: '',
     upi_ref: '',
     cheque_no: '',
@@ -107,15 +132,24 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     co_employee_name: '',
     co_employee_phone: '',
     vehicle_number: '',
-    status: initialStatus && initialStatus !== 'PENDING' ? initialStatus : 'VISITED',
+    status: prefillCollection ? initialStatus : '',
     collected_amount: '',
     remarks: '',
     promise_date: null,
     visit_reason: '',
     visit_dpd_bucket: '',
+    // Home Visit rich fields
+    visit_purpose: '',
+    visit_outcome: '',
+    customer_available: null,
+    customer_met: null,
+    family_member_met: null,
+    follow_up_required: null,
   });
 
   const [photos, setPhotos] = useState([]); // [{ uri, fileName, type, kind }]
+  const [upiScreenshot, setUpiScreenshot] = useState(null); // { uri, fileName, type }
+  const [chequePhoto, setChequePhoto] = useState(null); // { uri, fileName, type }
 
   const [outOfRangeModal, setOutOfRangeModal] = useState({ visible: false, distanceM: 0 });
   const [outOfRangeReason, setOutOfRangeReason] = useState('');
@@ -184,10 +218,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   const updateForm = (key, value) => {
     setForm((prev) => {
       const updated = { ...prev, [key]: value };
-      if (key === 'payment_mode') {
-        updated.upi_ref = '';
-        updated.cheque_no = '';
-      }
       if (key === 'travel_with') {
         updated.co_employee_id = '';
         updated.co_employee_name = '';
@@ -199,13 +229,62 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           const emi = record?.amount_due ?? amountDue;
           updated.collected_amount = emi != null ? String(emi) : updated.collected_amount;
         }
-        if (value !== 'COLLECTED' && value !== 'PARTIALLY_COLLECTED') updated.collected_amount = '';
-        if (value !== 'PENDING') updated.promise_date = null;
-        if (value !== 'VISITED') { updated.visit_reason = ''; updated.visit_dpd_bucket = ''; }
+        if (value !== 'COLLECTED' && value !== 'PARTIALLY_COLLECTED') {
+          updated.collected_amount = '';
+          updated.payment_mode = '';
+          updated.upi_ref = '';
+          updated.cheque_no = '';
+        }
+        updated.promise_date = null;
       }
-      if (key === 'visit_reason' && value !== 'OD_VISIT') updated.visit_dpd_bucket = '';
+      if (key === 'payment_mode') {
+        updated.upi_ref = '';
+        updated.cheque_no = '';
+      }
+      if (key === 'visit_reason') {
+        if (value !== 'OD_VISIT') updated.visit_dpd_bucket = '';
+        if (value !== 'HOME_VISIT') {
+          updated.visit_purpose = '';
+          updated.visit_outcome = '';
+          updated.customer_available = null;
+          updated.customer_met = null;
+          updated.family_member_met = null;
+          updated.follow_up_required = null;
+          updated.promise_date = null;
+        }
+      }
+      if (key === 'follow_up_required' && value !== true) {
+        updated.promise_date = null;
+      }
       return updated;
     });
+  };
+
+  const selectReasonBucket = (bucket) => {
+    setForm((prev) => ({
+      ...prev,
+      reasonBucket: bucket,
+      reason: bucket === 'COLLECTION' ? 'Collection' : bucket === 'VISIT' ? 'Visit' : '',
+      status: bucket === 'VISIT' ? 'VISITED' : '',
+      payment_mode: '',
+      upi_ref: '',
+      cheque_no: '',
+      collected_amount: '',
+      promise_date: null,
+      visit_reason: '',
+      visit_dpd_bucket: '',
+      visit_purpose: '',
+      visit_outcome: '',
+      customer_available: null,
+      customer_met: null,
+      family_member_met: null,
+      follow_up_required: null,
+      remarks: '',
+    }));
+    setPhotos([]);
+    setUpiScreenshot(null);
+    setChequePhoto(null);
+    if (bucket === 'VISIT') visitStartTimeRef.current = new Date();
   };
 
   const addPhoto = (kind) => {
@@ -235,19 +314,151 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Single-image pickers for UPI screenshot / cheque photo — same
+  // camera-or-gallery flow as addPhoto/pickPhoto, but holding exactly one
+  // image each rather than an accumulating array.
+  const addSingleImage = (label, setter) => {
+    Alert.alert(label, 'Choose a source', [
+      { text: 'Camera', onPress: () => pickSingleImage(setter, true) },
+      { text: 'Gallery', onPress: () => pickSingleImage(setter, false) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const pickSingleImage = async (setter, fromCamera) => {
+    const options = { mediaType: 'photo', quality: 0.7, maxWidth: 1600, maxHeight: 1600, saveToPhotos: false };
+    const result = fromCamera ? await launchCamera(options) : await launchImageLibrary(options);
+    if (result.didCancel || result.errorCode) return;
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    setter({ uri: asset.uri, fileName: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.type || 'image/jpeg' });
+  };
+
   const validate = () => {
-    if (form.status === 'COLLECTED' && form.payment_mode === '') {
-      Alert.alert('Required', 'Payment mode is required for a collected visit.');
+    if (!form.reasonBucket) {
+      Alert.alert('Reason Required', 'Please select a reason.');
       return false;
     }
-    if (form.status === 'PENDING' && !form.promise_date) {
-      Alert.alert('Promise Date Required', 'Please select the date the customer promised to pay.');
+    if (form.reasonBucket === 'OTHER' && !form.reason.trim()) {
+      Alert.alert('Reason Required', 'Please select or type a reason.');
       return false;
     }
-    if (form.status === 'NOT_PAID' && !form.remarks.trim()) {
-      Alert.alert('Reason Required', 'Please enter the reason the customer did not pay.');
-      return false;
+
+    if (form.reasonBucket === 'COLLECTION' || form.reasonBucket === 'OTHER') {
+      if (!form.status) {
+        Alert.alert('Required', 'Please select a Collection Status.');
+        return false;
+      }
+      if (form.status === 'PENDING' && !form.promise_date) {
+        Alert.alert('Promise Date Required', 'Please select the date the customer promised to pay.');
+        return false;
+      }
+      if (form.status === 'COLLECTED' || form.status === 'PARTIALLY_COLLECTED') {
+        if (!form.collected_amount || Number(form.collected_amount) <= 0) {
+          Alert.alert('Required', 'Please enter the collected amount.');
+          return false;
+        }
+        if (!form.payment_mode) {
+          Alert.alert('Required', 'Payment mode is required.');
+          return false;
+        }
+        if (form.payment_mode === 'CASH') {
+          const missing = ['CUSTOMER', 'RECEIPT', 'DOCUMENT'].filter((k) => !photos.some((p) => p.kind === k));
+          if (missing.length) {
+            Alert.alert('Photos Required', 'Please add Customer, Receipt, and Document photos.');
+            return false;
+          }
+        }
+        if (form.payment_mode === 'UPI') {
+          if (!form.upi_ref.trim()) {
+            Alert.alert('Required', 'Please enter the UPI reference number.');
+            return false;
+          }
+          if (!upiScreenshot) {
+            Alert.alert('Required', 'Please add the UPI screenshot.');
+            return false;
+          }
+        }
+        if (form.payment_mode === 'CHEQUE') {
+          if (!form.cheque_no.trim()) {
+            Alert.alert('Required', 'Please enter the cheque number.');
+            return false;
+          }
+          if (!chequePhoto) {
+            Alert.alert('Required', 'Please add the cheque photo.');
+            return false;
+          }
+        }
+      }
+      if (form.status === 'PARTIALLY_COLLECTED') {
+        if (!form.remarks.trim()) {
+          Alert.alert('Required', 'Remarks are required for a partial collection.');
+          return false;
+        }
+        if (!form.promise_date) {
+          Alert.alert('Required', 'Please select the remaining payment date.');
+          return false;
+        }
+      }
+      if (form.status === 'NOT_PAID' && !form.remarks.trim()) {
+        Alert.alert('Reason Required', 'Please enter the reason the customer did not pay.');
+        return false;
+      }
+      if (form.status === 'NOT_PAID' && !form.promise_date) {
+        Alert.alert('Required', 'Please select the next follow-up date.');
+        return false;
+      }
+
+      // Per-reason evidence requirement (Custil Aud / CustJLG Aud) — already
+      // satisfied for free if the Collected+Cash flow above collected a
+      // Customer photo for this same visit.
+      const req = REASON_MEDIA_REQUIREMENTS[form.reason];
+      if (req) {
+        const count = photos.filter((p) => p.kind === req.photoKind).length;
+        if (count < req.minPhotos) {
+          Alert.alert('Photo Required', `Please add a Customer photo for "${form.reason}".`);
+          return false;
+        }
+      }
     }
+
+    if (form.reasonBucket === 'VISIT') {
+      if (!form.visit_reason) {
+        Alert.alert('Required', 'Please select a Visit Type.');
+        return false;
+      }
+      if (form.visit_reason === 'HOME_VISIT') {
+        if (!form.visit_purpose.trim()) {
+          Alert.alert('Required', 'Please enter the visit purpose.');
+          return false;
+        }
+        if (!form.visit_outcome.trim()) {
+          Alert.alert('Required', 'Please enter the visit outcome.');
+          return false;
+        }
+        if (form.customer_available === null) {
+          Alert.alert('Required', 'Please specify whether the customer was available.');
+          return false;
+        }
+        if (form.customer_met === null) {
+          Alert.alert('Required', 'Please specify whether the customer was met.');
+          return false;
+        }
+        if (!form.remarks.trim()) {
+          Alert.alert('Required', 'Please enter remarks.');
+          return false;
+        }
+        if (form.follow_up_required === null) {
+          Alert.alert('Required', 'Please specify whether a follow-up is required.');
+          return false;
+        }
+        if (form.follow_up_required === true && !form.promise_date) {
+          Alert.alert('Required', 'Please select the next follow-up date.');
+          return false;
+        }
+      }
+    }
+
     if (form.travel_with === 'WITH_EMPLOYEE') {
       if (!form.co_employee_phone || !isPhone(form.co_employee_phone)) {
         Alert.alert('Invalid', 'Enter a valid 10-digit companion phone number.');
@@ -259,15 +470,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       return false;
     }
 
-    const req = REASON_MEDIA_REQUIREMENTS[form.reason];
-    if (req) {
-      const count = photos.filter((p) => p.kind === req.photoKind).length;
-      if (count < req.minPhotos) {
-        const kindLabel = PHOTO_KINDS.find((k) => k.value === req.photoKind)?.label || req.photoKind;
-        Alert.alert('Photo Required', `Please add a ${kindLabel} photo for "${form.reason}".`);
-        return false;
-      }
-    }
     return true;
   };
 
@@ -305,8 +507,20 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     put('collected_amount', form.collected_amount);
     put('remarks', form.remarks);
     put('promise_date', form.promise_date ? form.promise_date.toISOString().split('T')[0] : '');
-    put('visit_reason', form.status === 'VISITED' ? form.visit_reason : '');
-    put('visit_dpd_bucket', form.status === 'VISITED' && form.visit_reason === 'OD_VISIT' ? form.visit_dpd_bucket : '');
+    put('visit_reason', form.visit_reason);
+    put('visit_dpd_bucket', form.visit_reason === 'OD_VISIT' ? form.visit_dpd_bucket : '');
+
+    if (form.visit_reason === 'HOME_VISIT') {
+      put('visit_purpose', form.visit_purpose);
+      put('visit_outcome', form.visit_outcome);
+      if (form.customer_available !== null) put('customer_available', form.customer_available ? 'true' : 'false');
+      if (form.customer_met !== null) put('customer_met', form.customer_met ? 'true' : 'false');
+      if (form.family_member_met !== null) put('family_member_met', form.family_member_met ? 'true' : 'false');
+      if (form.follow_up_required !== null) put('follow_up_required', form.follow_up_required ? 'true' : 'false');
+      put('visit_start_time', visitStartTimeRef.current.toISOString());
+      put('visit_end_time', new Date().toISOString());
+      put('visit_duration_seconds', Math.max(0, Math.round((Date.now() - visitStartTimeRef.current.getTime()) / 1000)));
+    }
 
     put('out_of_range_reason', extra.out_of_range_reason);
     put('out_of_range_comment', extra.out_of_range_comment);
@@ -317,6 +531,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       fd.append('photos', { uri: p.uri, name: p.fileName, type: p.type });
       fd.append('photo_kinds', p.kind);
     });
+    if (upiScreenshot) {
+      fd.append('upi_screenshot', { uri: upiScreenshot.uri, name: upiScreenshot.fileName, type: upiScreenshot.type });
+    }
+    if (chequePhoto) {
+      fd.append('cheque_photo', { uri: chequePhoto.uri, name: chequePhoto.fileName, type: chequePhoto.type });
+    }
 
     return fd;
   };
@@ -388,6 +608,131 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   plannedDate.setHours(0, 0, 0, 0);
   const maxPromiseDate = new Date(plannedDate);
   maxPromiseDate.setMonth(maxPromiseDate.getMonth() + 1);
+
+  const promiseDateLabel = form.status === 'PARTIALLY_COLLECTED' ? 'Remaining Payment Date *'
+    : form.status === 'NOT_PAID' ? 'Next Follow-up Date *'
+    : form.visit_reason === 'HOME_VISIT' ? 'Next Follow-up Date *'
+    : 'Promise to Pay Date *';
+
+  const renderYesNo = (label, fieldKey, optional = false) => (
+    <>
+      <Text style={styles.label}>{label}{optional ? '' : ' *'}</Text>
+      <View style={styles.chips}>
+        {YES_NO_OPTIONS.map((o) => (
+          <TouchableOpacity
+            key={String(o.value)}
+            style={[styles.chip, form[fieldKey] === o.value && styles.chipActive]}
+            onPress={() => updateForm(fieldKey, o.value)}
+          >
+            <Text style={[styles.chipText, form[fieldKey] === o.value && styles.chipTextActive]}>{o.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </>
+  );
+
+  const renderPhotoColumns = (kinds) => (
+    <View style={styles.photoColumns}>
+      {kinds.map((k) => (
+        <View key={k.value} style={styles.photoColumn}>
+          <Text style={styles.photoKindLabel} numberOfLines={1}>{k.label}</Text>
+          <TouchableOpacity style={styles.photoAddBtn} onPress={() => addPhoto(k.value)}>
+            <Icon name="camera" size={18} color={colors.primary} />
+          </TouchableOpacity>
+          {photos.map((p, i) => p.kind === k.value && (
+            <View key={i} style={styles.photoThumbWrap}>
+              <Image source={{ uri: p.uri }} style={styles.photoThumb} />
+              <TouchableOpacity style={styles.photoRemove} onPress={() => removePhoto(i)}>
+                <Icon name="x" size={12} color="#fff" />
+              </TouchableOpacity>
+              <Text style={styles.photoTimestamp} numberOfLines={1}>{fmtDateTime(p.capturedAt)}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+
+  const renderSingleImagePicker = (label, image, setter) => (
+    <>
+      <Text style={styles.label}>{label} *</Text>
+      <View style={styles.photoColumns}>
+        <View style={styles.photoColumn}>
+          <TouchableOpacity style={styles.photoAddBtn} onPress={() => addSingleImage(label, setter)}>
+            <Icon name="camera" size={18} color={colors.primary} />
+          </TouchableOpacity>
+          {image && (
+            <View style={styles.photoThumbWrap}>
+              <Image source={{ uri: image.uri }} style={styles.photoThumb} />
+              <TouchableOpacity style={styles.photoRemove} onPress={() => setter(null)}>
+                <Icon name="x" size={12} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
+    </>
+  );
+
+  const renderPromiseDatePicker = () => (
+    <>
+      <Text style={styles.label}>{promiseDateLabel}</Text>
+      <TouchableOpacity style={styles.input} onPress={() => setShowPromiseDatePicker(true)}>
+        <Text style={{ color: form.promise_date ? colors.text : colors.textMuted }}>
+          {form.promise_date ? fmtDate(form.promise_date) : 'Select date (required)'}
+        </Text>
+      </TouchableOpacity>
+      {showPromiseDatePicker && (
+        <DateTimePicker
+          value={form.promise_date || plannedDate}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          minimumDate={plannedDate}
+          maximumDate={maxPromiseDate}
+          onChange={(event, selectedDate) => {
+            setShowPromiseDatePicker(Platform.OS === 'ios');
+            if (selectedDate) updateForm('promise_date', selectedDate);
+          }}
+        />
+      )}
+    </>
+  );
+
+  // Payment Mode + its dynamic Collected/Partial sub-fields — shared by the
+  // Collection and Other buckets (both route through the same 4-option
+  // Collection Status above).
+  const renderPaymentModeSection = () => (
+    <>
+      <Text style={styles.label}>Payment Mode</Text>
+      <View style={styles.chips}>
+        {PAYMENT_MODES.map((m) => (
+          <TouchableOpacity key={m.value} style={[styles.chip, form.payment_mode === m.value && styles.chipActive]} onPress={() => updateForm('payment_mode', m.value)}>
+            <Text style={[styles.chipText, form.payment_mode === m.value && styles.chipTextActive]}>{m.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      {form.payment_mode === 'CASH' && renderPhotoColumns(PHOTO_KINDS)}
+      {form.payment_mode === 'UPI' && (
+        <>
+          <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Reference Number" placeholderTextColor={colors.textMuted} />
+          {renderSingleImagePicker('Screenshot', upiScreenshot, setUpiScreenshot)}
+        </>
+      )}
+      {form.payment_mode === 'CHEQUE' && (
+        <>
+          <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque Number" placeholderTextColor={colors.textMuted} />
+          {renderSingleImagePicker('Cheque Photo', chequePhoto, setChequePhoto)}
+        </>
+      )}
+    </>
+  );
+
+  const showCollectionStatusFlow = form.reasonBucket === 'COLLECTION' || form.reasonBucket === 'OTHER';
+  const extraReasonPhotoReq = REASON_MEDIA_REQUIREMENTS[form.reason];
+  // Hidden when the Collected+Cash flow already provides the exact same
+  // Customer photo requirement, to avoid showing two identical pickers.
+  const showExtraReasonPhoto = extraReasonPhotoReq
+    && !((form.status === 'COLLECTED' || form.status === 'PARTIALLY_COLLECTED') && form.payment_mode === 'CASH');
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -478,187 +823,193 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           </View>
         )}
 
-        {/* Section 2: Reason */}
+        {/* Reason — Collection / Visit / Other */}
         <Text style={styles.label}>Reason</Text>
-        <View style={styles.reasonWrap}>
-          <TextInput
-            style={styles.reasonInput}
-            value={form.reason}
-            onChangeText={(t) => updateForm('reason', t)}
-            placeholder="Type or select a reason..."
-            placeholderTextColor={colors.textMuted}
-            onFocus={() => setReasonOpen(true)}
-            onBlur={() => setTimeout(() => setReasonOpen(false), 150)}
-          />
-          <TouchableOpacity style={styles.reasonToggle} onPress={() => setReasonOpen((o) => !o)}>
-            <Icon name={reasonOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
-          </TouchableOpacity>
-        </View>
         <View style={styles.chips}>
-          {REASON_PRESETS.map((r) => (
-            <TouchableOpacity key={r.value} style={[styles.chip, form.reason === r.value && styles.chipActive]} onPress={() => updateForm('reason', form.reason === r.value ? '' : r.value)}>
-              <Text style={[styles.chipText, form.reason === r.value && styles.chipTextActive]}>{r.label}</Text>
+          {REASON_BUCKETS.map((b) => (
+            <TouchableOpacity key={b.value} style={[styles.chip, form.reasonBucket === b.value && styles.chipActive]} onPress={() => selectReasonBucket(b.value)}>
+              <Text style={[styles.chipText, form.reasonBucket === b.value && styles.chipTextActive]}>{b.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* Section 3+4: Payment */}
-        <Text style={styles.label}>Payment Mode</Text>
-        <View style={styles.chips}>
-          {PAYMENT_MODES.map((m) => (
-            <TouchableOpacity key={m.value} style={[styles.chip, form.payment_mode === m.value && styles.chipActive]} onPress={() => updateForm('payment_mode', m.value)}>
-              <Text style={[styles.chipText, form.payment_mode === m.value && styles.chipTextActive]}>{m.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        {form.payment_mode === 'UPI' && (
-          <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Reference ID" placeholderTextColor={colors.textMuted} />
-        )}
-        {form.payment_mode === 'CHEQUE' && (
-          <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque Number" placeholderTextColor={colors.textMuted} />
-        )}
-
-        {/* Section 5: Collection Status */}
-        <Text style={styles.label}>Collection Status</Text>
-        <View style={styles.chips}>
-          {STATUS_OPTIONS.map((o) => {
-            const active = form.status === o.value;
-            return (
-              <TouchableOpacity key={o.value} style={[styles.statusChip, active && { backgroundColor: o.color, borderColor: o.color }]} onPress={() => updateForm('status', o.value)}>
-                <Text style={[styles.statusChipText, active && { color: '#fff' }]}>{o.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {form.status === 'PENDING' && (
+        {/* "Other" bucket — exact existing free-text reason picker */}
+        {form.reasonBucket === 'OTHER' && (
           <>
-            <Text style={styles.label}>Promise to Pay Date *</Text>
-            <TouchableOpacity style={styles.input} onPress={() => setShowPromiseDatePicker(true)}>
-              <Text style={{ color: form.promise_date ? colors.text : colors.textMuted }}>
-                {form.promise_date ? fmtDate(form.promise_date) : 'Select date (required)'}
-              </Text>
-            </TouchableOpacity>
-            {showPromiseDatePicker && (
-              <DateTimePicker
-                value={form.promise_date || plannedDate}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                minimumDate={plannedDate}
-                maximumDate={maxPromiseDate}
-                onChange={(event, selectedDate) => {
-                  setShowPromiseDatePicker(Platform.OS === 'ios');
-                  if (selectedDate) updateForm('promise_date', selectedDate);
-                }}
+            <View style={styles.reasonWrap}>
+              <TextInput
+                style={styles.reasonInput}
+                value={form.reason}
+                onChangeText={(t) => updateForm('reason', t)}
+                placeholder="Type or select a reason..."
+                placeholderTextColor={colors.textMuted}
+                onFocus={() => setReasonOpen(true)}
+                onBlur={() => setTimeout(() => setReasonOpen(false), 150)}
               />
+              <TouchableOpacity style={styles.reasonToggle} onPress={() => setReasonOpen((o) => !o)}>
+                <Icon name={reasonOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.chips}>
+              {OTHER_REASON_PRESETS.map((r) => (
+                <TouchableOpacity key={r.value} style={[styles.chip, form.reason === r.value && styles.chipActive]} onPress={() => updateForm('reason', form.reason === r.value ? '' : r.value)}>
+                  <Text style={[styles.chipText, form.reason === r.value && styles.chipTextActive]}>{r.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+
+        {/* Collection Status — Collection bucket, and Other bucket (shared) */}
+        {showCollectionStatusFlow && (
+          <>
+            <Text style={styles.label}>Collection Status</Text>
+            <View style={styles.chips}>
+              {STATUS_OPTIONS.map((o) => {
+                const active = form.status === o.value;
+                return (
+                  <TouchableOpacity key={o.value} style={[styles.statusChip, active && { backgroundColor: o.color, borderColor: o.color }]} onPress={() => updateForm('status', o.value)}>
+                    <Text style={[styles.statusChipText, active && { color: '#fff' }]}>{o.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {form.status === 'PENDING' && renderPromiseDatePicker()}
+
+            {(form.status === 'COLLECTED' || form.status === 'PARTIALLY_COLLECTED') && (
+              <>
+                <Text style={styles.label}>Collected Amount (₹)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={form.collected_amount}
+                  onChangeText={(v) => updateForm('collected_amount', v.replace(/[^0-9.]/g, ''))}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                />
+                {renderPaymentModeSection()}
+              </>
+            )}
+
+            {form.status === 'PARTIALLY_COLLECTED' && renderPromiseDatePicker()}
+
+            <Text style={styles.label}>{form.status === 'NOT_PAID' ? 'Reason Why Not Paid *' : 'Remarks'}</Text>
+            <TextInput
+              style={[styles.input, styles.remarksInput]}
+              multiline
+              value={form.remarks}
+              onChangeText={(v) => updateForm('remarks', v)}
+              placeholder={form.status === 'NOT_PAID' ? 'Why did the customer not pay? (required)' : 'Optional notes'}
+              placeholderTextColor={colors.textMuted}
+            />
+
+            {form.status === 'NOT_PAID' && renderPromiseDatePicker()}
+
+            {showExtraReasonPhoto && (
+              <>
+                <Text style={styles.label}>Customer Photo *</Text>
+                {renderPhotoColumns([{ value: 'CUSTOMER', label: 'Customer' }])}
+              </>
             )}
           </>
         )}
 
-        {form.status === 'VISITED' && (
+        {/* Visit Type — Visit bucket only */}
+        {form.reasonBucket === 'VISIT' && (
           <>
-            <Text style={styles.label}>Visit Reason</Text>
+            <Text style={styles.label}>Visit Type</Text>
             <View style={styles.chips}>
-              {VISIT_REASON_OPTIONS.map((o) => (
+              {VISIT_TYPE_OPTIONS.map((o) => (
                 <TouchableOpacity key={o.value} style={[styles.chip, form.visit_reason === o.value && styles.chipActive]} onPress={() => updateForm('visit_reason', o.value)}>
                   <Text style={[styles.chipText, form.visit_reason === o.value && styles.chipTextActive]}>{o.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
+
+            {form.visit_reason === 'OD_VISIT' && (
+              <>
+                <Text style={styles.label}>DPD Bucket</Text>
+                <View style={styles.chips}>
+                  {DPD_BUCKET_OPTIONS.map((o) => (
+                    <TouchableOpacity key={o.value} style={[styles.chip, form.visit_dpd_bucket === o.value && styles.chipActive]} onPress={() => updateForm('visit_dpd_bucket', o.value)}>
+                      <Text style={[styles.chipText, form.visit_dpd_bucket === o.value && styles.chipTextActive]}>{o.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+
+            {form.visit_reason === 'HOME_VISIT' && (
+              <>
+                <Text style={styles.label}>Visit Purpose *</Text>
+                <TextInput style={styles.input} value={form.visit_purpose} onChangeText={(t) => updateForm('visit_purpose', t)} placeholder="Purpose of this visit" placeholderTextColor={colors.textMuted} />
+
+                <Text style={styles.label}>Visit Outcome *</Text>
+                <TextInput style={styles.input} value={form.visit_outcome} onChangeText={(t) => updateForm('visit_outcome', t)} placeholder="Outcome of this visit" placeholderTextColor={colors.textMuted} />
+
+                {renderYesNo('Customer Available', 'customer_available')}
+                {renderYesNo('Customer Met', 'customer_met')}
+                {renderYesNo('Family Member Met', 'family_member_met', true)}
+              </>
+            )}
+
+            {(form.visit_reason === 'OD_VISIT' || form.visit_reason === 'HOME_VISIT' || form.visit_reason === 'OTHER') && (
+              <>
+                <Text style={styles.label}>{form.visit_reason === 'HOME_VISIT' ? 'Remarks *' : 'Remarks'}</Text>
+                <TextInput
+                  style={[styles.input, styles.remarksInput]}
+                  multiline
+                  value={form.remarks}
+                  onChangeText={(v) => updateForm('remarks', v)}
+                  placeholder="Optional notes"
+                  placeholderTextColor={colors.textMuted}
+                />
+              </>
+            )}
+
+            {form.visit_reason === 'HOME_VISIT' && (
+              <>
+                {renderYesNo('Follow-up Required', 'follow_up_required')}
+                {form.follow_up_required === true && renderPromiseDatePicker()}
+
+                <Text style={styles.label}>Photos (Optional)</Text>
+                {renderPhotoColumns(HOME_VISIT_PHOTO_KINDS)}
+              </>
+            )}
           </>
         )}
 
-        {form.status === 'VISITED' && form.visit_reason === 'OD_VISIT' && (
+        {/* Travel companion — unchanged, appears at the bottom for every reason */}
+        {!!form.reasonBucket && (
           <>
-            <Text style={styles.label}>DPD Bucket</Text>
+            <Text style={styles.label}>Travel With</Text>
             <View style={styles.chips}>
-              {DPD_BUCKET_OPTIONS.map((o) => (
-                <TouchableOpacity key={o.value} style={[styles.chip, form.visit_dpd_bucket === o.value && styles.chipActive]} onPress={() => updateForm('visit_dpd_bucket', o.value)}>
-                  <Text style={[styles.chipText, form.visit_dpd_bucket === o.value && styles.chipTextActive]}>{o.label}</Text>
+              {TRAVEL_WITH.map((t) => (
+                <TouchableOpacity key={t.value} style={[styles.chip, form.travel_with === t.value && styles.chipActive]} onPress={() => updateForm('travel_with', t.value)}>
+                  <Text style={[styles.chipText, form.travel_with === t.value && styles.chipTextActive]}>{t.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
+            {form.travel_with === 'WITH_EMPLOYEE' && (
+              <>
+                <TextInput style={styles.input} value={form.co_employee_id} onChangeText={(t) => updateForm('co_employee_id', t)} placeholder="Employee ID" placeholderTextColor={colors.textMuted} />
+                <TextInput style={styles.input} value={form.co_employee_name} onChangeText={(t) => updateForm('co_employee_name', t)} placeholder="Employee Name" placeholderTextColor={colors.textMuted} />
+                <TextInput
+                  style={styles.input}
+                  value={form.co_employee_phone}
+                  onChangeText={(t) => updateForm('co_employee_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={10}
+                />
+              </>
+            )}
           </>
         )}
 
-        {/* Section 6: Amount + Remarks */}
-        {(form.status === 'COLLECTED' || form.status === 'PARTIALLY_COLLECTED') && (
-          <>
-            <Text style={styles.label}>Collected Amount (₹)</Text>
-            <TextInput
-              style={styles.input}
-              keyboardType="numeric"
-              value={form.collected_amount}
-              onChangeText={(v) => updateForm('collected_amount', v.replace(/[^0-9.]/g, ''))}
-              placeholder="0"
-              placeholderTextColor={colors.textMuted}
-            />
-          </>
-        )}
-
-        <Text style={styles.label}>{form.status === 'NOT_PAID' ? 'Reason Why Not Paid *' : 'Remarks'}</Text>
-        <TextInput
-          style={[styles.input, styles.remarksInput]}
-          multiline
-          value={form.remarks}
-          onChangeText={(v) => updateForm('remarks', v)}
-          placeholder={form.status === 'NOT_PAID' ? 'Why did the customer not pay? (required)' : 'Optional notes'}
-          placeholderTextColor={colors.textMuted}
-        />
-
-        {/* Section 7: Photos — one column per kind, side by side */}
-        <Text style={styles.label}>Photos</Text>
-        <View style={styles.photoColumns}>
-          {PHOTO_KINDS.map((k) => {
-            const isRequired = REASON_MEDIA_REQUIREMENTS[form.reason]?.photoKind === k.value;
-            return (
-              <View key={k.value} style={styles.photoColumn}>
-                <Text style={styles.photoKindLabel} numberOfLines={1}>
-                  {k.label}{isRequired ? ' *' : ''}
-                </Text>
-                <TouchableOpacity style={styles.photoAddBtn} onPress={() => addPhoto(k.value)}>
-                  <Icon name="camera" size={18} color={colors.primary} />
-                </TouchableOpacity>
-                {photos.map((p, i) => p.kind === k.value && (
-                  <View key={i} style={styles.photoThumbWrap}>
-                    <Image source={{ uri: p.uri }} style={styles.photoThumb} />
-                    <TouchableOpacity style={styles.photoRemove} onPress={() => removePhoto(i)}>
-                      <Icon name="x" size={12} color="#fff" />
-                    </TouchableOpacity>
-                    <Text style={styles.photoTimestamp} numberOfLines={1}>{fmtDateTime(p.capturedAt)}</Text>
-                  </View>
-                ))}
-              </View>
-            );
-          })}
-        </View>
-
-        {/* Section 8: Travel companion */}
-        <Text style={styles.label}>Travel With</Text>
-        <View style={styles.chips}>
-          {TRAVEL_WITH.map((t) => (
-            <TouchableOpacity key={t.value} style={[styles.chip, form.travel_with === t.value && styles.chipActive]} onPress={() => updateForm('travel_with', t.value)}>
-              <Text style={[styles.chipText, form.travel_with === t.value && styles.chipTextActive]}>{t.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        {form.travel_with === 'WITH_EMPLOYEE' && (
-          <>
-            <TextInput style={styles.input} value={form.co_employee_id} onChangeText={(t) => updateForm('co_employee_id', t)} placeholder="Employee ID" placeholderTextColor={colors.textMuted} />
-            <TextInput style={styles.input} value={form.co_employee_name} onChangeText={(t) => updateForm('co_employee_name', t)} placeholder="Employee Name" placeholderTextColor={colors.textMuted} />
-            <TextInput
-              style={styles.input}
-              value={form.co_employee_phone}
-              onChangeText={(t) => updateForm('co_employee_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
-              placeholder="10-digit mobile number"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="number-pad"
-              maxLength={10}
-            />
-          </>
-        )}
-
-        {/* Section 9: GPS notice + Save */}
+        {/* GPS notice + Save */}
         <View style={styles.gpsNotice}>
           <Icon name="crosshair" size={13} color={colors.textMuted} />
           <Text style={styles.gpsNoticeText}>Your GPS location will be captured automatically on save</Text>
