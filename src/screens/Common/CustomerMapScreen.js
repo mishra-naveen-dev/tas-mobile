@@ -610,6 +610,12 @@ const CustomerMapScreen = ({ navigation }) => {
                                         <Text style={styles.detailRowText}>DPD: {detail.dpd_days} days{detail.dpd_bucket ? ` (${detail.dpd_bucket})` : ''}</Text>
                                     </View>
                                 )}
+                                {!!detail.due_date && (
+                                    <View style={styles.detailRow}>
+                                        <Icon name="calendar" size={14} color={colors.textMuted} />
+                                        <Text style={styles.detailRowText}>Planned: {new Date(detail.due_date).toLocaleDateString('en-IN')}</Text>
+                                    </View>
+                                )}
                                 {!!detail.branch_name && (
                                     <View style={styles.detailRow}>
                                         <Icon name="home" size={14} color={colors.textMuted} />
