@@ -9,6 +9,7 @@ import {
     TouchableOpacity,
     Linking,
     Animated,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -118,6 +119,15 @@ const CollectionDoneScreen = ({ navigation }) => {
         }
         if (r.visit_latitude && r.visit_longitude) {
             LocationService.openMaps(r.visit_latitude, r.visit_longitude);
+            return;
+        }
+        const addr = [r.address, r.area, r.pincode].filter(Boolean).join(', ');
+        if (addr) {
+            Linking.openURL(
+                `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving`
+            ).catch(() => {});
+        } else {
+            Alert.alert('No Location', 'No address or GPS data available for this customer.');
         }
     }, []);
 

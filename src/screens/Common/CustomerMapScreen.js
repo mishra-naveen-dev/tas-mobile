@@ -286,12 +286,27 @@ const CustomerMapScreen = ({ navigation }) => {
         }
     }, [detail, userLocation]);
 
+    // Same priority CollectionsScreen's navigateToCustomer uses: the
+    // customer's own geo-tag first, then wherever a prior visit's GPS
+    // landed, then the text address as a last resort — never a dead end
+    // now that most customers carry a real coordinate from the upload.
     const navigateToDetail = useCallback(() => {
         if (!detail) return;
         if (detail.customer_latitude && detail.customer_longitude) {
             LocationService.openMaps(detail.customer_latitude, detail.customer_longitude);
+            return;
+        }
+        if (detail.visit_latitude && detail.visit_longitude) {
+            LocationService.openMaps(detail.visit_latitude, detail.visit_longitude);
+            return;
+        }
+        const addr = [detail.address, detail.area, detail.pincode].filter(Boolean).join(', ');
+        if (addr) {
+            Linking.openURL(
+                `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving`
+            ).catch(() => {});
         } else {
-            Alert.alert('No Location', 'No GPS coordinates available for this customer.');
+            Alert.alert('No Location', 'No address or GPS data available for this customer.');
         }
     }, [detail]);
 
