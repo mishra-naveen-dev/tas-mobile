@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 import api, { setSessionExpiredCallback, resetSessionHandler, loadCustomBaseURL } from '../api/api';
+import { secureGetItem, secureSetItem, secureMultiRemove } from '../utils/secureStorage';
 import { parseApiError } from '../core/error/AppErrorHandler';
 import { SSEClient } from '../services/SSEClient';
 import LocationService from '../services/LocationService';
@@ -47,11 +48,8 @@ const normalizeUser = (userData) => {
 const clearAuthSession = async () => {
     try {
         await Promise.all([
-            AsyncStorage.removeItem(STORAGE_KEYS.ACCESS),
-            AsyncStorage.removeItem(STORAGE_KEYS.REFRESH),
+            secureMultiRemove([STORAGE_KEYS.ACCESS, STORAGE_KEYS.REFRESH, STORAGE_KEYS.SESSION, 'accessToken']),
             AsyncStorage.removeItem(STORAGE_KEYS.USER),
-            AsyncStorage.removeItem(STORAGE_KEYS.SESSION),
-            AsyncStorage.removeItem('accessToken'),
         ]);
     } catch (e) {
         if (__DEV__) console.error('[Auth] Error clearing auth session keys:', e);
@@ -96,11 +94,11 @@ export const AuthProvider = ({ children }) => {
         const startTime = Date.now();
         try {
             await loadCustomBaseURL();
-            let storedAccess = await AsyncStorage.getItem(STORAGE_KEYS.ACCESS);
+            let storedAccess = await secureGetItem(STORAGE_KEYS.ACCESS);
             if (!storedAccess) {
-                storedAccess = await AsyncStorage.getItem('accessToken');
+                storedAccess = await secureGetItem('accessToken');
             }
-            const storedRefresh = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH);
+            const storedRefresh = await secureGetItem(STORAGE_KEYS.REFRESH);
             const storedUser = await AsyncStorage.getItem(STORAGE_KEYS.USER);
 
             if (storedAccess && storedRefresh) {
@@ -157,12 +155,12 @@ export const AuthProvider = ({ children }) => {
             }
 
             const storageOps = [
-                AsyncStorage.setItem(STORAGE_KEYS.ACCESS, access),
-                AsyncStorage.setItem(STORAGE_KEYS.REFRESH, refresh),
+                secureSetItem(STORAGE_KEYS.ACCESS, access),
+                secureSetItem(STORAGE_KEYS.REFRESH, refresh),
             ];
 
             if (data.session_token) {
-                storageOps.push(AsyncStorage.setItem(STORAGE_KEYS.SESSION, data.session_token));
+                storageOps.push(secureSetItem(STORAGE_KEYS.SESSION, data.session_token));
             }
 
             await Promise.all(storageOps);

@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import { cacheWrite, cacheRead, makeCacheKey } from '../utils/dataCache';
 import { serverStatus } from '../utils/serverStatus';
+import { secureGetItem, secureSetItem, secureMultiRemove } from '../utils/secureStorage';
 
 const PROD_URL = 'https://api.tas.namracred.co.in/api/v1';
 
@@ -118,7 +119,8 @@ const getDeviceInfo = async () => {
 };
 
 const clearAuthData = async () => {
-    await AsyncStorage.multiRemove(['access', 'refresh', 'user', 'device_id', 'device_fingerprint', 'device_info', 'session_token']);
+    await secureMultiRemove(['access', 'refresh', 'session_token']);
+    await AsyncStorage.multiRemove(['user', 'device_id', 'device_fingerprint', 'device_info']);
 };
 
 const api = axios.create({
@@ -127,10 +129,10 @@ const api = axios.create({
 });
 
 api.interceptors.request.use(async (config) => {
-    const token = await AsyncStorage.getItem('access');
+    const token = await secureGetItem('access');
     const deviceId = await getDeviceId();
     const deviceInfo = await getDeviceInfo();
-    const sessionToken = await AsyncStorage.getItem('session_token');
+    const sessionToken = await secureGetItem('session_token');
 
     if (token && !config.url.includes('/auth/token')) {
         config.headers.Authorization = `Bearer ${token}`;
@@ -163,7 +165,7 @@ function startReconnectPolling() {
     if (_reconnectTimer) return;
     _reconnectTimer = setInterval(async () => {
         try {
-            const token = await AsyncStorage.getItem('access');
+            const token = await secureGetItem('access');
             await axios.get(`${getBaseURL()}/organization/roles/`, {
                 params: { page_size: 1 },
                 timeout: 8000,
@@ -239,13 +241,13 @@ api.interceptors.response.use(
             }
 
             try {
-                const refresh = await AsyncStorage.getItem('refresh');
+                const refresh = await secureGetItem('refresh');
 
                 if (!refresh) {
                     // No refresh token — check whether user was ever authenticated.
                     // On a fresh install both access and refresh are absent; firing
                     // "Session Expired" in that state is wrong — silently reject.
-                    const access = await AsyncStorage.getItem('access');
+                    const access = await secureGetItem('access');
                     if (!access) {
                         return Promise.reject(error);
                     }
@@ -266,10 +268,10 @@ api.interceptors.response.use(
                 const newRefresh = res.data.refresh || refresh;
                 const newSessionToken = res.data.session_token;
 
-                await AsyncStorage.setItem('access', newAccess);
-                await AsyncStorage.setItem('refresh', newRefresh);
+                await secureSetItem('access', newAccess);
+                await secureSetItem('refresh', newRefresh);
                 if (newSessionToken) {
-                    await AsyncStorage.setItem('session_token', newSessionToken);
+                    await secureSetItem('session_token', newSessionToken);
                 }
 
                 originalRequest.headers.Authorization = `Bearer ${newAccess}`;
@@ -591,7 +593,13 @@ api.refreshToken = async (refreshToken) => {
 };
 
 api.logout = async () => {
-    return api.post('/auth/logout/');
+    // Sent so the backend can actively blacklist it — without this,
+    // "logout" only marked the server-side session inactive while the JWT
+    // refresh token itself stayed valid for its full lifetime (up to 95
+    // days on mobile) and could still be replayed to mint new access
+    // tokens after a user logged out.
+    const refresh = await secureGetItem('refresh');
+    return api.post('/auth/logout/', { refresh });
 };
 
 // Reverse geocode proxy — key stays on the server, never in the APK
