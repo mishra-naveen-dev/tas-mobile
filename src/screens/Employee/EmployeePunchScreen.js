@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, Alert, TextInput, Modal, ActivityIndicator, Dimensions,
+  Animated, Alert, TextInput, Modal, ActivityIndicator, Dimensions, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { usePunch, STATES } from '../../context/PunchContext';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
+import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
 
 const { width } = Dimensions.get('window');
 
@@ -42,6 +44,13 @@ const TRAVEL_WITH = [
   { value: 'ALONE', label: 'Alone' },
   { value: 'WITH_EMPLOYEE', label: 'With Employee' },
 ];
+
+const YES_NO_OPTIONS = [
+  { value: true, label: 'Yes' },
+  { value: false, label: 'No' },
+];
+
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 
 const Banner = ({ message, type, onDismiss }) => {
   const y = useRef(new Animated.Value(-100)).current;
@@ -161,7 +170,17 @@ const EmployeePunchScreen = ({ navigation }) => {
     co_employee_name: '',
     co_employee_phone: '',
     vehicle_number: '',
+    // Home Visit detail (reason === 'Home Visit')
+    visit_purpose: '',
+    visit_outcome: '',
+    customer_available: null,
+    customer_met: null,
+    family_member_met: null,
+    follow_up_required: null,
+    promise_date: null,
   });
+  const [audioNote, setAudioNote] = useState(null); // { uri, fileName, mimeType, durationSeconds }
+  const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
 
   // Out-of-range geofence confirmation (shown when the backend reports the
   // punch is more than 200m from the customer's stored geo-tag).
@@ -334,6 +353,37 @@ const EmployeePunchScreen = ({ navigation }) => {
       }
     }
 
+    if (form.reason === 'Home Visit') {
+      if (!form.visit_purpose.trim()) {
+        Alert.alert('Required', 'Please enter the visit purpose.');
+        return false;
+      }
+      if (!form.visit_outcome.trim()) {
+        Alert.alert('Required', 'Please enter the visit outcome.');
+        return false;
+      }
+      if (form.customer_available === null) {
+        Alert.alert('Required', 'Please specify whether the customer was available.');
+        return false;
+      }
+      if (form.customer_met === null) {
+        Alert.alert('Required', 'Please specify whether the customer was met.');
+        return false;
+      }
+      if (form.follow_up_required === null) {
+        Alert.alert('Required', 'Please specify whether a follow-up is required.');
+        return false;
+      }
+      if (form.follow_up_required === true && !form.promise_date) {
+        Alert.alert('Required', 'Please select the next follow-up date.');
+        return false;
+      }
+      if (!audioNote) {
+        Alert.alert('Voice Note Required', 'Please record a voice note for this Home Visit.');
+        return false;
+      }
+    }
+
     if (form.travel_with === 'WITH_EMPLOYEE') {
       if (!form.co_employee_phone) {
         Alert.alert('Required', 'Employee phone number is required');
@@ -365,7 +415,15 @@ const EmployeePunchScreen = ({ navigation }) => {
       co_employee_name: '',
       co_employee_phone: '',
       vehicle_number: '',
+      visit_purpose: '',
+      visit_outcome: '',
+      customer_available: null,
+      customer_met: null,
+      family_member_met: null,
+      follow_up_required: null,
+      promise_date: null,
     });
+    setAudioNote(null);
     setLocalLocation(null);
     setOutOfRangeModal({ visible: false, distanceM: 0 });
     setOutOfRangeReason('');
@@ -381,7 +439,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       current_address: localLocation.current_address,
     };
 
-    const result = await punchIn({ ...form, ...extra }, locationData);
+    const result = await punchIn({ ...form, ...extra, audioNote }, locationData);
 
     if (result.success) {
       // Auto-close the dialog once the punch is recorded, instead of leaving
@@ -461,13 +519,33 @@ const EmployeePunchScreen = ({ navigation }) => {
       co_employee_name: '',
       co_employee_phone: '',
       vehicle_number: '',
+      visit_purpose: '',
+      visit_outcome: '',
+      customer_available: null,
+      customer_met: null,
+      family_member_met: null,
+      follow_up_required: null,
+      promise_date: null,
     });
+    setAudioNote(null);
     resetForm();
   };
 
   const updateForm = (key, value) => {
+    if (key === 'reason' && value !== 'Home Visit') {
+      setAudioNote(null);
+    }
     setForm((prev) => {
       const updated = { ...prev, [key]: value };
+      if (key === 'reason' && value !== 'Home Visit') {
+        updated.visit_purpose = '';
+        updated.visit_outcome = '';
+        updated.customer_available = null;
+        updated.customer_met = null;
+        updated.family_member_met = null;
+        updated.follow_up_required = null;
+        updated.promise_date = null;
+      }
       if (key === 'visit_type') {
         updated.loan_id = '';
         updated.amount = '';
@@ -512,6 +590,56 @@ const EmployeePunchScreen = ({ navigation }) => {
     }
     return { latitude: 28.6139, longitude: 77.2090, latitudeDelta: 0.5, longitudeDelta: 0.5 };
   };
+
+  const renderYesNo = (label, fieldKey, optional = false) => (
+    <>
+      <Text style={styles.label}>{label}{optional ? '' : ' *'}</Text>
+      <View style={styles.chips}>
+        {YES_NO_OPTIONS.map((o) => (
+          <TouchableOpacity
+            key={String(o.value)}
+            style={[styles.chip, form[fieldKey] === o.value && styles.chipActive]}
+            onPress={() => updateForm(fieldKey, o.value)}
+          >
+            <Text style={[styles.chipText, form[fieldKey] === o.value && styles.chipTextActive]}>{o.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </>
+  );
+
+  // No specific loan/due-date context on this standalone screen (unlike
+  // CollectionVisitScreen's promise-date, which anchors to the loan's due
+  // date) — anchor to today instead: can't promise a follow-up in the past,
+  // capped a month out.
+  const todayFloor = new Date();
+  todayFloor.setHours(0, 0, 0, 0);
+  const maxFollowUpDate = new Date(todayFloor);
+  maxFollowUpDate.setMonth(maxFollowUpDate.getMonth() + 1);
+
+  const renderPromiseDatePicker = () => (
+    <>
+      <Text style={styles.label}>Next Follow-up Date *</Text>
+      <TouchableOpacity style={styles.input} onPress={() => setShowPromiseDatePicker(true)}>
+        <Text style={{ color: form.promise_date ? colors.text : colors.textMuted }}>
+          {form.promise_date ? fmtDate(form.promise_date) : 'Select date (required)'}
+        </Text>
+      </TouchableOpacity>
+      {showPromiseDatePicker && (
+        <DateTimePicker
+          value={form.promise_date || todayFloor}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          minimumDate={todayFloor}
+          maximumDate={maxFollowUpDate}
+          onChange={(event, selectedDate) => {
+            setShowPromiseDatePicker(Platform.OS === 'ios');
+            if (selectedDate) updateForm('promise_date', selectedDate);
+          }}
+        />
+      )}
+    </>
+  );
 
   const isFetching = punchState === STATES.FETCHING_LOCATION;
   const isSubmitting = punchState === STATES.SUBMITTING;
@@ -851,6 +979,25 @@ const EmployeePunchScreen = ({ navigation }) => {
                       )}
                     </>
                   )}
+                </>
+              )}
+
+              {form.reason === 'Home Visit' && (
+                <>
+                  <Text style={styles.label}>Visit Purpose *</Text>
+                  <TextInput style={styles.input} value={form.visit_purpose} onChangeText={(t) => updateForm('visit_purpose', t)} placeholder="Purpose of this visit" placeholderTextColor={colors.textMuted} />
+
+                  <Text style={styles.label}>Visit Outcome *</Text>
+                  <TextInput style={styles.input} value={form.visit_outcome} onChangeText={(t) => updateForm('visit_outcome', t)} placeholder="Outcome of this visit" placeholderTextColor={colors.textMuted} />
+
+                  {renderYesNo('Customer Available', 'customer_available')}
+                  {renderYesNo('Customer Met', 'customer_met')}
+                  {renderYesNo('Family Member Met', 'family_member_met', true)}
+                  {renderYesNo('Follow-up Required', 'follow_up_required')}
+                  {form.follow_up_required === true && renderPromiseDatePicker()}
+
+                  <Text style={styles.label}>Voice Note *</Text>
+                  <VoiceNoteRecorder value={audioNote} onChange={setAudioNote} required />
                 </>
               )}
 

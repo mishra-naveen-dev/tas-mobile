@@ -240,10 +240,47 @@ export const PunchProvider = ({ children }) => {
         payload.duplicate_location_reason = formData.duplicate_location_reason;
         payload.duplicate_location_comment = formData.duplicate_location_comment || '';
       }
-      
+
+      // Home Visit detail (reason='Home Visit') — mirrors the same fields
+      // CollectionVisitScreen sends for its own Home Visit flow, just landing
+      // on AttendancePunch directly since this standalone punch has no
+      // CollectionRecord to attach a CollectionUpdate to.
+      if (formData.reason === 'Home Visit') {
+        payload.visit_purpose = formData.visit_purpose || '';
+        payload.visit_outcome = formData.visit_outcome || '';
+        if (formData.customer_available !== null && formData.customer_available !== undefined) {
+          payload.customer_available = formData.customer_available;
+        }
+        if (formData.customer_met !== null && formData.customer_met !== undefined) {
+          payload.customer_met = formData.customer_met;
+        }
+        if (formData.family_member_met !== null && formData.family_member_met !== undefined) {
+          payload.family_member_met = formData.family_member_met;
+        }
+        if (formData.follow_up_required !== null && formData.follow_up_required !== undefined) {
+          payload.follow_up_required = formData.follow_up_required;
+        }
+        if (formData.promise_date) {
+          payload.promise_date = formData.promise_date.toISOString().split('T')[0];
+        }
+      }
+
       if (IS_DEV) console.log('[Punch] Submitting punch:', JSON.stringify(payload, null, 2));
-      
-      const res = await api.post('/attendance/punches/', payload);
+
+      let res;
+      if (formData.audioNote) {
+        const fd = new FormData();
+        Object.entries(payload).forEach(([k, v]) => {
+          if (v !== undefined && v !== null && v !== '') fd.append(k, String(v));
+        });
+        fd.append('audio_recording', {
+          uri: formData.audioNote.uri, name: formData.audioNote.fileName, type: formData.audioNote.mimeType,
+        });
+        fd.append('audio_duration_seconds', String(formData.audioNote.durationSeconds));
+        res = await api.post('/attendance/punches/', fd);
+      } else {
+        res = await api.post('/attendance/punches/', payload);
+      }
 
       if (IS_DEV) console.log('[Punch] Success:', JSON.stringify(res.data, null, 2));
 
