@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, PermissionsAndroid, Alert } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import {
@@ -12,7 +12,7 @@ import { colors, typography, spacing, borderRadius } from '../theme/tokens';
 // Mirrors the server's hard cap (CompleteVisitSerializer.audio_duration_seconds,
 // tas-backend/apps/loans/serializers.py) — auto-stops instead of letting the
 // officer record something the upload will then be rejected for.
-const MAX_DURATION_MS = 120000;
+const MAX_DURATION_SECONDS = 120;
 
 const ANDROID_AUDIO_SET = {
   AudioEncoderAndroid: AudioEncoderAndroidType.AAC,
@@ -43,6 +43,14 @@ const mimeTypeFor = (fileName) => {
   return { m4a: 'audio/m4a', mp4: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', '3gp': 'audio/3gpp' }[ext] || 'audio/mp4';
 };
 
+// Plain M:SS — the library's own `mmssss` formats to centisecond precision
+// (e.g. "00:00:00"), which is both more precision than a voice-note counter
+// needs and visually inconsistent with anything hand-formatted next to it.
+const fmtMMSS = (totalSeconds) => {
+  const s = Math.max(0, Math.floor(totalSeconds || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
 /**
  * Record / preview-playback / re-record a short voice note for a Collection
  * Visit. Controlled component: `value` is `{ uri, fileName, mimeType,
@@ -52,27 +60,48 @@ const mimeTypeFor = (fileName) => {
  */
 const VoiceNoteRecorder = ({ value, onChange, required }) => {
   const {
-    state, startRecorder, stopRecorder, startPlayer, stopPlayer, pausePlayer, resumePlayer, mmssss,
+    state, startRecorder, stopRecorder, startPlayer, stopPlayer, pausePlayer, resumePlayer,
   } = useSound({ subscriptionDuration: 0.1 });
 
+  // Recording duration is tracked with our own wall-clock timer rather than
+  // the library's `state.currentPosition` — that field is driven by whatever
+  // listener fired most recently (record or playback), and stopping the
+  // recorder can reset it to 0 before this component reads it, which is what
+  // produced a permanent "0:00" duration. Date.now() diffing can't race like that.
+  const recordingStartRef = useRef(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const tickRef = useRef(null);
   const autoStopGuardRef = useRef(false);
-  const lastPositionRef = useRef(0);
 
-  useEffect(() => {
-    lastPositionRef.current = state.currentPosition;
-    if (state.isRecording && state.currentPosition >= MAX_DURATION_MS && !autoStopGuardRef.current) {
-      autoStopGuardRef.current = true;
-      handleStop();
+  const clearTick = useCallback(() => {
+    if (tickRef.current) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.isRecording, state.currentPosition]);
+  }, []);
 
   useEffect(() => () => {
     // Leaving the screen mid-recording/playback shouldn't leak a native session.
+    clearTick();
     if (state.isRecording) stopRecorder().catch(() => {});
     if (state.isPlaying) stopPlayer().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleStop = useCallback(async () => {
+    clearTick();
+    try {
+      const uri = await stopRecorder();
+      const durationSeconds = Math.min(
+        MAX_DURATION_SECONDS,
+        Math.round((Date.now() - recordingStartRef.current) / 1000)
+      );
+      const fileName = fileNameFromUri(uri);
+      onChange({ uri, fileName, mimeType: mimeTypeFor(fileName), durationSeconds });
+    } catch (e) {
+      Alert.alert('Recording Failed', e?.message || 'Could not save the recording.');
+    }
+  }, [clearTick, stopRecorder, onChange]);
 
   const handleStart = async () => {
     const granted = await ensureMicPermission();
@@ -83,19 +112,19 @@ const VoiceNoteRecorder = ({ value, onChange, required }) => {
     try {
       autoStopGuardRef.current = false;
       await startRecorder(undefined, Platform.OS === 'android' ? ANDROID_AUDIO_SET : undefined, false);
+      recordingStartRef.current = Date.now();
+      setElapsedSeconds(0);
+      clearTick();
+      tickRef.current = setInterval(() => {
+        const secs = Math.round((Date.now() - recordingStartRef.current) / 1000);
+        setElapsedSeconds(secs);
+        if (secs >= MAX_DURATION_SECONDS && !autoStopGuardRef.current) {
+          autoStopGuardRef.current = true;
+          handleStop();
+        }
+      }, 250);
     } catch (e) {
       Alert.alert('Recording Failed', e?.message || 'Could not start recording.');
-    }
-  };
-
-  const handleStop = async () => {
-    try {
-      const uri = await stopRecorder();
-      const durationSeconds = Math.min(120, Math.round(lastPositionRef.current / 1000));
-      const fileName = fileNameFromUri(uri);
-      onChange({ uri, fileName, mimeType: mimeTypeFor(fileName), durationSeconds });
-    } catch (e) {
-      Alert.alert('Recording Failed', e?.message || 'Could not save the recording.');
     }
   };
 
@@ -122,7 +151,7 @@ const VoiceNoteRecorder = ({ value, onChange, required }) => {
       <View style={styles.card}>
         <View style={styles.recordingRow}>
           <View style={styles.recDot} />
-          <Text style={styles.recordingText}>Recording... {mmssss(Math.floor(state.currentPosition))}</Text>
+          <Text style={styles.recordingText}>Recording... {fmtMMSS(elapsedSeconds)}</Text>
         </View>
         <TouchableOpacity style={styles.stopBtn} onPress={handleStop}>
           <Icon name="square" size={16} color="#fff" />
@@ -133,13 +162,14 @@ const VoiceNoteRecorder = ({ value, onChange, required }) => {
   }
 
   if (value?.uri) {
+    const playbackSeconds = state.isPlaying || state.currentPosition > 0 ? Math.floor(state.currentPosition / 1000) : 0;
     return (
       <View style={styles.card}>
         <TouchableOpacity style={styles.playBtn} onPress={handlePlayPause}>
           <Icon name={state.isPlaying ? 'pause' : 'play'} size={16} color={colors.primary} />
         </TouchableOpacity>
         <Text style={styles.durationText}>
-          {mmssss(Math.floor(state.isPlaying || state.currentPosition > 0 ? state.currentPosition : 0))} / 0:{String(value.durationSeconds).padStart(2, '0')}
+          {fmtMMSS(playbackSeconds)} / {fmtMMSS(value.durationSeconds)}
         </Text>
         <TouchableOpacity style={styles.reRecordBtn} onPress={handleStart}>
           <Icon name="mic" size={14} color={colors.textMuted} />
