@@ -33,6 +33,12 @@ const PunchContext = createContext(null);
 export const PunchProvider = ({ children }) => {
   const [punches, setPunches] = useState([]);
   const [loading, setLoading] = useState(false);
+  // Flips true after the first fetchTodayPunches() call resolves (success or
+  // failure) — lets a consumer tell "no punches yet today" (punches === [])
+  // apart from "haven't checked yet" (also punches === [] initially), which
+  // matters for anything that reacts to an empty punch list on first render
+  // (e.g. the daily punch-in reminder).
+  const [initialFetchDone, setInitialFetchDone] = useState(false);
   const [error, setError] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
   const [success, setSuccess] = useState(false);
@@ -84,6 +90,8 @@ export const PunchProvider = ({ children }) => {
         const { message } = parseApiError(err);
         setError(message);
       }
+    } finally {
+      setInitialFetchDone(true);
     }
   }, []);
 
@@ -481,6 +489,7 @@ export const PunchProvider = ({ children }) => {
     isMockLocation,
     capturedLocation,
     todayPunches: punches,
+    initialFetchDone,
     fetchTodayPunches,
     addPunch: punchIn,
     punchIn,
@@ -498,7 +507,7 @@ export const PunchProvider = ({ children }) => {
     submitForgotPunchRequest,
   }), [
     punches, loading, error, errorMessage, success, punchState, isActive,
-    isMockLocation, capturedLocation, fetchTodayPunches, punchIn, punchOut, registerExternalPunchIn,
+    isMockLocation, capturedLocation, initialFetchDone, fetchTodayPunches, punchIn, punchOut, registerExternalPunchIn,
     fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration,
     pendingAutoClosure, checkPendingAutoClosure, submitForgotPunchRequest,
   ]);
@@ -523,6 +532,7 @@ export const usePunch = () => {
       isMockLocation: false,
       capturedLocation: null,
       todayPunches: [],
+      initialFetchDone: false,
       fetchTodayPunches: () => {},
       addPunch: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       punchIn: () => Promise.resolve({ success: false, error: 'Context not ready' }),
