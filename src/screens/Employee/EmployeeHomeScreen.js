@@ -298,14 +298,7 @@ const IS_DEV = __DEV__;
 
 const MapPreview = React.memo(({ points, mapRef }) => {
     const navigation = useNavigation();
-    
-    if (!points || points.length === 0) {
-        return null;
-    }
-    
-    const latestPoint = points[0];
-    const startPoint = points[points.length - 1];
-    
+
     const fitAll = useCallback(() => {
         if (points.length > 1 && mapRef.current) {
             mapRef.current.fitToCoordinates(points, {
@@ -320,6 +313,13 @@ const MapPreview = React.memo(({ points, mapRef }) => {
             navigation.navigate('RouteMap');
         }
     }, [navigation]);
+
+    if (!points || points.length === 0) {
+        return null;
+    }
+
+    const latestPoint = points[0];
+    const startPoint = points[points.length - 1];
 
     return (
         <View style={styles.mapContainer}>
