@@ -8,6 +8,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
+import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
 import api from '../../api/api';
 import { usePunch } from '../../context/PunchContext';
 import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
@@ -96,6 +97,19 @@ const REASON_MEDIA_REQUIREMENTS = {
   'CustJLG_Aud': { photoKind: 'CUSTOMER', minPhotos: 1 },
 };
 
+// A voice note is mandatory for outcomes where spoken evidence actually
+// matters — mirrors the backend's _audio_required_reason exactly
+// (tas-backend/apps/loans/views.py) so the two never drift apart. Note
+// PENDING here is safe without also checking promise_date: the validate()
+// step below already requires promise_date before a PENDING submission is
+// allowed through at all, so PENDING here always means "P2P was recorded".
+const isAudioRequiredFor = (form) => (
+  form.status === 'NOT_PAID'
+  || form.status === 'PARTIALLY_COLLECTED'
+  || form.status === 'PENDING'
+  || form.visit_reason === 'HOME_VISIT'
+);
+
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
@@ -150,6 +164,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   const [photos, setPhotos] = useState([]); // [{ uri, fileName, type, kind }]
   const [upiScreenshot, setUpiScreenshot] = useState(null); // { uri, fileName, type }
   const [chequePhoto, setChequePhoto] = useState(null); // { uri, fileName, type }
+  const [audioNote, setAudioNote] = useState(null); // { uri, fileName, mimeType, durationSeconds }
 
   const [outOfRangeModal, setOutOfRangeModal] = useState({ visible: false, distanceM: 0 });
   const [outOfRangeReason, setOutOfRangeReason] = useState('');
@@ -284,6 +299,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     setPhotos([]);
     setUpiScreenshot(null);
     setChequePhoto(null);
+    setAudioNote(null);
     if (bucket === 'VISIT') visitStartTimeRef.current = new Date();
   };
 
@@ -420,6 +436,11 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           return false;
         }
       }
+
+      if (isAudioRequiredFor(form) && !audioNote) {
+        Alert.alert('Voice Note Required', `Please record a voice note for "${STATUS_OPTIONS.find((s) => s.value === form.status)?.label || form.status}".`);
+        return false;
+      }
     }
 
     if (form.reasonBucket === 'VISIT') {
@@ -454,6 +475,10 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         }
         if (form.follow_up_required === true && !form.promise_date) {
           Alert.alert('Required', 'Please select the next follow-up date.');
+          return false;
+        }
+        if (isAudioRequiredFor(form) && !audioNote) {
+          Alert.alert('Voice Note Required', 'Please record a voice note for this Home Visit.');
           return false;
         }
       }
@@ -536,6 +561,10 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     }
     if (chequePhoto) {
       fd.append('cheque_photo', { uri: chequePhoto.uri, name: chequePhoto.fileName, type: chequePhoto.type });
+    }
+    if (audioNote) {
+      fd.append('audio', { uri: audioNote.uri, name: audioNote.fileName, type: audioNote.mimeType });
+      fd.append('audio_duration_seconds', String(audioNote.durationSeconds));
     }
 
     return fd;
@@ -917,6 +946,13 @@ const CollectionVisitScreen = ({ navigation, route }) => {
                 {renderPhotoColumns([{ value: 'CUSTOMER', label: 'Customer' }])}
               </>
             )}
+
+            {!!form.status && (
+              <>
+                <Text style={styles.label}>Voice Note</Text>
+                <VoiceNoteRecorder value={audioNote} onChange={setAudioNote} required={isAudioRequiredFor(form)} />
+              </>
+            )}
           </>
         )}
 
@@ -977,6 +1013,9 @@ const CollectionVisitScreen = ({ navigation, route }) => {
               <>
                 {renderYesNo('Follow-up Required', 'follow_up_required')}
                 {form.follow_up_required === true && renderPromiseDatePicker()}
+
+                <Text style={styles.label}>Voice Note *</Text>
+                <VoiceNoteRecorder value={audioNote} onChange={setAudioNote} required />
 
                 <Text style={styles.label}>Photos (Optional)</Text>
                 {renderPhotoColumns(HOME_VISIT_PHOTO_KINDS)}
