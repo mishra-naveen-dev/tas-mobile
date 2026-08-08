@@ -649,6 +649,13 @@ api.getCollections = (params = {}) =>
 api.getCollectionRecord = (id) =>
     api.get(`/loans/collections/${id}/`);
 
+// Exact (case-insensitive) Loan ID lookup — distinct from getCollections'
+// fuzzy ?search=; used when a caller has a specific Loan ID (typed manually,
+// not picked from an autosuggest list) and needs to resolve it to exactly
+// one record before it can act on it (e.g. hand off to complete_visit).
+api.getCollectionByLoanId = (loanId) =>
+    api.get('/loans/collections/', { params: { loan_id: loanId } });
+
 api.getDistinctProducts = () =>
     api.get('/loans/collections/distinct_products/');
 

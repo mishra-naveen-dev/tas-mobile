@@ -20,6 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { usePunch } from '../../context/PunchContext';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import HeroHeader from '../../components/HeroHeader';
+import DailyPunchPrompt from '../../components/DailyPunchPrompt';
 import ActivityCard from '../../components/ActivityCard';
 import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
@@ -297,14 +298,7 @@ const IS_DEV = __DEV__;
 
 const MapPreview = React.memo(({ points, mapRef }) => {
     const navigation = useNavigation();
-    
-    if (!points || points.length === 0) {
-        return null;
-    }
-    
-    const latestPoint = points[0];
-    const startPoint = points[points.length - 1];
-    
+
     const fitAll = useCallback(() => {
         if (points.length > 1 && mapRef.current) {
             mapRef.current.fitToCoordinates(points, {
@@ -319,6 +313,13 @@ const MapPreview = React.memo(({ points, mapRef }) => {
             navigation.navigate('RouteMap');
         }
     }, [navigation]);
+
+    if (!points || points.length === 0) {
+        return null;
+    }
+
+    const latestPoint = points[0];
+    const startPoint = points[points.length - 1];
 
     return (
         <View style={styles.mapContainer}>
@@ -680,7 +681,9 @@ const EmployeeHomeScreen = ({ navigation }) => {
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
-            
+
+            <DailyPunchPrompt />
+
             <HeroHeader
                 user={user}
                 role="Employee"
