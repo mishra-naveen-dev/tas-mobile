@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { secureGetItem } from '../utils/secureStorage';
 
 const WS_URL = 'wss://api.tas.namracred.co.in/ws/notifications/';
 const PING_INTERVAL_MS = 25000;    // keepalive ping every 25s (below most proxy 30s timeouts)
@@ -20,7 +20,7 @@ class WebSocketService {
     // ─── Public API ──────────────────────────────────────────────────────────
 
     async connect() {
-        const token = await AsyncStorage.getItem('access');
+        const token = await secureGetItem('access');
         if (!token) return;
         this._manualDisconnect = false;
         this._openSocket(token);
@@ -142,7 +142,7 @@ class WebSocketService {
         this.reconnectAttempts++;
         if (__DEV__) console.log(`[WS] Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${this.reconnectAttempts})`);
         this._reconnectTimer = setTimeout(async () => {
-            const token = await AsyncStorage.getItem('access');
+            const token = await secureGetItem('access');
             if (token && !this._manualDisconnect) this._openSocket(token);
         }, delay);
     }
