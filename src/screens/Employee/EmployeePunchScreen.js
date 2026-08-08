@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, Alert, TextInput, Modal, ActivityIndicator, Dimensions, Platform,
+  Animated, Alert, TextInput, Modal, ActivityIndicator, Dimensions, Platform, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { usePunch, STATES } from '../../context/PunchContext';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
@@ -14,7 +15,7 @@ import { colors, typography, spacing } from '../../theme/tokens';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
-  PAYMENT_MODES, isAudioRequiredFor, buildCompleteVisitFormData,
+  PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
   validateCollectionStatus, validateVisitType,
 } from '../../utils/collectionVisitRules';
 
@@ -54,6 +55,7 @@ const TRAVEL_WITH = [
 ];
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
 const Banner = ({ message, type, onDismiss }) => {
   const y = useRef(new Animated.Value(-100)).current;
@@ -193,6 +195,14 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [visitSaving, setVisitSaving] = useState(false);
   const visitStartTimeRef = useRef(new Date());
 
+  // Collection-status evidence (Cash photo(s) / UPI screenshot / cheque
+  // photo) — required by the same shared validateCollectionStatus rule
+  // CollectionVisitScreen enforces, so this screen needs the same capture
+  // UI, not just the same validation.
+  const [photos, setPhotos] = useState([]); // [{ uri, fileName, type, kind, capturedAt }]
+  const [upiScreenshot, setUpiScreenshot] = useState(null); // { uri, fileName, type }
+  const [chequePhoto, setChequePhoto] = useState(null); // { uri, fileName, type }
+
   // Out-of-range geofence confirmation (shown when the backend reports the
   // punch is more than 200m from the customer's stored geo-tag).
   const [outOfRangeModal, setOutOfRangeModal] = useState({ visible: false, distanceM: 0 });
@@ -277,6 +287,50 @@ const EmployeePunchScreen = ({ navigation }) => {
     } finally {
       setLoanResolving(false);
     }
+  };
+
+  const addPhoto = (kind) => {
+    Alert.alert('Add Photo', 'Choose a source', [
+      { text: 'Camera', onPress: () => pickPhoto(kind, true) },
+      { text: 'Gallery', onPress: () => pickPhoto(kind, false) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const pickPhoto = async (kind, fromCamera) => {
+    const options = { mediaType: 'photo', quality: 0.7, maxWidth: 1600, maxHeight: 1600, saveToPhotos: false };
+    const result = fromCamera ? await launchCamera(options) : await launchImageLibrary(options);
+    if (result.didCancel || result.errorCode) return;
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    setPhotos((prev) => [...prev, {
+      uri: asset.uri,
+      fileName: asset.fileName || `photo_${Date.now()}.jpg`,
+      type: asset.type || 'image/jpeg',
+      kind,
+      capturedAt: new Date().toISOString(),
+    }]);
+  };
+
+  const removePhoto = (index) => {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const addSingleImage = (label, setter) => {
+    Alert.alert(label, 'Choose a source', [
+      { text: 'Camera', onPress: () => pickSingleImage(setter, true) },
+      { text: 'Gallery', onPress: () => pickSingleImage(setter, false) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const pickSingleImage = async (setter, fromCamera) => {
+    const options = { mediaType: 'photo', quality: 0.7, maxWidth: 1600, maxHeight: 1600, saveToPhotos: false };
+    const result = fromCamera ? await launchCamera(options) : await launchImageLibrary(options);
+    if (result.didCancel || result.errorCode) return;
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    setter({ uri: asset.uri, fileName: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.type || 'image/jpeg' });
   };
 
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -381,7 +435,7 @@ const EmployeePunchScreen = ({ navigation }) => {
         return false;
       }
       if (form.reason === 'Collection') {
-        const err = validateCollectionStatus(form, { audioNote });
+        const err = validateCollectionStatus(form, { photos, upiScreenshot, chequePhoto, audioNote });
         if (err) {
           Alert.alert('Required', err);
           return false;
@@ -471,6 +525,9 @@ const EmployeePunchScreen = ({ navigation }) => {
     setReasonDropdownOpen(false);
     setForm(blankForm);
     setAudioNote(null);
+    setPhotos([]);
+    setUpiScreenshot(null);
+    setChequePhoto(null);
     setCollectionId(null);
     setResolvedRecord(null);
     setLoanLookupError('');
@@ -491,6 +548,9 @@ const EmployeePunchScreen = ({ navigation }) => {
         localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
         customerName: resolvedRecord?.customer_name || form.customer_name,
         customerAddress: resolvedRecord?.address,
+        photos,
+        upiScreenshot,
+        chequePhoto,
         audioNote,
         visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current : null,
         extra,
@@ -598,6 +658,9 @@ const EmployeePunchScreen = ({ navigation }) => {
     setDupLocationComment('');
     setForm(blankForm);
     setAudioNote(null);
+    setPhotos([]);
+    setUpiScreenshot(null);
+    setChequePhoto(null);
     setCollectionId(null);
     setResolvedRecord(null);
     setLoanLookupError('');
@@ -607,6 +670,9 @@ const EmployeePunchScreen = ({ navigation }) => {
   const updateForm = (key, value) => {
     if (key === 'reason' && value !== form.reason) {
       setAudioNote(null);
+      setPhotos([]);
+      setUpiScreenshot(null);
+      setChequePhoto(null);
       setCollectionId(null);
       setResolvedRecord(null);
       setLoanLookupError('');
@@ -764,6 +830,49 @@ const EmployeePunchScreen = ({ navigation }) => {
   // CollectionVisitScreen's own renderPaymentModeSection, minus the photo
   // evidence pickers (this screen has no camera-capture UI wired up at all,
   // matching its existing scope — not introduced by this change).
+  const renderPhotoColumns = (kinds) => (
+    <View style={styles.photoColumns}>
+      {kinds.map((k) => (
+        <View key={k.value} style={styles.photoColumn}>
+          <Text style={styles.photoKindLabel} numberOfLines={1}>{k.label}</Text>
+          <TouchableOpacity style={styles.photoAddBtn} onPress={() => addPhoto(k.value)}>
+            <Icon name="camera" size={18} color={colors.primary} />
+          </TouchableOpacity>
+          {photos.map((p, i) => p.kind === k.value && (
+            <View key={i} style={styles.photoThumbWrap}>
+              <Image source={{ uri: p.uri }} style={styles.photoThumb} />
+              <TouchableOpacity style={styles.photoRemove} onPress={() => removePhoto(i)}>
+                <Icon name="x" size={12} color="#fff" />
+              </TouchableOpacity>
+              <Text style={styles.photoTimestamp} numberOfLines={1}>{fmtDateTime(p.capturedAt)}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+
+  const renderSingleImagePicker = (label, image, setter) => (
+    <>
+      <Text style={styles.label}>{label} *</Text>
+      <View style={styles.photoColumns}>
+        <View style={styles.photoColumn}>
+          <TouchableOpacity style={styles.photoAddBtn} onPress={() => addSingleImage(label, setter)}>
+            <Icon name="camera" size={18} color={colors.primary} />
+          </TouchableOpacity>
+          {image && (
+            <View style={styles.photoThumbWrap}>
+              <Image source={{ uri: image.uri }} style={styles.photoThumb} />
+              <TouchableOpacity style={styles.photoRemove} onPress={() => setter(null)}>
+                <Icon name="x" size={12} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
+    </>
+  );
+
   const renderPaymentModeSection = () => (
     <>
       <Text style={styles.label}>Payment Mode</Text>
@@ -774,11 +883,23 @@ const EmployeePunchScreen = ({ navigation }) => {
           </TouchableOpacity>
         ))}
       </View>
+      {form.payment_mode === 'CASH' && (
+        <>
+          <Text style={styles.photoHint}>Add at least one photo — the other two are optional.</Text>
+          {renderPhotoColumns(PHOTO_KINDS)}
+        </>
+      )}
       {form.payment_mode === 'UPI' && (
-        <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Reference Number" placeholderTextColor={colors.textMuted} />
+        <>
+          <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Reference Number" placeholderTextColor={colors.textMuted} />
+          {renderSingleImagePicker('Screenshot', upiScreenshot, setUpiScreenshot)}
+        </>
       )}
       {form.payment_mode === 'CHEQUE' && (
-        <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque Number" placeholderTextColor={colors.textMuted} />
+        <>
+          <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque Number" placeholderTextColor={colors.textMuted} />
+          {renderSingleImagePicker('Cheque Photo', chequePhoto, setChequePhoto)}
+        </>
       )}
     </>
   );
@@ -1591,6 +1712,16 @@ const styles = StyleSheet.create({
   },
   resolvedName: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.text },
   resolvedMeta: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
+
+  photoColumns: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
+  photoColumn: { flex: 1, alignItems: 'center' },
+  photoKindLabel: { fontSize: typography.sizes.xs, color: colors.textMuted, marginBottom: spacing.xs, textAlign: 'center' },
+  photoHint: { fontSize: typography.sizes.xs, color: colors.textMuted, marginBottom: spacing.xs },
+  photoThumbWrap: { marginTop: spacing.sm, alignItems: 'center' },
+  photoThumb: { width: 56, height: 56, borderRadius: 8 },
+  photoRemove: { position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center' },
+  photoAddBtn: { width: 56, height: 56, borderRadius: 8, borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' },
+  photoTimestamp: { fontSize: 9, color: colors.textMuted, marginTop: 2, maxWidth: 70, textAlign: 'center' },
 
   // ── Reason combo field ────────────────────────────────────────────────────
   reasonWrap: {
