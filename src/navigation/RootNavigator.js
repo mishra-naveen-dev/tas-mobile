@@ -45,6 +45,7 @@ import ReportsScreen from '../screens/SuperAdmin/ReportsScreen';
 import RouteMapScreen from '../screens/Common/RouteMapScreen';
 import CustomerMapScreen from '../screens/Common/CustomerMapScreen';
 import PunchHistoryScreen from '../screens/Common/PunchHistoryScreen';
+import CompanionHistoryScreen from '../screens/Common/CompanionHistoryScreen';
 import PunchCorrectionScreen from '../screens/Common/PunchCorrectionScreen';
 import AllowanceHistoryScreen from '../screens/Common/AllowanceHistoryScreen';
 import ApplyAllowanceScreen from '../screens/Common/ApplyAllowanceScreen';
@@ -113,6 +114,7 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="RouteMap" component={RouteMapScreen} />
         <EmployeeStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <EmployeeStack.Screen name="PunchHistory" component={PunchHistoryScreen} />
+        <EmployeeStack.Screen name="CompanionHistory" component={CompanionHistoryScreen} />
         <EmployeeStack.Screen name="PunchCorrection" component={PunchCorrectionScreen} />
         <EmployeeStack.Screen name="AllowanceHistory" component={AllowanceHistoryScreen} />
         <EmployeeStack.Screen name="ApplyAllowance" component={ApplyAllowanceScreen} />

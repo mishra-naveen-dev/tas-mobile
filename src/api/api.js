@@ -351,6 +351,10 @@ api.getPunchHistory = (params = {}) => {
     return api.get('/attendance/punches/', { params });
 };
 
+api.getCompanionHistory = (params = {}) => {
+    return api.get('/attendance/punches/named_as_companion/', { params });
+};
+
 api.createCorrectionRequest = (data) => {
     return api.post('/attendance/correction-requests/', data);
 };

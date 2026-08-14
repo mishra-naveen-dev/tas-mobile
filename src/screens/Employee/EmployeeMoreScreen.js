@@ -169,6 +169,16 @@ const EmployeeMoreScreen = ({ navigation }) => {
                     onPress={() => navigation.navigate('CollectionDone')}
                 />
 
+                {/* ── Team ─────────────────────────────────────────────────────── */}
+                <SectionLabel title="Team" />
+                <MenuRow
+                    title="Travel Companion History"
+                    subtitle="See every time a colleague named you as their travel companion"
+                    icon="users"
+                    iconColor="#7C3AED"
+                    onPress={() => navigation.navigate('CompanionHistory')}
+                />
+
                 {/* ── Analytics ────────────────────────────────────────────────── */}
                 <SectionLabel title="Analytics" />
                 <MenuRow

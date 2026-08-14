@@ -33,6 +33,7 @@ const ICONS_BY_TYPE = {
   MASTER_DATA_REQUEST: 'file-text',
   MASTER_DATA_APPROVED: 'check-circle',
   MASTER_DATA_REJECTED: 'x-circle',
+  COMPANION_NAMED: 'users',
   GENERAL: 'bell',
 };
 
@@ -116,6 +117,11 @@ const NotificationsScreen = ({ navigation }) => {
         });
       } else if (item.related_type === 'CollectionRecordBulkAssignment') {
         navigation.navigate('EmployeeTabs', { screen: 'EmployeeCollections' });
+      } else if (item.notification_type === 'COMPANION_NAMED') {
+        // Also related_type='AttendancePunch', but the recipient here wants
+        // to see who named them, not go punch — checked ahead of the plain
+        // AttendancePunch branch below.
+        navigation.navigate('CompanionHistory');
       } else if (item.related_type === 'AttendancePunch') {
         navigation.navigate('EmployeeTabs', { screen: 'EmployeePunch' });
       }
