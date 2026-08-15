@@ -168,6 +168,13 @@ const EmployeeMoreScreen = ({ navigation }) => {
                     iconColor={colors.success}
                     onPress={() => navigation.navigate('CollectionDone')}
                 />
+                <MenuRow
+                    title="Collection Corrections"
+                    subtitle="Track your collection correction requests"
+                    icon="edit-3"
+                    iconColor={colors.warning}
+                    onPress={() => navigation.navigate('MyCollectionCorrections')}
+                />
 
                 {/* ── Team ─────────────────────────────────────────────────────── */}
                 <SectionLabel title="Team" />

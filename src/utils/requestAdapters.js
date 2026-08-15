@@ -12,6 +12,18 @@ export const STATUS_META = {
     PAID:     { label: 'Paid',     color: colors.info,    bg: colors.infoLight,    icon: 'check-circle' },
     DRAFT:    { label: 'Draft',    color: colors.textMuted, bg: colors.background, icon: 'file' },
     BLOCKED:  { label: 'Blocked',  color: colors.danger,  bg: colors.dangerLight,  icon: 'slash' },
+
+    // Collection Correction Request statuses (apps.loans.CollectionCorrectionRequest) —
+    // its lifecycle is wider than the binary PENDING/APPROVED/REJECTED above
+    // because it can be returned for correction and resubmitted, and ends in
+    // its own COMPLETED state once the correction is actually applied.
+    SUBMITTED:               { label: 'Submitted',         color: colors.warning,   bg: colors.warningLight, icon: 'send' },
+    PENDING_APPROVAL:        { label: 'Pending Approval',  color: colors.warning,   bg: colors.warningLight, icon: 'clock' },
+    UNDER_REVIEW:            { label: 'Under Review',      color: colors.info,      bg: colors.infoLight,    icon: 'eye' },
+    ESCALATED:               { label: 'Escalated',         color: colors.punchBlue, bg: colors.punchBlueLight, icon: 'trending-up' },
+    RETURNED_FOR_CORRECTION: { label: 'Returned',          color: colors.warning,   bg: colors.warningLight, icon: 'corner-up-left' },
+    WITHDRAWN:               { label: 'Withdrawn',         color: colors.textMuted, bg: colors.background,   icon: 'x' },
+    COMPLETED:               { label: 'Completed',         color: colors.success,   bg: colors.successLight, icon: 'check-circle' },
 };
 
 export const STATUS_FILTERS = ['ALL', 'PENDING', 'APPROVED', 'REJECTED'];
