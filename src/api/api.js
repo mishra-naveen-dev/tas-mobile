@@ -351,6 +351,10 @@ api.getPunchHistory = (params = {}) => {
     return api.get('/attendance/punches/', { params });
 };
 
+api.getCompanionHistory = (params = {}) => {
+    return api.get('/attendance/punches/named_as_companion/', { params });
+};
+
 // Punch & Activity Verification — session-level aggregation, computed and
 // stored server-side (see apps.attendance.views.AttendancePunchViewSet.
 // sessions/session_detail on the backend). Never recomputed on-device.
