@@ -1,11 +1,9 @@
 name: Android Release Build & Upload
 
-# First phase: manual release only.
-# After the complete pipeline is verified, this can be changed to:
-#
-# on:
-#   push:
-#     branches: [main]
+# Pipeline verified — builds automatically on every push to main (expects
+# versionCode/versionName to already be bumped in that push, per the
+# developer workflow this repo follows), and can still be triggered manually
+# via workflow_dispatch (e.g. to re-run without a new commit).
 #
 # The APK is built with the real release keystore, verified, and then
 # uploaded to the private S3 bucket using AWS OIDC.
@@ -13,6 +11,8 @@ name: Android Release Build & Upload
 # No long-lived AWS access keys are stored in GitHub.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
