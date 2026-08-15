@@ -10,6 +10,7 @@ import {
     Animated,
     Alert,
     Linking,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -17,7 +18,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
-import { usePunch } from '../../context/PunchContext';
+import { usePunch, STATES } from '../../context/PunchContext';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import HeroHeader from '../../components/HeroHeader';
 import DailyPunchPrompt from '../../components/DailyPunchPrompt';
@@ -394,17 +395,20 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const auth = useAuth() || {};
     const punchCtx = usePunch() || {};
     
-    const { 
-        isActive = false, 
+    const {
+        isActive = false,
         isTracking = false,
         currentPunch = null,
         todayPunches = [],
         success = false,
+        punchState = STATES.IDLE,
     } = punchCtx;
-    
+
     const getTotalDistance = punchCtx.getTotalDistance || (() => 0);
     const getTrackingDuration = punchCtx.getTrackingDuration || (() => 0);
     const refreshPunches = punchCtx.fetchTodayPunches || (() => {});
+    const punchOut = punchCtx.punchOut || (async () => ({ success: false, error: 'Not available' }));
+    const isPunchingOut = punchState === STATES.PUNCHING_OUT;
     
     const { logout = () => {}, user = null } = auth;
     const mapRef = useRef(null);
@@ -526,6 +530,30 @@ const EmployeeHomeScreen = ({ navigation }) => {
         fetchData(true);
         refreshPunches();
     }, [fetchData, refreshPunches]);
+
+    // Mirrors EmployeePunchScreen.handlePunchOutPress — punchOut() needs no
+    // form/location pre-fetch of its own (it captures GPS internally and
+    // degrades gracefully to the last known fix), so a single confirm-then-call
+    // is all that's needed here too.
+    const handlePunchOutPress = useCallback(() => {
+        Alert.alert(
+            'Punch Out',
+            'Are you sure you want to punch out?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Punch Out',
+                    style: 'destructive',
+                    onPress: async () => {
+                        const result = await punchOut();
+                        if (!result.success) {
+                            Alert.alert('Error', result.error || 'Failed to punch out.');
+                        }
+                    },
+                },
+            ]
+        );
+    }, [punchOut]);
 
     const handleLogout = useCallback(() => {
         Alert.alert(
@@ -721,6 +749,22 @@ const EmployeeHomeScreen = ({ navigation }) => {
                             )}
                         </View>
 
+                        <TouchableOpacity
+                            style={[styles.homePunchOutBtn, isPunchingOut && styles.homePunchOutBtnDisabled]}
+                            onPress={handlePunchOutPress}
+                            disabled={isPunchingOut}
+                            activeOpacity={0.85}
+                        >
+                            {isPunchingOut ? (
+                                <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                                <>
+                                    <Icon name="log-out" size={18} color="#fff" />
+                                    <Text style={styles.homePunchOutBtnText}>Punch Out</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+
                         <View style={styles.trackingStatsRow}>
                             <View style={styles.miniStat}>
                                 <Icon name="navigation" size={16} color={colors.primary} />
@@ -781,7 +825,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     onPress={() => navigation.navigate('EmployeeCollections')}
                 />
 
-                {/* ── Analytics Chart (Zoho) ── */}
+                {/* ── Analytics Chart (Zoho) — commented out, not deleted, per request ──
                 <TouchableOpacity
                     style={styles.chartCard}
                     activeOpacity={0.85}
@@ -804,6 +848,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         </View>
                     </View>
                 </TouchableOpacity>
+                */}
 
                 <MonthlyCollectionCard
                     collected={collectionStats?.mtd?.amount ?? monthlyCollection}
@@ -891,6 +936,25 @@ const styles = StyleSheet.create({
     punchInTime: {
         fontSize: typography.sizes.xs,
         color: colors.textMuted,
+    },
+    homePunchOutBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#E53935',
+        paddingVertical: spacing.sm,
+        borderRadius: 12,
+        marginTop: spacing.sm,
+        gap: spacing.xs,
+        ...shadows.sm,
+    },
+    homePunchOutBtnDisabled: {
+        opacity: 0.6,
+    },
+    homePunchOutBtnText: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.bold,
+        color: '#fff',
     },
     trackingStatsRow: {
         flexDirection: 'row',
