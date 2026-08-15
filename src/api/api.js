@@ -721,6 +721,13 @@ api.updateCollectionStatus = (id, data) =>
 api.getCollectionDashboardStats = () =>
     api.get('/loans/collections/dashboard_stats/');
 
+// Dynamic Monthly Collection Target (Home Screen) — server-computed from
+// assigned scheduled/demand amount (CollectionRecord.amount_due, REGULAR+OD,
+// due within the given month), never a static/manual value. `month` is
+// optional, format 'YYYY-MM'; omit for the current month.
+api.getMonthlyTarget = (month) =>
+    api.get('/loans/collections/monthly_target/', { params: month ? { month } : {} });
+
 // History of collection updates (an employee's outcome entries on a
 // collection record) — used to surface today's field activity even when it
 // didn't happen inside an explicit punch-tracked GPS session.
