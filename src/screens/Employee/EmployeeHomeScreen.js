@@ -31,8 +31,8 @@ import { SkeletonStatsGrid, SkeletonListItem } from '../../components/SkeletonCo
 
 const ZOHO_CHART_URL = 'https://analytics.zoho.in/open-view/334082000154073362';
 
-// ─── Static monthly target (swap for API value when backend exposes it) ───────
-const MONTHLY_AMOUNT_TARGET = 100000; // ₹1,00,000
+const MONTH_KEY = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const isSameMonth = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
 
 // ─── Radial ring (View-based, no native SVG module required) ─────────────────
 const RadialRing = ({ size, strokeWidth, progress, max, color, trackColor }) => {
@@ -70,12 +70,20 @@ const RadialRing = ({ size, strokeWidth, progress, max, color, trackColor }) => 
 };
 
 // ─── Monthly collection ring card ─────────────────────────────────────────────
-const MonthlyCollectionCard = ({ collected, target }) => {
+// `target`/`collected`/`achievementPct`/`remainingAmt`/`excessAmt` come
+// straight from the backend's monthly_target response (apps/loans/views.py::
+// CollectionRecordViewSet.monthly_target) — never recomputed independently
+// on-device, per "backend is the source of truth." The ring's fill
+// proportion still derives from collected/target locally since that's pure
+// rendering geometry, not an alternate calculation.
+const MonthlyCollectionCard = ({
+    collected, target, achievementPct, remainingAmt, excessAmt,
+    monthLabel, onPrevMonth, onNextMonth, canGoNext, loading,
+}) => {
     const RING = 112;
     const STROKE = 11;
     const pct = target > 0 ? Math.min(collected / target, 1) : 0;
-    const pctLabel = Math.round(pct * 100);
-    const remaining = Math.max(target - collected, 0);
+    const pctLabel = Math.round(achievementPct ?? 0);
 
     const fmtCompact = (n) => {
         if (n >= 100000) return `₹${(n / 100000).toFixed(2)}L`;
@@ -87,9 +95,6 @@ const MonthlyCollectionCard = ({ collected, target }) => {
     const ringColor = pct >= 1 ? colors.success : pct >= 0.5 ? colors.warning : colors.primary;
     const trackColor = pct >= 1 ? colors.successLight : pct >= 0.5 ? colors.warningLight : colors.primaryLight;
 
-    const now = new Date();
-    const monthName = now.toLocaleString('en-IN', { month: 'long' });
-
     return (
         <View style={homeStyles.mcCard}>
             {/* Card header */}
@@ -100,7 +105,15 @@ const MonthlyCollectionCard = ({ collected, target }) => {
                     </View>
                     <View>
                         <Text style={homeStyles.mcTitle}>Monthly Collection</Text>
-                        <Text style={homeStyles.mcMonth}>{monthName} target</Text>
+                        <View style={homeStyles.mcMonthSelector}>
+                            <TouchableOpacity onPress={onPrevMonth} disabled={loading} hitSlop={{ top: 6, bottom: 6, left: 6, right: 10 }}>
+                                <Icon name="chevron-left" size={15} color={colors.textMuted} />
+                            </TouchableOpacity>
+                            <Text style={homeStyles.mcMonth}>{monthLabel}</Text>
+                            <TouchableOpacity onPress={onNextMonth} disabled={loading || !canGoNext} hitSlop={{ top: 6, bottom: 6, left: 10, right: 6 }}>
+                                <Icon name="chevron-right" size={15} color={canGoNext ? colors.textMuted : colors.textLight} />
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
                 <View style={[homeStyles.mcBadge, { backgroundColor: ringColor + '18' }]}>
@@ -147,8 +160,8 @@ const MonthlyCollectionCard = ({ collected, target }) => {
                     <View style={homeStyles.mcStatRow}>
                         <View style={[homeStyles.mcDot, { backgroundColor: colors.textLight }]} />
                         <View>
-                            <Text style={homeStyles.mcStatLabel}>Remaining</Text>
-                            <Text style={homeStyles.mcStatVal}>{fmtFull(remaining)}</Text>
+                            <Text style={homeStyles.mcStatLabel}>{excessAmt > 0 ? 'Excess' : 'Remaining'}</Text>
+                            <Text style={homeStyles.mcStatVal}>{fmtFull(excessAmt > 0 ? excessAmt : remainingAmt)}</Text>
                         </View>
                     </View>
                 </View>
@@ -156,7 +169,7 @@ const MonthlyCollectionCard = ({ collected, target }) => {
 
             {/* Progress bar strip */}
             <View style={homeStyles.mcStrip}>
-                <View style={[homeStyles.mcStripFill, { width: `${pctLabel}%`, backgroundColor: ringColor }]} />
+                <View style={[homeStyles.mcStripFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: ringColor }]} />
             </View>
             <View style={homeStyles.mcStripLabels}>
                 <Text style={homeStyles.mcStripLabel}>₹0</Text>
@@ -424,6 +437,9 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const [selectedFilter, setSelectedFilter] = useState('ALL');
     const [monthlyCollection, setMonthlyCollection] = useState(0);
     const [collectionStats, setCollectionStats] = useState(null);
+    const [selectedMonth, setSelectedMonth] = useState(() => new Date());
+    const [monthlyTarget, setMonthlyTarget] = useState(null);
+    const [monthlyTargetLoading, setMonthlyTargetLoading] = useState(false);
 
     useEffect(() => {
         isMountedRef.current = true;
@@ -520,10 +536,44 @@ const EmployeeHomeScreen = ({ navigation }) => {
         }
     }, [user?.id]);
 
+    // Dynamic Monthly Collection Target (Home Screen ticket) — server-
+    // computed from assigned scheduled/demand amount, kept independent of
+    // fetchData's own Promise.all so switching the selected month doesn't
+    // require a full screen refresh.
+    const fetchMonthlyTarget = useCallback(async (monthDate) => {
+        setMonthlyTargetLoading(true);
+        try {
+            const res = await api.getMonthlyTarget(MONTH_KEY(monthDate));
+            if (isMountedRef.current) setMonthlyTarget(res.data);
+        } catch {
+            if (isMountedRef.current) setMonthlyTarget(null);
+        } finally {
+            if (isMountedRef.current) setMonthlyTargetLoading(false);
+        }
+    }, []);
+
     useFocusEffect(useCallback(() => {
         fetchData(false);
+        fetchMonthlyTarget(selectedMonth);
         refreshPunches();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fetchData, refreshPunches]));
+
+    useEffect(() => {
+        fetchMonthlyTarget(selectedMonth);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedMonth]);
+
+    const changeMonth = useCallback((delta) => {
+        setSelectedMonth((prev) => {
+            const next = new Date(prev.getFullYear(), prev.getMonth() + delta, 1);
+            // Never navigate past the current month — the backend would
+            // correctly return zero data for a genuine future month, but
+            // there is nothing useful to show ahead of "now" here.
+            if (delta > 0 && next > new Date()) return prev;
+            return next;
+        });
+    }, []);
 
     const onRefresh = useCallback(() => {
         setIsRefreshing(true);
@@ -851,8 +901,16 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 */}
 
                 <MonthlyCollectionCard
-                    collected={collectionStats?.mtd?.amount ?? monthlyCollection}
-                    target={MONTHLY_AMOUNT_TARGET}
+                    collected={monthlyTarget?.monthly_collected ?? (collectionStats?.mtd?.amount ?? monthlyCollection)}
+                    target={monthlyTarget?.monthly_target ?? 0}
+                    achievementPct={monthlyTarget?.achievement_percentage ?? 0}
+                    remainingAmt={monthlyTarget?.remaining_amount ?? 0}
+                    excessAmt={monthlyTarget?.excess_amount ?? 0}
+                    monthLabel={selectedMonth.toLocaleString('en-IN', { month: 'long', year: 'numeric' })}
+                    onPrevMonth={() => changeMonth(-1)}
+                    onNextMonth={() => changeMonth(1)}
+                    canGoNext={!isSameMonth(selectedMonth, new Date())}
+                    loading={monthlyTargetLoading}
                 />
 
                 {routePoints.length > 0 && (
@@ -1223,6 +1281,12 @@ const homeStyles = StyleSheet.create({
     mcMonth: {
         fontSize: 11,
         color: colors.textMuted,
+        marginTop: 1,
+    },
+    mcMonthSelector: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
         marginTop: 1,
     },
     mcBadge: {
