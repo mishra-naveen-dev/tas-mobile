@@ -85,6 +85,29 @@ jobs:
         run: npm ci
 
       # ------------------------------------------------------------
+      # 6b. Cache Gradle + native build outputs
+      #
+      # The dominant cost in this build is native C++ compilation
+      # (Nitro modules, Nitro Sound, the app's own native code — each
+      # across 4 ABIs), not JS/dependency work. Gradle's build cache
+      # (enabled in gradle.properties) can skip re-running those
+      # CMake/NDK tasks entirely when their inputs are unchanged, but
+      # only if the cache actually survives between runs — that's what
+      # this step does. Keyed on everything that can invalidate a
+      # native build (lockfile, every build.gradle, the wrapper
+      # version); a cache miss just means "same as today," never a
+      # broken build — worst case is a normal from-scratch compile.
+      - name: Cache Gradle & native build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('package-lock.json', 'android/**/build.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      # ------------------------------------------------------------
       # 7. Restore release keystore
       #
       # The keystore exists only on the temporary GitHub runner.
@@ -122,7 +145,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon --build-cache --parallel
 
       # ------------------------------------------------------------
       # 9. Verify APK exists
