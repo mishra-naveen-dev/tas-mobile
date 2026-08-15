@@ -80,13 +80,41 @@ const generateDeviceFingerprint = async () => {
 
 const getDeviceId = async () => {
     let deviceId = await AsyncStorage.getItem('device_fingerprint');
-    
+
     if (!deviceId) {
         deviceId = await generateDeviceFingerprint();
         await AsyncStorage.setItem('device_fingerprint', deviceId);
     }
-    
+
     return deviceId;
+};
+
+// A random id generated once per app install, distinct from the device
+// fingerprint above — that fingerprint is derived from Android's ANDROID_ID
+// and survives an uninstall/reinstall on the same physical device, so it
+// alone can't tell the backend "still the same install" apart from
+// "reinstalled." This lives in AsyncStorage, which IS wiped on uninstall, so
+// a reinstall always gets a fresh value — the backend uses a mismatch here to
+// require device re-approval again after a reinstall. Not a credential, just
+// a correlation marker, so a simple RFC4122-ish v4 generator is sufficient —
+// no crypto/uuid dependency needed.
+const generateInstallId = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+};
+
+const getInstallId = async () => {
+    let installId = await AsyncStorage.getItem('install_id');
+
+    if (!installId) {
+        installId = generateInstallId();
+        await AsyncStorage.setItem('install_id', installId);
+    }
+
+    return installId;
 };
 
 const getPlatform = () => {
@@ -131,6 +159,7 @@ const api = axios.create({
 api.interceptors.request.use(async (config) => {
     const token = await secureGetItem('access');
     const deviceId = await getDeviceId();
+    const installId = await getInstallId();
     const deviceInfo = await getDeviceInfo();
     const sessionToken = await secureGetItem('session_token');
 
@@ -143,6 +172,7 @@ api.interceptors.request.use(async (config) => {
     }
 
     config.headers['X-DEVICE-ID'] = deviceId;
+    config.headers['X-INSTALL-ID'] = installId;
     config.headers['X-PLATFORM'] = getPlatform();
     config.headers['X-DEVICE-INFO'] = JSON.stringify(deviceInfo);
     config.headers['X-APP-VERSION'] = '1.0.0';
