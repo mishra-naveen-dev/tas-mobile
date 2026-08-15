@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View, Text, FlatList, StyleSheet,
-    TouchableOpacity, RefreshControl, ActivityIndicator,
+    TouchableOpacity, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -9,6 +9,7 @@ import api from '../../api/api';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 import { SkeletonListItem } from '../../components/SkeletonComponents';
+import { geoStatusInfo, fmtDurationSeconds, fmtTime, fmtDate } from '../../utils/geoVerification';
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 const fmt = (d) => {
@@ -34,29 +35,10 @@ const displayDate = (d) => {
     return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 };
 
-const fmtTime = (iso) => {
-    if (!iso) return '';
-    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-};
-
-const fmtDateShort = (iso) => {
-    if (!iso) return '';
-    return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-};
-
-// ─── Punch type config ────────────────────────────────────────────────────────
-const PUNCH_CFG = {
-    PUNCH_IN:     { icon: 'log-in',      color: '#059669', bg: '#D1FAE5', label: 'Punch In'     },
-    PUNCH_OUT:    { icon: 'log-out',     color: '#DC2626', bg: '#FEE2E2', label: 'Punch Out'    },
-    COLLECTION:   { icon: 'dollar-sign', color: '#2563EB', bg: '#DBEAFE', label: 'Collection'   },
-    DISBURSEMENT: { icon: 'trending-up', color: '#D97706', bg: '#FEF3C7', label: 'Disbursement' },
-};
-const getCfg = (t) => PUNCH_CFG[String(t || '').toUpperCase()] || { icon: 'map-pin', color: colors.primary, bg: colors.primaryLight, label: String(t || 'Punch') };
-
 const QUICK_FILTERS = [
-    { key: 'week',  label: 'This Week'  },
+    { key: 'week', label: 'This Week' },
     { key: 'month', label: 'This Month' },
-    { key: 'all',   label: 'All Records'},
+    { key: 'all', label: 'All Records' },
 ];
 
 const getQuickRange = (key) => {
@@ -72,211 +54,108 @@ const getQuickRange = (key) => {
     return {};
 };
 
-// ─── Summary bar (shown above list) ──────────────────────────────────────────
-const SummaryBar = ({ punches, collectionTotal }) => {
-    const stats = useMemo(() => {
-        const punchCollected = punches
-            .filter(p => ['COLLECTION', 'DISBURSEMENT'].includes(p.punch_type))
-            .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
-        return {
-            total:      punches.length,
-            punchIns:   punches.filter(p => p.punch_type === 'PUNCH_IN').length,
-            punchOuts:  punches.filter(p => p.punch_type === 'PUNCH_OUT').length,
-            // Authoritative source: collections API amount; fall back to punch-record sum
-            collection: collectionTotal !== null ? collectionTotal : punchCollected,
-        };
-    }, [punches, collectionTotal]);
+// ─── Summary card ─────────────────────────────────────────────────────────────
+const SummaryRow = ({ label, value, bold }) => (
+    <View style={sc.row}>
+        <Text style={sc.rowLabel}>{label}</Text>
+        <Text style={[sc.rowValue, bold && sc.rowValueBold]}>{value}</Text>
+    </View>
+);
 
-    if (punches.length === 0) return null;
-
+const SessionSummaryCard = ({ item, onPress }) => {
+    const geo = geoStatusInfo(item.geo_status);
     return (
-        <View style={sb.bar}>
-            <View style={sb.tile}>
-                <Text style={sb.val}>{stats.total}</Text>
-                <Text style={sb.lbl}>Total</Text>
+        <TouchableOpacity style={sc.card} onPress={onPress} activeOpacity={0.85}>
+            <View style={sc.dateRow}>
+                <Text style={sc.dateText}>{fmtDate(item.date)}</Text>
+                {item.is_open && (
+                    <View style={sc.openBadge}><Text style={sc.openBadgeText}>Active</Text></View>
+                )}
             </View>
-            <View style={[sb.tile, sb.divider]}>
-                <Text style={[sb.val, { color: '#059669' }]}>{stats.punchIns}</Text>
-                <Text style={sb.lbl}>Punch In</Text>
+
+            <View style={sc.timesRow}>
+                <View style={sc.timeBlock}>
+                    <Icon name="log-in" size={14} color="#059669" />
+                    <Text style={sc.timeLabel}>Punch In</Text>
+                    <Text style={sc.timeValue}>{fmtTime(item.punch_in_time)}</Text>
+                </View>
+                <View style={sc.timeDivider} />
+                <View style={sc.timeBlock}>
+                    <Icon name="log-out" size={14} color={colors.danger} />
+                    <Text style={sc.timeLabel}>Punch Out</Text>
+                    <Text style={sc.timeValue}>{item.punch_out_time ? fmtTime(item.punch_out_time) : '—'}</Text>
+                </View>
+                <View style={sc.timeDivider} />
+                <View style={sc.timeBlock}>
+                    <Icon name="clock" size={14} color={colors.primary} />
+                    <Text style={sc.timeLabel}>Duration</Text>
+                    <Text style={sc.timeValue}>{fmtDurationSeconds(item.duration_seconds)}</Text>
+                </View>
             </View>
-            <View style={[sb.tile, sb.divider]}>
-                <Text style={[sb.val, { color: colors.danger }]}>{stats.punchOuts}</Text>
-                <Text style={sb.lbl}>Punch Out</Text>
+
+            <SummaryRow label="Branch" value={item.branch_name || 'Not assigned'} />
+            <SummaryRow label="Customer Activities" value={item.total_activities} />
+            <SummaryRow label="Collections" value={item.collections} />
+            <SummaryRow label="Visits" value={item.visits} />
+
+            <View style={sc.footer}>
+                <View style={[sc.geoBadge, { backgroundColor: `${geo.color}18` }]}>
+                    <Icon name={geo.icon} size={12} color={geo.color} />
+                    <Text style={[sc.geoBadgeText, { color: geo.color }]}>{geo.label}</Text>
+                </View>
+                <View style={sc.viewDetails}>
+                    <Text style={sc.viewDetailsText}>View Details</Text>
+                    <Icon name="chevron-right" size={14} color={colors.primary} />
+                </View>
             </View>
-            <View style={[sb.tile, sb.divider]}>
-                <Text style={[sb.val, { color: '#2563EB', fontSize: 13 }]}>
-                    {stats.collection > 0 ? `₹${Math.round(stats.collection).toLocaleString('en-IN')}` : '₹0'}
-                </Text>
-                <Text style={sb.lbl}>Collected</Text>
-            </View>
-        </View>
+        </TouchableOpacity>
     );
 };
 
-const sb = StyleSheet.create({
-    bar: {
-        flexDirection: 'row', backgroundColor: colors.surface,
-        marginHorizontal: spacing.md, marginBottom: spacing.sm,
-        borderRadius: borderRadius.md, overflow: 'hidden', ...shadows.xs,
-    },
-    tile:    { flex: 1, alignItems: 'center', paddingVertical: spacing.sm },
-    divider: { borderLeftWidth: 1, borderLeftColor: colors.border },
-    val:     { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
-    lbl:     { fontSize: 10, color: colors.textMuted, marginTop: 2 },
-});
-
-// ─── Punch card ───────────────────────────────────────────────────────────────
-const PunchCard = ({ item, onViewRoute }) => {
-    const cfg = getCfg(item.punch_type);
-    const hasGps = item.latitude && item.longitude &&
-        parseFloat(item.latitude) !== 0 && parseFloat(item.longitude) !== 0;
-    const hasAmount  = item.amount && parseFloat(item.amount) > 0;
-    const hasNotes   = item.notes && item.notes.trim().length > 0;
-    const hasCustomer= item.customer_name && item.customer_name.trim().length > 0;
-
-    return (
-        <View style={pc.card}>
-            {/* ── Top row: icon + type + time ── */}
-            <View style={pc.topRow}>
-                <View style={[pc.iconWrap, { backgroundColor: cfg.bg }]}>
-                    <Icon name={cfg.icon} size={20} color={cfg.color} />
-                </View>
-                <View style={{ flex: 1 }}>
-                    <View style={pc.typeRow}>
-                        <View style={[pc.typeBadge, { backgroundColor: cfg.bg }]}>
-                            <Text style={[pc.typeText, { color: cfg.color }]}>{cfg.label}</Text>
-                        </View>
-                        {hasAmount && (
-                            <View style={[pc.amtBadge, { backgroundColor: cfg.bg }]}>
-                                <Text style={[pc.amtText, { color: cfg.color }]}>
-                                    ₹{Number(item.amount).toLocaleString('en-IN')}
-                                </Text>
-                            </View>
-                        )}
-                    </View>
-                    {hasCustomer && (
-                        <Text style={pc.customerName} numberOfLines={1}>{item.customer_name}</Text>
-                    )}
-                </View>
-                <View style={pc.timeBlock}>
-                    <Text style={pc.time}>{fmtTime(item.punched_at)}</Text>
-                    <Text style={pc.dateSmall}>{fmtDateShort(item.punched_at)}</Text>
-                </View>
-            </View>
-
-            {/* ── Address ── */}
-            {item.current_address ? (
-                <View style={pc.addrRow}>
-                    <Icon name="map-pin" size={12} color={colors.textMuted} />
-                    <Text style={pc.addrText} numberOfLines={2}>{item.current_address}</Text>
-                </View>
-            ) : null}
-
-            {/* ── Customer address (if different) ── */}
-            {item.customer_address && item.customer_address !== item.current_address ? (
-                <View style={pc.addrRow}>
-                    <Icon name="briefcase" size={12} color={colors.textMuted} />
-                    <Text style={pc.addrText} numberOfLines={1}>{item.customer_address}</Text>
-                </View>
-            ) : null}
-
-            {/* ── Notes ── */}
-            {hasNotes && (
-                <View style={pc.notesRow}>
-                    <Icon name="message-square" size={11} color={colors.textMuted} />
-                    <Text style={pc.notesText} numberOfLines={2}>{item.notes}</Text>
-                </View>
-            )}
-
-            {/* ── Footer: GPS badge + distance + loan ID ── */}
-            <View style={pc.footer}>
-                {hasGps ? (
-                    <View style={pc.gpsBadge}>
-                        <Icon name="crosshair" size={10} color={colors.success} />
-                        <Text style={pc.gpsText}>GPS</Text>
-                    </View>
-                ) : (
-                    <View style={[pc.gpsBadge, { backgroundColor: '#FEF3C7' }]}>
-                        <Icon name="alert-triangle" size={10} color={colors.warning} />
-                        <Text style={[pc.gpsText, { color: colors.warning }]}>No GPS</Text>
-                    </View>
-                )}
-                {item.distance_km ? (
-                    <View style={pc.distBadge}>
-                        <Icon name="activity" size={10} color="#7c3aed" />
-                        <Text style={pc.distText}>{item.distance_km} km</Text>
-                    </View>
-                ) : null}
-                {item.loan_id ? (
-                    <View style={pc.loanBadge}>
-                        <Text style={pc.loanText}>Loan: {item.loan_id}</Text>
-                    </View>
-                ) : null}
-                <View style={{ flex: 1 }} />
-                {item.punch_type === 'PUNCH_IN' && onViewRoute && (
-                    <TouchableOpacity style={pc.routeBtn} onPress={onViewRoute} activeOpacity={0.7}>
-                        <Icon name="map" size={11} color={colors.primary} />
-                        <Text style={pc.routeBtnText}>Map</Text>
-                    </TouchableOpacity>
-                )}
-            </View>
-        </View>
-    );
-};
-
-const pc = StyleSheet.create({
+const sc = StyleSheet.create({
     card: {
         backgroundColor: colors.surface, borderRadius: borderRadius.md,
-        marginBottom: spacing.sm, padding: spacing.md,
-        ...shadows.sm,
+        marginBottom: spacing.sm, padding: spacing.md, ...shadows.sm,
     },
-    topRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
-    iconWrap: {
-        width: 44, height: 44, borderRadius: 12,
-        alignItems: 'center', justifyContent: 'center', marginRight: 10,
+    dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+    dateText: { fontSize: typography.sizes.md, fontWeight: '700', color: colors.textDark },
+    openBadge: { backgroundColor: '#DCFCE7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+    openBadgeText: { fontSize: 10, fontWeight: '700', color: '#16A34A' },
+
+    timesRow: {
+        flexDirection: 'row', backgroundColor: '#F8FAFC', borderRadius: borderRadius.sm,
+        paddingVertical: spacing.sm, marginBottom: spacing.sm,
     },
-    typeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 3 },
-    typeBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-    typeText:  { fontSize: 12, fontWeight: '700' },
-    amtBadge:  { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-    amtText:   { fontSize: 12, fontWeight: '700' },
-    customerName: { fontSize: 13, color: colors.textDark, fontWeight: '500' },
-    timeBlock: { alignItems: 'flex-end', marginLeft: 6 },
-    time:      { fontSize: typography.sizes.md, fontWeight: '700', color: colors.textDark },
-    dateSmall: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+    timeBlock: { flex: 1, alignItems: 'center', gap: 2 },
+    timeDivider: { width: 1, backgroundColor: colors.border },
+    timeLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
+    timeValue: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark },
 
-    addrRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginBottom: 4 },
-    addrText: { flex: 1, fontSize: 12, color: colors.textMuted, lineHeight: 17 },
+    row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
+    rowLabel: { fontSize: typography.sizes.sm, color: colors.textMuted },
+    rowValue: { fontSize: typography.sizes.sm, color: colors.textDark, fontWeight: '500' },
+    rowValueBold: { fontWeight: '700' },
 
-    notesRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginBottom: 6,
-        backgroundColor: '#F8FAFC', borderRadius: 6, padding: 6 },
-    notesText: { flex: 1, fontSize: 12, color: colors.textDark, lineHeight: 16, fontStyle: 'italic' },
-
-    footer: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },
-    gpsBadge: { flexDirection: 'row', alignItems: 'center', gap: 3,
-        backgroundColor: colors.successLight, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
-    gpsText: { fontSize: 10, color: colors.success, fontWeight: '600' },
-    distBadge: { flexDirection: 'row', alignItems: 'center', gap: 3,
-        backgroundColor: '#F5F3FF', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
-    distText:  { fontSize: 10, color: '#7c3aed', fontWeight: '600' },
-    loanBadge: { backgroundColor: '#F0FDF4', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
-    loanText:  { fontSize: 10, color: colors.success, fontWeight: '600' },
-    routeBtn:  { flexDirection: 'row', alignItems: 'center', gap: 4,
-        backgroundColor: colors.primaryLight, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-    routeBtnText: { fontSize: 11, color: colors.primary, fontWeight: '700' },
+    footer: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border,
+    },
+    geoBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+    geoBadgeText: { fontSize: 11, fontWeight: '700' },
+    viewDetails: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    viewDetailsText: { fontSize: typography.sizes.sm, color: colors.primary, fontWeight: '700' },
 });
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 const PunchHistoryScreen = ({ navigation }) => {
-    const [punches, setPunches]           = useState([]);
-    const [collectionTotal, setCollectionTotal] = useState(null);
-    const [isLoading, setIsLoading]       = useState(true);
+    const [sessions, setSessions] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const [hasError, setHasError]         = useState(false);
-    const [errorMsg, setErrorMsg]         = useState('');
-    const [mode, setMode]                 = useState('date');
-    const [activeDate, setActiveDate]     = useState(today());
-    const [quickFilter, setQuickFilter]   = useState(null);
+    const [hasError, setHasError] = useState(false);
+    const [errorMsg, setErrorMsg] = useState('');
+    const [mode, setMode] = useState('date');
+    const [activeDate, setActiveDate] = useState(today());
+    const [quickFilter, setQuickFilter] = useState(null);
 
     const getParams = useCallback(() => {
         if (mode === 'date') {
@@ -291,23 +170,11 @@ const PunchHistoryScreen = ({ navigation }) => {
             setHasError(false);
             setErrorMsg('');
             if (isRefresh) setIsRefreshing(true);
-            else { setIsLoading(true); setPunches([]); setCollectionTotal(null); }
+            else { setIsLoading(true); setSessions([]); }
 
-            const [response, collRes] = await Promise.all([
-                api.getPunchHistory(params),
-                api.getCollections(params).catch(() => null),
-            ]);
-
-            const data = Array.isArray(response.data)
-                ? response.data
-                : (response.data?.results || []);
-            setPunches(data.sort((a, b) => new Date(b.punched_at) - new Date(a.punched_at)));
-
-            const collList = Array.isArray(collRes?.data)
-                ? collRes.data
-                : (collRes?.data?.results || []);
-            const total = collList.reduce((sum, c) => sum + parseFloat(c.amount || 0), 0);
-            setCollectionTotal(total);
+            const response = await api.getPunchSessions({ ...params, page_size: 100 });
+            const data = Array.isArray(response.data) ? response.data : (response.data?.results || []);
+            setSessions(data);
         } catch (err) {
             setHasError(true);
             const { message } = parseApiError(err);
@@ -344,8 +211,8 @@ const PunchHistoryScreen = ({ navigation }) => {
 
     const isDateToday = fmt(activeDate) === fmt(today());
 
-    const handleViewRoute = (punchDate) => {
-        navigation.navigate('RouteMap', { date: punchDate });
+    const openDetail = (session) => {
+        navigation.navigate('PunchSessionDetail', { punchId: session.session_start });
     };
 
     return (
@@ -408,7 +275,7 @@ const PunchHistoryScreen = ({ navigation }) => {
                         <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
                     ))}
                 </View>
-            ) : hasError && punches.length === 0 ? (
+            ) : hasError && sessions.length === 0 ? (
                 <View style={s.centered}>
                     <Icon name="wifi-off" size={44} color={colors.danger} />
                     <Text style={s.errorTxt}>{errorMsg || 'Could not load data'}</Text>
@@ -419,13 +286,10 @@ const PunchHistoryScreen = ({ navigation }) => {
                 </View>
             ) : (
                 <FlatList
-                    data={punches}
-                    keyExtractor={(item, i) => item?.id ? String(item.id) : String(i)}
+                    data={sessions}
+                    keyExtractor={(item, i) => item?.session_start ? String(item.session_start) : String(i)}
                     renderItem={({ item }) => (
-                        <PunchCard
-                            item={item}
-                            onViewRoute={item.punched_at ? () => handleViewRoute(item.punched_at.slice(0, 10)) : null}
-                        />
+                        <SessionSummaryCard item={item} onPress={() => openDetail(item)} />
                     )}
                     contentContainerStyle={s.listContent}
                     showsVerticalScrollIndicator={false}
@@ -438,18 +302,15 @@ const PunchHistoryScreen = ({ navigation }) => {
                         />
                     }
                     ListHeaderComponent={
-                        <>
-                            {hasError && (
-                                <View style={s.warnBanner}>
-                                    <Icon name="wifi-off" size={13} color={colors.warning} />
-                                    <Text style={s.warnTxt}>{errorMsg || 'Could not refresh'} — showing cached data</Text>
-                                    <TouchableOpacity onPress={() => fetchData(getParams(), true)}>
-                                        <Text style={s.retryLink}>Retry</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            )}
-                            <SummaryBar punches={punches} collectionTotal={collectionTotal} />
-                        </>
+                        hasError && (
+                            <View style={s.warnBanner}>
+                                <Icon name="wifi-off" size={13} color={colors.warning} />
+                                <Text style={s.warnTxt}>{errorMsg || 'Could not refresh'} — showing cached data</Text>
+                                <TouchableOpacity onPress={() => fetchData(getParams(), true)}>
+                                    <Text style={s.retryLink}>Retry</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )
                     }
                     ListEmptyComponent={
                         <View style={s.centered}>
@@ -473,7 +334,7 @@ const s = StyleSheet.create({
         backgroundColor: colors.primary,
         paddingHorizontal: spacing.md, paddingVertical: spacing.md,
     },
-    backBtn:     { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+    backBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
     headerTitle: { flex: 1, textAlign: 'center', fontSize: typography.sizes.lg, fontWeight: '700', color: '#fff' },
 
     dateNav: {
@@ -482,12 +343,12 @@ const s = StyleSheet.create({
         paddingVertical: spacing.xs, paddingHorizontal: spacing.xs,
         borderBottomWidth: 1, borderBottomColor: colors.border,
     },
-    navArrow:    { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+    navArrow: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
     navDisabled: { opacity: 0.25 },
-    dateLabel:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 6 },
+    dateLabel: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 6 },
     dateLabelText: { fontSize: typography.sizes.md, fontWeight: '600', color: colors.textMuted },
     dateLabelActive: { color: colors.primary },
-    todayPill:    { backgroundColor: colors.primaryLight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+    todayPill: { backgroundColor: colors.primaryLight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
     todayPillTxt: { fontSize: 10, color: colors.primary, fontWeight: '600' },
 
     chipRow: {
@@ -495,24 +356,23 @@ const s = StyleSheet.create({
         gap: spacing.sm, backgroundColor: colors.surface,
         borderBottomWidth: 1, borderBottomColor: colors.border,
     },
-    chip:         { paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background },
-    chipActive:   { backgroundColor: colors.primary, borderColor: colors.primary },
-    chipText:     { fontSize: typography.sizes.sm, color: colors.textMuted, fontWeight: '500' },
+    chip: { paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background },
+    chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+    chipText: { fontSize: typography.sizes.sm, color: colors.textMuted, fontWeight: '500' },
     chipTextActive: { color: '#fff', fontWeight: '600' },
 
     listContent: { padding: spacing.md, paddingBottom: 100 },
 
-    centered:    { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
-    loadingTxt:  { marginTop: spacing.sm, fontSize: typography.sizes.sm, color: colors.textMuted },
-    errorTxt:    { fontSize: typography.sizes.sm, color: colors.danger, marginTop: spacing.md, textAlign: 'center', paddingHorizontal: spacing.lg },
-    retryBtn:    { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, backgroundColor: colors.primary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 20 },
-    retryTxt:    { color: '#fff', fontSize: typography.sizes.sm, fontWeight: '600' },
-    emptyTitle:  { fontSize: typography.sizes.md, fontWeight: '600', color: colors.textDark, marginTop: spacing.md },
-    emptySub:    { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4 },
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
+    errorTxt: { fontSize: typography.sizes.sm, color: colors.danger, marginTop: spacing.md, textAlign: 'center', paddingHorizontal: spacing.lg },
+    retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, backgroundColor: colors.primary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: 20 },
+    retryTxt: { color: '#fff', fontSize: typography.sizes.sm, fontWeight: '600' },
+    emptyTitle: { fontSize: typography.sizes.md, fontWeight: '600', color: colors.textDark, marginTop: spacing.md },
+    emptySub: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4 },
 
-    warnBanner:  { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFBEB', borderRadius: 10, padding: spacing.sm, marginBottom: spacing.sm, gap: 8, borderWidth: 1, borderColor: '#FCD34D' },
-    warnTxt:     { flex: 1, fontSize: typography.sizes.xs, color: '#92400E' },
-    retryLink:   { fontSize: typography.sizes.sm, color: colors.primary, fontWeight: '600' },
+    warnBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFBEB', borderRadius: 10, padding: spacing.sm, marginBottom: spacing.sm, gap: 8, borderWidth: 1, borderColor: '#FCD34D' },
+    warnTxt: { flex: 1, fontSize: typography.sizes.xs, color: '#92400E' },
+    retryLink: { fontSize: typography.sizes.sm, color: colors.primary, fontWeight: '600' },
 });
 
 export default PunchHistoryScreen;
