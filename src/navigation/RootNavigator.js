@@ -21,6 +21,9 @@ import EmployeeMoreScreen from '../screens/Employee/EmployeeMoreScreen';
 import CollectionsScreen from '../screens/Common/CollectionsScreen';
 import CollectionDoneScreen from '../screens/Common/CollectionDoneScreen';
 import CollectionVisitScreen from '../screens/Common/CollectionVisitScreen';
+import MyCollectionCorrectionsScreen from '../screens/Common/MyCollectionCorrectionsScreen';
+import CollectionCorrectionFormScreen from '../screens/Common/CollectionCorrectionFormScreen';
+import CollectionCorrectionDetailScreen from '../screens/Common/CollectionCorrectionDetailScreen';
 import HelpSupportScreen from '../screens/Common/HelpSupportScreen';
 
 // Admin Screens
@@ -113,6 +116,9 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="Punch" component={EmployeePunchScreen} />
         <EmployeeStack.Screen name="CollectionDone" component={CollectionDoneScreen} />
         <EmployeeStack.Screen name="CollectionVisit" component={CollectionVisitScreen} />
+        <EmployeeStack.Screen name="MyCollectionCorrections" component={MyCollectionCorrectionsScreen} />
+        <EmployeeStack.Screen name="CollectionCorrectionForm" component={CollectionCorrectionFormScreen} />
+        <EmployeeStack.Screen name="CollectionCorrectionDetail" component={CollectionCorrectionDetailScreen} />
         <EmployeeStack.Screen name="RouteMap" component={RouteMapScreen} />
         <EmployeeStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <EmployeeStack.Screen name="PunchHistory" component={PunchHistoryScreen} />

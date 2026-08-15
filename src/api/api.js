@@ -756,4 +756,25 @@ api.getNearbyEmployees = (params = {}) =>
 api.setRiskCategory = (id, riskCategory) =>
     api.post(`/loans/collections/${id}/set_risk_category/`, { risk_category: riskCategory });
 
+// ── Collection Correction Requests ──
+// create/edit accept a FormData instance (supporting_document is an
+// optional file) — same multipart convention as completeVisit above.
+api.getCollectionCorrections = (params = {}) =>
+    api.get('/loans/collection-corrections/', { params });
+
+api.getCollectionCorrection = (id) =>
+    api.get(`/loans/collection-corrections/${id}/`);
+
+api.createCollectionCorrection = (formData) =>
+    api.post('/loans/collection-corrections/', formData);
+
+api.editCollectionCorrection = (id, formData) =>
+    api.post(`/loans/collection-corrections/${id}/edit/`, formData);
+
+api.withdrawCollectionCorrection = (id) =>
+    api.post(`/loans/collection-corrections/${id}/withdraw/`);
+
+api.getCollectionCorrectionTimeline = (id) =>
+    api.get(`/loans/collection-corrections/${id}/timeline/`);
+
 export default api;
