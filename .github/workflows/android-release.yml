@@ -121,6 +121,7 @@ jobs:
       - name: Build signed release APK
         working-directory: android
         run: |
+          chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
       # ------------------------------------------------------------
