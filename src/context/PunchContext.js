@@ -214,6 +214,7 @@ export const PunchProvider = ({ children }) => {
         network_status: locationData.network_status || '',
         device_timestamp: locationData.device_timestamp || undefined,
         customer_name: formData.customer_name || '',
+        customer_phone: formData.customer_phone || '',
         reason: formData.reason || '',
         visit_type: formData.visit_type || 'VISIT',
         loan_id: formData.loan_id || '',

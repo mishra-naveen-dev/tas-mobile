@@ -170,6 +170,7 @@ const EmployeePunchScreen = ({ navigation }) => {
     upi_ref: '',
     cheque_no: '',
     customer_name: '',
+    customer_phone: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
@@ -475,6 +476,10 @@ const EmployeePunchScreen = ({ navigation }) => {
           Alert.alert('Required', 'Payment mode is required');
           return false;
         }
+        if (form.customer_phone && !isPhone(form.customer_phone)) {
+          Alert.alert('Invalid', 'Enter a valid 10-digit customer phone number');
+          return false;
+        }
       }
     }
 
@@ -501,6 +506,7 @@ const EmployeePunchScreen = ({ navigation }) => {
     upi_ref: '',
     cheque_no: '',
     customer_name: '',
+    customer_phone: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
@@ -1268,6 +1274,17 @@ const EmployeePunchScreen = ({ navigation }) => {
                         placeholder="Amount"
                         placeholderTextColor={colors.textMuted}
                         keyboardType="numeric"
+                      />
+
+                      <Text style={styles.label}>Customer Phone</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={form.customer_phone}
+                        onChangeText={(t) => updateForm('customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                        placeholder="10-digit mobile number"
+                        placeholderTextColor={colors.textMuted}
+                        keyboardType="number-pad"
+                        maxLength={10}
                       />
 
                       {form.visit_type === 'COLLECTION' && (
