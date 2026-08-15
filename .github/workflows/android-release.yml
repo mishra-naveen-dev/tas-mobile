@@ -165,41 +165,59 @@ jobs:
       # ------------------------------------------------------------
       # 10. Verify release certificate
       #
-      # This prevents accidentally uploading a debug-signed APK
-      # or an APK signed with a different release key.
+      # Confirms the built APK was actually signed with the release
+      # keystore restored in step 7 — the expected fingerprint is read
+      # directly from that keystore (via keytool) rather than from a
+      # separately-recorded secret, so this can never drift out of
+      # sync with whatever keystore/alias is actually in use.
       # ------------------------------------------------------------
       - name: Verify APK release certificate
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           APK="android/app/build/outputs/apk/release/app-release.apk"
+          KEYSTORE="android/app/tas-release-key.keystore"
 
           BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/$(ls "$ANDROID_SDK_ROOT/build-tools" | sort -V | tail -1)"
 
-          echo "Using Android Build Tools:"
-          echo "$BUILD_TOOLS"
-
-          echo ""
           echo "APK certificate:"
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
 
-          ACTUAL_FINGERPRINT=$(
+          APK_FINGERPRINT=$(
             "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" |
             grep "SHA-256 digest" |
             awk '{print $NF}' |
+            tr -d ':[:space:]' |
             tr '[:lower:]' '[:upper:]'
           )
 
-          EXPECTED_FINGERPRINT=$(echo "${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}" | tr '[:lower:]' '[:upper:]')
+          KEYSTORE_FINGERPRINT=$(
+            keytool -list -v \
+              -keystore "$KEYSTORE" \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -alias "$KEY_ALIAS" |
+            grep "SHA256:" |
+            awk '{print $2}' |
+            tr -d ':[:space:]' |
+            tr '[:lower:]' '[:upper:]'
+          )
 
           echo ""
-          echo "Certificate verification..."
+          echo "Comparing APK certificate with release keystore certificate..."
 
-          if [ -z "$ACTUAL_FINGERPRINT" ]; then
-            echo "::error::Could not read APK SHA-256 certificate fingerprint."
+          if [ -z "$APK_FINGERPRINT" ]; then
+            echo "::error::Could not read APK certificate fingerprint."
             exit 1
           fi
 
-          if [ "$ACTUAL_FINGERPRINT" != "$EXPECTED_FINGERPRINT" ]; then
-            echo "::error::APK signature does not match the expected TAS Mobile release certificate."
+          if [ -z "$KEYSTORE_FINGERPRINT" ]; then
+            echo "::error::Could not read release keystore certificate fingerprint."
+            exit 1
+          fi
+
+          if [ "$APK_FINGERPRINT" != "$KEYSTORE_FINGERPRINT" ]; then
+            echo "::error::APK certificate does not match the release keystore."
             echo "::error::Release upload has been blocked."
             exit 1
           fi
