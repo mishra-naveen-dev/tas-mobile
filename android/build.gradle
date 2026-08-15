@@ -28,3 +28,25 @@ allprojects {
         }
     }
 }
+
+// Windows-only: several third-party native modules (react-native-nitro-sound
+// confirmed) configure their own CMake build under this project's long,
+// space-containing path ("F:/d drive/Data/traveling-allowanc-system-2/...")
+// and hit a CMake/Ninja "manifest still dirty after 100 tries" reconfigure
+// loop as a result — the same class of problem the app module already works
+// around below with its own buildStagingDirectory override. That override
+// only covers :app; this applies the same fix to every other module with a
+// CMake build, since node_modules itself can't be patched directly (wiped on
+// every npm install). Skips :app so its existing, already-working override
+// is left untouched.
+if (org.gradle.internal.os.OperatingSystem.current().isWindows()) {
+    subprojects { subproject ->
+        if (subproject.name == 'app') return
+        afterEvaluate {
+            def cmake = subproject.hasProperty('android') ? subproject.android.externalNativeBuild?.cmake : null
+            if (cmake != null && cmake.path != null) {
+                cmake.buildStagingDirectory = new File("C:/rnbuild/tasmobile-modules/${subproject.name}")
+            }
+        }
+    }
+}

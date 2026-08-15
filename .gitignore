@@ -1,6 +1,10 @@
-# OSX
+#
+ OSX
 #
 .DS_Store
+# Android release signing
+android/app/tas-release-key.keystore
+android/keystore.properties
 
 # Xcode
 #
