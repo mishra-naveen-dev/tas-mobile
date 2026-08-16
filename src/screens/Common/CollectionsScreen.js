@@ -1473,9 +1473,26 @@ const CollectionsScreen = ({ route }) => {
                             </TouchableOpacity>
                         </View>
                         {modal.record && (
-                            <Text style={styles.modalSub}>
-                                {modal.record.customer_name} · Loan {modal.record.loan_id}
-                            </Text>
+                            <>
+                                <Text style={styles.modalSub}>
+                                    {modal.record.customer_name} · Loan {modal.record.loan_id}
+                                </Text>
+                                <View style={styles.loanDetailsBox}>
+                                    {[
+                                        ['Product Type', modal.record.product_type],
+                                        ['Outstanding Principal', modal.record.principal_arrear != null ? `₹${Number(modal.record.principal_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Interest Arrear', modal.record.interest_arrear != null ? `₹${Number(modal.record.interest_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Total Arrear', modal.record.total_arrear != null ? `₹${Number(modal.record.total_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Disbursement Date', modal.record.disbursement_date ? new Date(modal.record.disbursement_date).toLocaleDateString('en-IN') : null],
+                                        ['Region / Center', [modal.record.region_name, modal.record.center_id].filter(Boolean).join(' / ') || null],
+                                    ].filter(([, value]) => !!value).map(([label, value]) => (
+                                        <View key={label} style={styles.loanDetailRow}>
+                                            <Text style={styles.loanDetailLabel}>{label}</Text>
+                                            <Text style={styles.loanDetailValue}>{value}</Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            </>
                         )}
 
                         <Text style={styles.fieldLabel}>Status</Text>
@@ -1879,6 +1896,15 @@ const styles = StyleSheet.create({
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     modalTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     modalSub: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4, marginBottom: spacing.sm },
+    loanDetailsBox: {
+        backgroundColor: colors.backgroundLight || '#F8FAFC',
+        borderRadius: borderRadius.md,
+        padding: spacing.sm,
+        marginBottom: spacing.sm,
+    },
+    loanDetailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
+    loanDetailLabel: { fontSize: typography.sizes.xs, color: colors.textMuted },
+    loanDetailValue: { fontSize: typography.sizes.xs, fontWeight: '600', color: colors.textDark },
     fieldLabel: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textMedium, marginTop: spacing.sm, marginBottom: spacing.xs },
     amountLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm, marginBottom: spacing.xs },
     emiHint: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
