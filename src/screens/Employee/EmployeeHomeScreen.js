@@ -17,6 +17,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import api from '../../api/api';
+import { useApiQuery } from '../../hooks/useApiQuery';
 import { useAuth } from '../../context/AuthContext';
 import { usePunch, STATES } from '../../context/PunchContext';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
@@ -426,27 +427,69 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const { logout = () => {}, user = null } = auth;
     const mapRef = useRef(null);
     const pulseAnim = useRef(new Animated.Value(1)).current;
-    const isMountedRef = useRef(true);
-    const lastFetchRef = useRef(0);
 
-    const [isLoading, setIsLoading] = useState(true);
-    const [isRefreshing, setIsRefreshing] = useState(false);
-    const [summary, setSummary] = useState({});
-    const [correctionSummary, setCorrectionSummary] = useState({});
-    const [punches, setPunches] = useState([]);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
-    const [monthlyCollection, setMonthlyCollection] = useState(0);
-    const [collectionStats, setCollectionStats] = useState(null);
     const [selectedMonth, setSelectedMonth] = useState(() => new Date());
-    const [monthlyTarget, setMonthlyTarget] = useState(null);
-    const [monthlyTargetLoading, setMonthlyTargetLoading] = useState(false);
 
-    useEffect(() => {
-        isMountedRef.current = true;
-        return () => {
-            isMountedRef.current = false;
-        };
-    }, []);
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    // Six independent queries — react-query fires them in parallel the same
+    // way the old Promise.all did, but each caches/revalidates on its own,
+    // and the screen shows the last-known page instantly instead of blank
+    // while useFocusEffect's refetch (below) is in flight.
+    const summaryQuery = useApiQuery(['homeDailySummary'], () => api.get('/attendance/punches/daily_summary/'));
+    const todayPunchesApiQuery = useApiQuery(['homeTodayPunchesApi'], () => api.get('/attendance/punches/today_punches/'));
+    // getCorrectionCounts() already returns the counts object directly, not
+    // an axios response — wrap it so useApiQuery's res.data unwrap still works.
+    const correctionQuery = useApiQuery(['homeCorrectionCounts'], () => api.getCorrectionCounts().then((counts) => ({ data: counts })));
+    const monthlyPerfQuery = useApiQuery(['homeMonthlyPerformance'], () => api.getPerformance('monthly'));
+    const collectionStatsQuery = useApiQuery(['homeCollectionDashboardStats'], () => api.getCollectionDashboardStats());
+    const collectionUpdatesQuery = useApiQuery(
+        ['homeCollectionUpdatesToday', user?.id, todayStr],
+        () => api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }),
+        { enabled: !!user?.id },
+    );
+    const {
+        data: monthlyTarget,
+        isLoading: monthlyTargetLoading,
+        refetch: refetchMonthlyTarget,
+    } = useApiQuery(['monthlyTarget', MONTH_KEY(selectedMonth)], () => api.getMonthlyTarget(MONTH_KEY(selectedMonth)));
+
+    const isLoading = summaryQuery.isLoading || todayPunchesApiQuery.isLoading || correctionQuery.isLoading;
+    const isRefreshing = summaryQuery.isFetching && !summaryQuery.isLoading;
+
+    const summary = useMemo(() => summaryQuery.data || {}, [summaryQuery.data]);
+    const correctionSummary = useMemo(() => correctionQuery.data || {}, [correctionQuery.data]);
+    const monthlyCollection = Number(monthlyPerfQuery.data?.total_collection_amount) || 0;
+    const collectionStats = collectionStatsQuery.data || null;
+
+    // Field activity (e.g. a collection outcome update) doesn't always
+    // happen inside an explicit punch-tracked GPS session — shape each
+    // update to look like a punch so mapApiResponseToActivities' own
+    // visit_type dispatch (see models/ActivityModel.js) picks it up as a
+    // COLLECTION activity without needing any changes there.
+    const punches = useMemo(() => {
+        const livePunches = todayPunchesApiQuery.data?.results || todayPunchesApiQuery.data || [];
+        const todayCollectionActivities = (collectionUpdatesQuery.data?.results || collectionUpdatesQuery.data || [])
+            .map(c => ({
+                id: `coll-${c.id}`,
+                visit_type: 'COLLECTION',
+                punched_at: c.created_at,
+                current_address: c.location_address,
+                latitude: c.latitude,
+                longitude: c.longitude,
+                total_amount: c.collected_amount,
+                client_name: c.customer_name,
+                reason: c.remarks || c.status_display,
+                // The unified Collection Visit flow (complete_visit) creates
+                // both this CollectionUpdate AND a PUNCH_IN AttendancePunch
+                // for the same real-world visit — c.punch links back to it
+                // so allPunches (below) can drop that raw punch instead of
+                // showing the same visit as two separate activity rows.
+                linked_punch_id: c.punch,
+            }));
+        return [...livePunches, ...todayCollectionActivities];
+    }, [todayPunchesApiQuery.data, collectionUpdatesQuery.data]);
 
     useEffect(() => {
         let animation;
@@ -472,97 +515,23 @@ const EmployeeHomeScreen = ({ navigation }) => {
         return () => animation?.stop();
     }, [isActive, isTracking, pulseAnim]);
 
-    const fetchData = useCallback(async (isRefresh = false) => {
-        const now = Date.now();
-        if (!isRefresh && now - lastFetchRef.current < 1000) {
-            return;
-        }
-        lastFetchRef.current = now;
-
-        try {
-            if (!isRefresh) setIsLoading(true);
-
-            const todayStr = new Date().toISOString().slice(0, 10);
-            const [summaryRes, punchRes, correctionRes, monthlyRes, collectionRes, collectionUpdatesRes] = await Promise.all([
-                api.get('/attendance/punches/daily_summary/'),
-                api.get('/attendance/punches/today_punches/'),
-                api.getCorrectionCounts(),
-                api.getPerformance('monthly').catch(() => null),
-                api.getCollectionDashboardStats().catch(() => null),
-                api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }).catch(() => null),
-            ]).catch(() => [null, null, null, null, null, null]);
-
-            if (!isMountedRef.current) return;
-
-            const liveSummary = summaryRes?.data || {};
-            const livePunches = punchRes?.data?.results || punchRes?.data || [];
-            const correctionCounts = correctionRes || {};
-            // Field activity (e.g. a collection outcome update) doesn't always
-            // happen inside an explicit punch-tracked GPS session — shape each
-            // update to look like a punch so mapApiResponseToActivities' own
-            // visit_type dispatch (see models/ActivityModel.js) picks it up as
-            // a COLLECTION activity without needing any changes there.
-            const todayCollectionActivities = (collectionUpdatesRes?.data?.results || collectionUpdatesRes?.data || [])
-                .map(c => ({
-                    id: `coll-${c.id}`,
-                    visit_type: 'COLLECTION',
-                    punched_at: c.created_at,
-                    current_address: c.location_address,
-                    latitude: c.latitude,
-                    longitude: c.longitude,
-                    total_amount: c.collected_amount,
-                    client_name: c.customer_name,
-                    reason: c.remarks || c.status_display,
-                    // The unified Collection Visit flow (complete_visit) creates
-                    // both this CollectionUpdate AND a PUNCH_IN AttendancePunch
-                    // for the same real-world visit — c.punch links back to it
-                    // so allPunches (below) can drop that raw punch instead of
-                    // showing the same visit as two separate activity rows.
-                    linked_punch_id: c.punch,
-                }));
-
-            setSummary(liveSummary);
-            setPunches([...livePunches, ...todayCollectionActivities]);
-            setCorrectionSummary(correctionCounts);
-            setMonthlyCollection(Number(monthlyRes?.data?.total_collection_amount) || 0);
-            if (collectionRes?.data) setCollectionStats(collectionRes.data);
-        } catch {
-            // Server unavailable or session expired — interceptor already handles 401
-        } finally {
-            if (isMountedRef.current) {
-                setIsLoading(false);
-                setIsRefreshing(false);
-            }
-        }
-    }, [user?.id]);
-
-    // Dynamic Monthly Collection Target (Home Screen ticket) — server-
-    // computed from assigned scheduled/demand amount, kept independent of
-    // fetchData's own Promise.all so switching the selected month doesn't
-    // require a full screen refresh.
-    const fetchMonthlyTarget = useCallback(async (monthDate) => {
-        setMonthlyTargetLoading(true);
-        try {
-            const res = await api.getMonthlyTarget(MONTH_KEY(monthDate));
-            if (isMountedRef.current) setMonthlyTarget(res.data);
-        } catch {
-            if (isMountedRef.current) setMonthlyTarget(null);
-        } finally {
-            if (isMountedRef.current) setMonthlyTargetLoading(false);
-        }
-    }, []);
-
+    // Re-fetch everything whenever the Home tab regains focus — matches the
+    // original fetchData/fetchMonthlyTarget behavior exactly, just via
+    // react-query's refetch() instead of a hand-rolled Promise.all. Data
+    // fetched here already had the 1s debounce lastFetchRef used to guard
+    // against — react-query's own in-flight-request dedup makes that guard
+    // unnecessary (a second refetch while one is already pending is a no-op).
     useFocusEffect(useCallback(() => {
-        fetchData(false);
-        fetchMonthlyTarget(selectedMonth);
+        summaryQuery.refetch();
+        todayPunchesApiQuery.refetch();
+        correctionQuery.refetch();
+        monthlyPerfQuery.refetch();
+        collectionStatsQuery.refetch();
+        collectionUpdatesQuery.refetch();
+        refetchMonthlyTarget();
         refreshPunches();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fetchData, refreshPunches]));
-
-    useEffect(() => {
-        fetchMonthlyTarget(selectedMonth);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedMonth]);
+    }, [refreshPunches]));
 
     const changeMonth = useCallback((delta) => {
         setSelectedMonth((prev) => {
@@ -576,10 +545,16 @@ const EmployeeHomeScreen = ({ navigation }) => {
     }, []);
 
     const onRefresh = useCallback(() => {
-        setIsRefreshing(true);
-        fetchData(true);
+        summaryQuery.refetch();
+        todayPunchesApiQuery.refetch();
+        correctionQuery.refetch();
+        monthlyPerfQuery.refetch();
+        collectionStatsQuery.refetch();
+        collectionUpdatesQuery.refetch();
+        refetchMonthlyTarget();
         refreshPunches();
-    }, [fetchData, refreshPunches]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [refreshPunches]);
 
     // Mirrors EmployeePunchScreen.handlePunchOutPress — punchOut() needs no
     // form/location pre-fetch of its own (it captures GPS internally and
