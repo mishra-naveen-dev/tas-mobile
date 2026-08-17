@@ -199,6 +199,49 @@ jobs:
 
 
       # --------------------------------------------------------
+      # 7b. Restore build-time API keys (.env)
+      # --------------------------------------------------------
+      #
+      # android/app/build.gradle reads GOOGLE_MAPS_API_KEY from a repo-root
+      # .env file (gitignored) to populate the Maps SDK key in
+      # AndroidManifest.xml, and the JS bundle reads GOOGLE_MAPS_API_KEY /
+      # GOOGLE_GEOCODING_API_KEY from the same file via @env
+      # (react-native-dotenv). .env never exists on this fresh checkout, so
+      # without this step both fall back to "" — the build still succeeds,
+      # but the Maps SDK key is blank and the map renders empty (this was
+      # silently broken on every CI-built release; local builds worked only
+      # because the developer's own machine has a real .env).
+      #
+      # --------------------------------------------------------
+
+      - name: Restore build-time API keys
+
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          GOOGLE_GEOCODING_API_KEY: ${{ secrets.GOOGLE_GEOCODING_API_KEY }}
+
+        run: |
+
+          echo "::add-mask::$GOOGLE_MAPS_API_KEY"
+          echo "::add-mask::$GOOGLE_GEOCODING_API_KEY"
+
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+
+            echo "::error::GOOGLE_MAPS_API_KEY secret is not set. The release build would ship with a blank Maps SDK key and the map would render empty. Add it under Settings > Secrets and variables > Actions."
+
+            exit 1
+
+          fi
+
+          cat > .env <<EOF
+          GOOGLE_MAPS_API_KEY=$GOOGLE_MAPS_API_KEY
+          GOOGLE_GEOCODING_API_KEY=$GOOGLE_GEOCODING_API_KEY
+          EOF
+
+          echo "Build-time API keys restored successfully."
+
+
+      # --------------------------------------------------------
       # 8. Build signed release APK
       # --------------------------------------------------------
 
@@ -687,5 +730,7 @@ jobs:
           rm -f android/app/tas-release-key.keystore
 
           rm -f android/keystore.properties
+
+          rm -f .env
 
           echo "Signing credentials removed from GitHub runner."
