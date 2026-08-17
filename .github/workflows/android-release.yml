@@ -36,7 +36,7 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 env:
   AWS_REGION: eu-north-1
@@ -666,6 +666,53 @@ jobs:
 
 
       # --------------------------------------------------------
+      # 17b. Create a GitHub Release with the APK attached
+      # --------------------------------------------------------
+      #
+      # S3 (above) stays the source of truth for the app's own in-app
+      # update-check/download flow (private, short-lived presigned URLs,
+      # requires a logged-in TAS Mobile user). This is a second, much
+      # simpler distribution path for anyone with repo access — testers,
+      # admins — who just want the latest APK without going through AWS:
+      #
+      #   github.com/<org>/tas-mobile/releases/latest
+      #
+      # Re-running the workflow for a version that already has a release
+      # (e.g. a re-run with no version bump) updates that same release's
+      # asset in place rather than failing on a duplicate tag.
+      # --------------------------------------------------------
+
+      - name: Rename APK for the release asset
+
+        run: |
+
+          cp "android/app/build/outputs/apk/release/app-release.apk" \
+             "android/app/build/outputs/apk/release/${{ steps.version.outputs.filename }}"
+
+
+      - name: Create GitHub Release
+
+        uses: softprops/action-gh-release@v2
+
+        with:
+
+          tag_name: v${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}
+
+          name: NamraCred TAS Mobile v${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})
+
+          body: |
+            Automated production release, built and signed by this workflow.
+
+            - Version: ${{ steps.version.outputs.name }}
+            - Version code: ${{ steps.version.outputs.code }}
+            - Commit: ${{ github.sha }}
+
+          files: android/app/build/outputs/apk/release/${{ steps.version.outputs.filename }}
+
+          fail_on_unmatched_files: true
+
+
+      # --------------------------------------------------------
       # 18. Final release summary
       # --------------------------------------------------------
 
@@ -707,6 +754,11 @@ jobs:
 
           echo "S3:"
           echo "s3://${S3_BUCKET}/${{ steps.version.outputs.s3_key }}"
+
+          echo ""
+
+          echo "GitHub Release (no AWS access needed):"
+          echo "${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}"
 
           echo ""
 
