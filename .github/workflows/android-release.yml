@@ -700,8 +700,6 @@ jobs:
 
       - name: Register release with backend
 
-        if: ${{ secrets.MOBILE_RELEASE_REGISTER_TOKEN != '' && vars.BACKEND_API_BASE_URL != '' }}
-
         env:
           MOBILE_RELEASE_REGISTER_TOKEN: ${{ secrets.MOBILE_RELEASE_REGISTER_TOKEN }}
           BACKEND_API_BASE_URL: ${{ vars.BACKEND_API_BASE_URL }}
@@ -709,6 +707,11 @@ jobs:
         run: |
 
           echo "::add-mask::$MOBILE_RELEASE_REGISTER_TOKEN"
+
+          if [ -z "$MOBILE_RELEASE_REGISTER_TOKEN" ] || [ -z "$BACKEND_API_BASE_URL" ]; then
+            echo "MOBILE_RELEASE_REGISTER_TOKEN and/or BACKEND_API_BASE_URL are not configured — skipping release registration."
+            exit 0
+          fi
 
           HTTP_STATUS=$(curl -s -o /tmp/register_response.json -w "%{http_code}" \
             -X POST "${BACKEND_API_BASE_URL}/organization/mobile-release/register/" \
