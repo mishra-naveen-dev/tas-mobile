@@ -683,6 +683,51 @@ jobs:
 
 
       # --------------------------------------------------------
+      # 17a. Register this release with the backend
+      # --------------------------------------------------------
+      #
+      # The backend's MobileRelease registry (which drives both the app's
+      # own in-app update check and the public "first install" download
+      # link below) previously had no writer at all — nothing ever created
+      # a row for a build this workflow produced. Registering it here,
+      # right after S3 upload is verified, keeps "latest release" always
+      # in sync with what's actually in the bucket.
+      #
+      # Skipped (not failed) when the secret isn't configured, so this
+      # stays optional per-environment rather than breaking every build
+      # for repos/forks that haven't set it up yet.
+      # --------------------------------------------------------
+
+      - name: Register release with backend
+
+        if: ${{ secrets.MOBILE_RELEASE_REGISTER_TOKEN != '' && vars.BACKEND_API_BASE_URL != '' }}
+
+        env:
+          MOBILE_RELEASE_REGISTER_TOKEN: ${{ secrets.MOBILE_RELEASE_REGISTER_TOKEN }}
+          BACKEND_API_BASE_URL: ${{ vars.BACKEND_API_BASE_URL }}
+
+        run: |
+
+          echo "::add-mask::$MOBILE_RELEASE_REGISTER_TOKEN"
+
+          HTTP_STATUS=$(curl -s -o /tmp/register_response.json -w "%{http_code}" \
+            -X POST "${BACKEND_API_BASE_URL}/organization/mobile-release/register/" \
+            -H "Content-Type: application/json" \
+            -H "X-Release-Token: ${MOBILE_RELEASE_REGISTER_TOKEN}" \
+            -d "{\"platform\": \"android\", \"version_name\": \"${{ steps.version.outputs.name }}\", \"version_code\": ${{ steps.version.outputs.code }}, \"s3_bucket\": \"${S3_BUCKET}\", \"s3_key\": \"${{ steps.version.outputs.s3_key }}\"}")
+
+          echo "Backend response ($HTTP_STATUS):"
+          cat /tmp/register_response.json
+          echo ""
+
+          if [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "::warning::Failed to register release with backend (HTTP $HTTP_STATUS). The build and S3 upload still succeeded — only the app's update-check and the public first-install link won't reflect this version until it's registered another way."
+          else
+            echo "Release registered successfully."
+          fi
+
+
+      # --------------------------------------------------------
       # 17b. Create a GitHub Release with the APK attached
       # --------------------------------------------------------
       #
@@ -774,8 +819,13 @@ jobs:
 
           echo ""
 
-          echo "GitHub Release (no AWS access needed):"
+          echo "GitHub Release (repo access needed):"
           echo "${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}"
+
+          echo ""
+
+          echo "Public first-install link (no login, no repo access needed):"
+          echo "https://api.tas.namracred.co.in/api/v1/organization/mobile-release/download-latest/?platform=android"
 
           echo ""
 
