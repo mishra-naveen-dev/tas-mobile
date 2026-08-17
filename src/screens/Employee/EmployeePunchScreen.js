@@ -16,7 +16,7 @@ import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
-  validateCollectionStatus, validateVisitType,
+  validateCollectionStatus, validateVisitType, validateCustomerPhone,
 } from '../../utils/collectionVisitRules';
 
 const { width } = Dimensions.get('window');
@@ -171,6 +171,8 @@ const EmployeePunchScreen = ({ navigation }) => {
     cheque_no: '',
     customer_name: '',
     customer_phone: '',
+    phone_correct: null,
+    corrected_customer_phone: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
@@ -258,6 +260,12 @@ const EmployeePunchScreen = ({ navigation }) => {
       loan_id: rec.loan_id,
       customer_name: rec.customer_name && rec.customer_name !== 'Unknown' ? rec.customer_name : prev.customer_name,
       amount: rec.amount_due ? String(rec.amount_due) : prev.amount,
+      // No phone on file at all — nothing to "confirm," go straight to
+      // asking for one (same corrected_customer_phone validation path as
+      // CollectionVisitScreen). Otherwise reset to unanswered so a
+      // previously-resolved record's answer never carries over to this one.
+      phone_correct: rec.customer_phone ? null : false,
+      corrected_customer_phone: '',
     }));
     setCollectionId(rec.id);
     setResolvedRecord(rec);
@@ -480,6 +488,17 @@ const EmployeePunchScreen = ({ navigation }) => {
           Alert.alert('Invalid', 'Enter a valid 10-digit customer phone number');
           return false;
         }
+        // Only applies once a real record has resolved (collectionId set) —
+        // that's the only case this submits through complete_visit, the
+        // endpoint CompleteVisitSerializer's phone-confirmation check
+        // actually gates. Matches CollectionVisitScreen's own validate().
+        if (form.visit_type === 'COLLECTION' && collectionId) {
+          const phoneErr = validateCustomerPhone(form);
+          if (phoneErr) {
+            Alert.alert('Customer Phone', phoneErr);
+            return false;
+          }
+        }
       }
     }
 
@@ -507,6 +526,8 @@ const EmployeePunchScreen = ({ navigation }) => {
     cheque_no: '',
     customer_name: '',
     customer_phone: '',
+    phone_correct: null,
+    corrected_customer_phone: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
@@ -1277,15 +1298,59 @@ const EmployeePunchScreen = ({ navigation }) => {
                       />
 
                       <Text style={styles.label}>Customer Phone</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={form.customer_phone}
-                        onChangeText={(t) => updateForm('customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
-                        placeholder="10-digit mobile number"
-                        placeholderTextColor={colors.textMuted}
-                        keyboardType="number-pad"
-                        maxLength={10}
-                      />
+                      {collectionId && resolvedRecord?.customer_phone ? (
+                        <>
+                          <View style={styles.phoneRecordedRow}>
+                            <Icon name="phone" size={14} color={colors.textMuted} />
+                            <Text style={styles.phoneRecordedText}>{resolvedRecord.customer_phone}</Text>
+                          </View>
+                          <View style={styles.chips}>
+                            {YES_NO_OPTIONS.map((o) => (
+                              <TouchableOpacity
+                                key={String(o.value)}
+                                style={[styles.chip, form.phone_correct === o.value && styles.chipActive]}
+                                onPress={() => updateForm('phone_correct', o.value)}
+                              >
+                                <Text style={[styles.chipText, form.phone_correct === o.value && styles.chipTextActive]}>{o.label}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                          {form.phone_correct === false && (
+                            <TextInput
+                              style={styles.input}
+                              value={form.corrected_customer_phone}
+                              onChangeText={(t) => updateForm('corrected_customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                              placeholder="Customer's correct 10-digit number"
+                              placeholderTextColor={colors.textMuted}
+                              keyboardType="number-pad"
+                              maxLength={10}
+                            />
+                          )}
+                        </>
+                      ) : collectionId ? (
+                        <>
+                          <Text style={styles.phoneRecordedText}>No phone number on file for this customer.</Text>
+                          <TextInput
+                            style={styles.input}
+                            value={form.corrected_customer_phone}
+                            onChangeText={(t) => updateForm('corrected_customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                            placeholder="Customer's 10-digit number"
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="number-pad"
+                            maxLength={10}
+                          />
+                        </>
+                      ) : (
+                        <TextInput
+                          style={styles.input}
+                          value={form.customer_phone}
+                          onChangeText={(t) => updateForm('customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                          placeholder="10-digit mobile number"
+                          placeholderTextColor={colors.textMuted}
+                          keyboardType="number-pad"
+                          maxLength={10}
+                        />
+                      )}
 
                       {form.visit_type === 'COLLECTION' && (
                         <>
@@ -1697,6 +1762,8 @@ const styles = StyleSheet.create({
   locText: { fontSize: typography.sizes.sm, fontWeight: '500' },
   mockText: { fontSize: typography.sizes.xs, color: colors.warning, marginTop: spacing.xs },
   label: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.text, marginBottom: spacing.sm, marginTop: spacing.md },
+  phoneRecordedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
+  phoneRecordedText: { fontSize: typography.sizes.sm, color: colors.textDark, fontWeight: '600' },
   chips: { flexDirection: 'row', flexWrap: 'wrap' },
   chip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.background, borderRadius: 20, marginRight: spacing.sm, marginBottom: spacing.sm },
   chipActive: { backgroundColor: colors.primary },
