@@ -132,9 +132,26 @@ jobs:
       # --------------------------------------------------------
       # 6. Install Node dependencies
       # --------------------------------------------------------
+      #
+      # setup-node's cache: npm (above) only caches npm's own download
+      # cache — `npm ci` still reinstalls and re-extracts every package
+      # into node_modules on every run. Caching node_modules itself,
+      # keyed on package-lock.json, skips that entirely on a hit — the
+      # single biggest fixed cost in this workflow after the actual
+      # Gradle compile. --prefer-offline/--no-audit/--no-fund trim the
+      # registry round-trips `npm ci` makes even on a cache miss.
+      # --------------------------------------------------------
+
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install dependencies
-        run: npm ci
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
 
 
       # --------------------------------------------------------
