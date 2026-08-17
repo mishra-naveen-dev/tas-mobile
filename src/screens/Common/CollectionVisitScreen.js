@@ -11,6 +11,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
 import api from '../../api/api';
 import { usePunch } from '../../context/PunchContext';
+import { useAuth } from '../../context/AuthContext';
 import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
 import GeocodingService from '../../services/GeocodingService';
 import { isPhone } from '../../common/helpers/validationHelpers';
@@ -19,6 +20,7 @@ import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, HOME_VISIT_PHOTO_KINDS, isAudioRequiredFor,
   buildCompleteVisitFormData, validateCollectionStatus, validateVisitType,
+  validateCustomerPhone,
 } from '../../utils/collectionVisitRules';
 
 // ── Reason is now a 3-way bucket. "Collection" and "Visit" are dedicated,
@@ -61,6 +63,7 @@ const COLLECTION_STATUS_VALUES = ['PENDING', 'COLLECTED', 'PARTIALLY_COLLECTED',
 const CollectionVisitScreen = ({ navigation, route }) => {
   const { collectionId, loanId, customerName, customerAddress, amountDue, initialStatus } = route.params || {};
   const { registerExternalPunchIn } = usePunch();
+  const { user } = useAuth();
 
   const [record, setRecord] = useState(null);
   const [loadingRecord, setLoadingRecord] = useState(true);
@@ -93,6 +96,8 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     collected_amount: '',
     remarks: '',
     promise_date: null,
+    phone_correct: null,
+    corrected_customer_phone: '',
     visit_reason: '',
     visit_dpd_bucket: '',
     // Home Visit rich fields
@@ -126,7 +131,14 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     (async () => {
       try {
         const res = await api.getCollectionRecord(collectionId);
-        if (!cancelled) setRecord(res.data);
+        if (!cancelled) {
+          setRecord(res.data);
+          // No phone on file at all — nothing to "confirm," go straight to
+          // asking for one (same corrected_customer_phone validation path).
+          if (!res.data.customer_phone) {
+            setForm((prev) => ({ ...prev, phone_correct: false }));
+          }
+        }
       } catch (e) {
         if (!cancelled) Alert.alert('Error', 'Could not load customer details.');
       } finally {
@@ -294,6 +306,17 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   };
 
   const validate = () => {
+    const phoneErr = validateCustomerPhone(form);
+    if (phoneErr) {
+      Alert.alert('Customer Phone', phoneErr);
+      return false;
+    }
+    if (form.phone_correct === false && user?.phone
+        && form.corrected_customer_phone.replace(/\D/g, '') === String(user.phone).replace(/\D/g, '')) {
+      Alert.alert('Invalid Number', "You can't enter your own phone number as the customer's number.");
+      return false;
+    }
+
     if (!form.reasonBucket) {
       Alert.alert('Reason Required', 'Please select a reason.');
       return false;
@@ -652,6 +675,48 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           </View>
         )}
 
+        {/* Customer phone confirmation — must be answered before submit
+            (see validateCustomerPhone). A corrected number can never be the
+            employee's own or another TAS user's (enforced server-side too,
+            in CompleteVisitSerializer.validate). */}
+        {!loadingRecord && (
+          <>
+            <Text style={styles.label}>Customer Phone</Text>
+            {record?.customer_phone ? (
+              <>
+                <View style={styles.phoneRecordedRow}>
+                  <Icon name="phone" size={14} color={colors.textMuted} />
+                  <Text style={styles.phoneRecordedText}>{record.customer_phone}</Text>
+                </View>
+                <View style={styles.chips}>
+                  {YES_NO_OPTIONS.map((o) => (
+                    <TouchableOpacity
+                      key={String(o.value)}
+                      style={[styles.chip, form.phone_correct === o.value && styles.chipActive]}
+                      onPress={() => updateForm('phone_correct', o.value)}
+                    >
+                      <Text style={[styles.chipText, form.phone_correct === o.value && styles.chipTextActive]}>{o.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            ) : (
+              <Text style={styles.phoneRecordedText}>No phone number on file for this customer.</Text>
+            )}
+            {form.phone_correct === false && (
+              <TextInput
+                style={styles.input}
+                value={form.corrected_customer_phone}
+                onChangeText={(t) => updateForm('corrected_customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                placeholder="Customer's correct 10-digit number"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="number-pad"
+                maxLength={10}
+              />
+            )}
+          </>
+        )}
+
         {/* Reason — Collection / Visit / Other */}
         <Text style={styles.label}>Reason</Text>
         <View style={styles.chips}>
@@ -964,6 +1029,8 @@ const styles = StyleSheet.create({
   gpsRefresh: { marginLeft: spacing.sm },
   addressCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, backgroundColor: colors.surface, borderRadius: 10, padding: spacing.sm, marginBottom: spacing.sm },
   addressText: { flex: 1, fontSize: typography.sizes.xs, color: colors.textMuted },
+  phoneRecordedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
+  phoneRecordedText: { fontSize: typography.sizes.sm, color: colors.textDark, fontWeight: '600' },
   label: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.text, marginBottom: spacing.sm, marginTop: spacing.md },
   reasonWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
   reasonInput: { flex: 1, padding: spacing.md, fontSize: typography.sizes.md, color: colors.text },
