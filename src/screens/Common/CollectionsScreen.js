@@ -649,6 +649,7 @@ const CollectionsScreen = ({ route }) => {
             return (
                 (r.customer_name || '').toLowerCase().includes(q) ||
                 (r.loan_id || '').toLowerCase().includes(q) ||
+                (r.center_id || '').toLowerCase().includes(q) ||
                 (r.address || '').toLowerCase().includes(q) ||
                 (r.area || '').toLowerCase().includes(q) ||
                 (r.pincode || '').toLowerCase().includes(q) ||
@@ -1120,7 +1121,7 @@ const CollectionsScreen = ({ route }) => {
                                     <Icon name="search" size={15} color={colors.textMuted} />
                                     <TextInput
                                         style={styles.mapSearchInput}
-                                        placeholder="Search name, loan ID, address, area, date…"
+                                        placeholder="Search name, loan ID, center ID, address, area, date…"
                                         placeholderTextColor={colors.textMuted}
                                         value={mapSearch}
                                         onChangeText={setMapSearch}
@@ -1174,7 +1175,7 @@ const CollectionsScreen = ({ route }) => {
                         <Icon name="search" size={18} color={colors.textMuted} />
                         <TextInput
                             style={styles.searchInput}
-                            placeholder="Search name, loan id, phone, address, pincode…"
+                            placeholder="Search name, loan id, center id, phone, address, pincode…"
                             placeholderTextColor={colors.textMuted}
                             value={search}
                             onChangeText={setSearch}
