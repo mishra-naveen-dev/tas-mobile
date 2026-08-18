@@ -820,6 +820,18 @@ const CollectionsScreen = ({ route }) => {
                                         <Text style={styles.productTagText} numberOfLines={1}>{item.product_type}</Text>
                                     </View>
                                 )}
+                                {!!item.account_status && (() => {
+                                    const isWriteOff = /write.?off/i.test(item.account_status);
+                                    const isActive = /active/i.test(item.account_status);
+                                    const c = isWriteOff ? colors.error : isActive ? colors.success : colors.textMuted;
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: c + '22' }]}>
+                                            <Text style={[styles.typeTagText, { color: c }]} numberOfLines={1}>
+                                                {item.account_status}
+                                            </Text>
+                                        </View>
+                                    );
+                                })()}
                             </View>
                         </View>
                         <View style={{ alignItems: 'flex-end', gap: 4 }}>
@@ -1460,9 +1472,23 @@ const CollectionsScreen = ({ route }) => {
                             </TouchableOpacity>
                         </View>
                         {modal.record && (
-                            <Text style={styles.modalSub}>
-                                {modal.record.customer_name} · Loan {modal.record.loan_id}
-                            </Text>
+                            <>
+                                <Text style={styles.modalSub}>
+                                    {modal.record.customer_name} · Loan {modal.record.loan_id}
+                                </Text>
+                                {!!modal.record.account_status && (() => {
+                                    const isWriteOff = /write.?off/i.test(modal.record.account_status);
+                                    const isActive = /active/i.test(modal.record.account_status);
+                                    const c = isWriteOff ? colors.error : isActive ? colors.success : colors.textMuted;
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: c + '22', alignSelf: 'flex-start', marginTop: 4 }]}>
+                                            <Text style={[styles.typeTagText, { color: c }]}>
+                                                Account Status: {modal.record.account_status}
+                                            </Text>
+                                        </View>
+                                    );
+                                })()}
+                            </>
                         )}
 
                         <Text style={styles.fieldLabel}>Status</Text>
