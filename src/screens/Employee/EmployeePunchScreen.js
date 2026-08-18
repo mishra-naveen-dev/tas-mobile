@@ -13,7 +13,7 @@ import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
-import { enqueue, isNetworkError } from '../../services/OfflineQueue';
+import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
@@ -607,6 +607,10 @@ const EmployeePunchScreen = ({ navigation }) => {
 
   const submitCompleteVisit = async (extra = {}) => {
     setVisitSaving(true);
+    // Generated once per real submission, reused unchanged for both the
+    // live attempt and the offline-queued retry (if it falls through to
+    // that) — see CollectionUpdate.client_transaction_id server-side.
+    const clientTransactionId = generateTransactionId();
     try {
       const fd = buildCompleteVisitFormData({
         form,
@@ -619,6 +623,7 @@ const EmployeePunchScreen = ({ navigation }) => {
         audioNote,
         visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current : null,
         extra,
+        clientTransactionId,
       });
       const res = await api.completeVisit(collectionId, fd);
       await registerExternalPunchIn(res.data, localLocation);
@@ -639,6 +644,7 @@ const EmployeePunchScreen = ({ navigation }) => {
           audioNote,
           visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
           extra,
+          clientTransactionId,
         });
         resetPunchForm();
         resetForm();

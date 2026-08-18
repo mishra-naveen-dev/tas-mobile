@@ -6,7 +6,7 @@ import { captureFieldActivityLocation } from '../hooks/useFieldActivityLocation'
 import GeocodingService from '../services/GeocodingService';
 import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
-import { enqueue, isNetworkError, registerReplayer } from '../services/OfflineQueue';
+import { enqueue, isNetworkError, registerReplayer, generateTransactionId } from '../services/OfflineQueue';
 
 const IS_DEV = __DEV__;
 const GEOCODE_TIMEOUT_MS = 6000;
@@ -214,6 +214,10 @@ export const PunchProvider = ({ children }) => {
     let payload;
     try {
       payload = {
+        // Generated once per real submission, reused unchanged for both the
+        // live attempt and the offline-queued retry (if it falls through to
+        // that) — see AttendancePunch.client_transaction_id server-side.
+        client_transaction_id: generateTransactionId(),
         punch_type: 'PUNCH_IN',  // Always PUNCH_IN for initial punch
         latitude: locationData.latitude,
         longitude: locationData.longitude,

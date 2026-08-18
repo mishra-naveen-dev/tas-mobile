@@ -14,7 +14,7 @@ import { usePunch } from '../../context/PunchContext';
 import { useAuth } from '../../context/AuthContext';
 import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
 import GeocodingService from '../../services/GeocodingService';
-import { enqueue, isNetworkError } from '../../services/OfflineQueue';
+import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import { colors, typography, spacing } from '../../theme/tokens';
 import {
@@ -376,7 +376,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     return true;
   };
 
-  const buildFormData = (extra = {}) => buildCompleteVisitFormData({
+  const buildFormData = (extra = {}, clientTransactionId) => buildCompleteVisitFormData({
     form,
     localLocation,
     customerName: record?.customer_name || customerName,
@@ -387,6 +387,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     audioNote,
     visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current : null,
     extra,
+    clientTransactionId,
   });
 
   const submitVisit = async (extra = {}) => {
@@ -396,8 +397,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSaving(true);
+    // Generated once per real submission and reused unchanged for both the
+    // live attempt below and the offline-queued retry, if it falls through
+    // to that — see CollectionUpdate.client_transaction_id server-side.
+    const clientTransactionId = generateTransactionId();
     try {
-      const fd = buildFormData(extra);
+      const fd = buildFormData(extra, clientTransactionId);
       const res = await api.completeVisit(collectionId, fd);
       await registerExternalPunchIn(res.data, localLocation);
       Alert.alert('Success', 'Visit recorded successfully.', [
@@ -417,6 +422,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           audioNote,
           visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
           extra,
+          clientTransactionId,
         });
         Alert.alert(
           'Saved — will sync automatically',

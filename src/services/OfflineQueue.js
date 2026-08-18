@@ -51,6 +51,19 @@ async function persist() {
   }
 }
 
+/** A stable id for one real-world submission, generated once at the moment
+ * the user taps Save and reused unchanged for every attempt of that same
+ * submission — the live first try AND every offline-queued retry. Sent to
+ * the backend as client_transaction_id so it can tell "this exact visit,
+ * resubmitted because the response was lost" apart from "a new visit",
+ * even under concurrent retries from hundreds of devices syncing at once
+ * (see CollectionUpdate.client_transaction_id server-side). Not a
+ * cryptographic UUID — device+timestamp+random is unique enough for this
+ * purpose and needs no extra dependency. */
+export function generateTransactionId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 /** Register how to replay one `kind` of queued item. Call once per kind,
  * typically at module load of the screen/service that owns that flow. */
 export function registerReplayer(kind, fn) {
