@@ -693,9 +693,15 @@ jobs:
       # right after S3 upload is verified, keeps "latest release" always
       # in sync with what's actually in the bucket.
       #
-      # Skipped (not failed) when the secret isn't configured, so this
-      # stays optional per-environment rather than breaking every build
-      # for repos/forks that haven't set it up yet.
+      # Skipped (not failed) only when the secret/variable genuinely aren't
+      # configured, so this stays optional per-environment rather than
+      # breaking every build for repos/forks that haven't set it up yet.
+      # Once both ARE configured, a failed call fails this step for real
+      # (see below) — a silent ::warning:: here is exactly what let the
+      # registry drift stale for several releases in a row without anyone
+      # noticing: the build+upload steps kept going green while the app's
+      # update-check and the public first-install link quietly kept
+      # serving an old version.
       # --------------------------------------------------------
 
       - name: Register release with backend
@@ -713,8 +719,16 @@ jobs:
             exit 0
           fi
 
+          # Trim a trailing slash so a variable set as
+          # "https://api.tas.namracred.co.in/api/v1/" doesn't produce a
+          # double slash before "/organization/...".
+          BACKEND_API_BASE_URL="${BACKEND_API_BASE_URL%/}"
+          REGISTER_URL="${BACKEND_API_BASE_URL}/organization/mobile-release/register/"
+
+          echo "Registering release at: $REGISTER_URL"
+
           HTTP_STATUS=$(curl -s -o /tmp/register_response.json -w "%{http_code}" \
-            -X POST "${BACKEND_API_BASE_URL}/organization/mobile-release/register/" \
+            -X POST "$REGISTER_URL" \
             -H "Content-Type: application/json" \
             -H "X-Release-Token: ${MOBILE_RELEASE_REGISTER_TOKEN}" \
             -d "{\"platform\": \"android\", \"version_name\": \"${{ steps.version.outputs.name }}\", \"version_code\": ${{ steps.version.outputs.code }}, \"s3_bucket\": \"${S3_BUCKET}\", \"s3_key\": \"${{ steps.version.outputs.s3_key }}\"}")
@@ -724,10 +738,11 @@ jobs:
           echo ""
 
           if [ "$HTTP_STATUS" -ge 300 ]; then
-            echo "::warning::Failed to register release with backend (HTTP $HTTP_STATUS). The build and S3 upload still succeeded — only the app's update-check and the public first-install link won't reflect this version until it's registered another way."
-          else
-            echo "Release registered successfully."
+            echo "::error::Failed to register release with backend (HTTP $HTTP_STATUS) at $REGISTER_URL. The build and S3 upload succeeded, but the app's update-check and the public first-install link will keep serving the previous version until this is fixed. Check BACKEND_API_BASE_URL / MOBILE_RELEASE_REGISTER_TOKEN and the response body above."
+            exit 1
           fi
+
+          echo "Release registered successfully."
 
 
       # --------------------------------------------------------
