@@ -1,0 +1,858 @@
+name: Android Release Build & Upload
+
+# ============================================================
+# NAMRACRED TAS MOBILE
+# ============================================================
+#
+# Builds a signed production Android APK and uploads it to the
+# private S3 release bucket using GitHub Actions OIDC.
+#
+# No long-lived AWS access keys are stored in GitHub.
+#
+# Release filename:
+#
+#   namracred-tas-mobile-{versionName}-{versionCode}.apk
+#
+# Example:
+#
+#   namracred-tas-mobile-1.30-31.apk
+#
+# Version is read dynamically from:
+#
+#   android/app/build.gradle
+#
+# Before every production release, bump:
+#
+#   versionName
+#   versionCode
+#
+# ============================================================
+
+on:
+  push:
+    branches: [main]
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  AWS_REGION: eu-north-1
+  S3_BUCKET: tas-mobile-apk-releases-namra
+
+  # GitHub OIDC IAM role
+  AWS_ROLE_ARN: arn:aws:iam::065094258042:role/GitHubActions-TAS-Mobile-Release
+
+  # Production APK filename prefix
+  APK_NAME_PREFIX: namracred-tas-mobile
+
+jobs:
+
+  # ==========================================================
+  # BUILD + VERIFY + UPLOAD
+  # ==========================================================
+
+  build-and-release:
+
+    name: Build, Verify and Upload NamraCred TAS Mobile APK
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------------
+      # 1. Checkout source code
+      # --------------------------------------------------------
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # 2. Node.js
+      # --------------------------------------------------------
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+
+      # --------------------------------------------------------
+      # 3. Java 17
+      # --------------------------------------------------------
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+
+      # --------------------------------------------------------
+      # 4. Android SDK
+      # --------------------------------------------------------
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+
+      # --------------------------------------------------------
+      # 5. Verify build environment
+      # --------------------------------------------------------
+
+      - name: Verify build environment
+        run: |
+          echo "=========================================="
+          echo "Build Environment"
+          echo "=========================================="
+
+          echo "Node:"
+          node --version
+
+          echo ""
+          echo "NPM:"
+          npm --version
+
+          echo ""
+          echo "Java:"
+          java -version
+
+          echo ""
+          echo "Android SDK:"
+          echo "$ANDROID_SDK_ROOT"
+
+          echo ""
+          echo "=========================================="
+
+
+      # --------------------------------------------------------
+      # 6. Install Node dependencies
+      # --------------------------------------------------------
+      #
+      # setup-node's cache: npm (above) only caches npm's own download
+      # cache — `npm ci` still reinstalls and re-extracts every package
+      # into node_modules on every run. Caching node_modules itself,
+      # keyed on package-lock.json, skips that entirely on a hit — the
+      # single biggest fixed cost in this workflow after the actual
+      # Gradle compile. --prefer-offline/--no-audit/--no-fund trim the
+      # registry round-trips `npm ci` makes even on a cache miss.
+      # --------------------------------------------------------
+
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+
+      # --------------------------------------------------------
+      # 6b. Cache Gradle + native build outputs
+      # --------------------------------------------------------
+
+      - name: Cache Gradle & native build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+
+          key: gradle-${{ runner.os }}-${{ hashFiles('package-lock.json', 'android/**/build.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+
+      # --------------------------------------------------------
+      # 7. Restore production release keystore
+      # --------------------------------------------------------
+      #
+      # The keystore exists ONLY on this temporary GitHub runner.
+      #
+      # It is reconstructed from GitHub encrypted secrets.
+      #
+      # Never commit:
+      #
+      #   tas-release-key.keystore
+      #   android/keystore.properties
+      #
+      # --------------------------------------------------------
+
+      - name: Restore release signing credentials
+
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+        run: |
+
+          echo "::add-mask::$KEYSTORE_PASSWORD"
+          echo "::add-mask::$KEY_PASSWORD"
+
+          mkdir -p android/app
+
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/tas-release-key.keystore
+
+          test -s android/app/tas-release-key.keystore
+
+          cat > android/keystore.properties <<EOF
+          storeFile=tas-release-key.keystore
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+          echo "Release signing credentials restored successfully."
+
+
+      # --------------------------------------------------------
+      # 7b. Restore build-time API keys (.env)
+      # --------------------------------------------------------
+      #
+      # android/app/build.gradle reads GOOGLE_MAPS_API_KEY from a repo-root
+      # .env file (gitignored) to populate the Maps SDK key in
+      # AndroidManifest.xml, and the JS bundle reads GOOGLE_MAPS_API_KEY /
+      # GOOGLE_GEOCODING_API_KEY from the same file via @env
+      # (react-native-dotenv). .env never exists on this fresh checkout, so
+      # without this step both fall back to "" — the build still succeeds,
+      # but the Maps SDK key is blank and the map renders empty (this was
+      # silently broken on every CI-built release; local builds worked only
+      # because the developer's own machine has a real .env).
+      #
+      # --------------------------------------------------------
+
+      - name: Restore build-time API keys
+
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          GOOGLE_GEOCODING_API_KEY: ${{ secrets.GOOGLE_GEOCODING_API_KEY }}
+
+        run: |
+
+          echo "::add-mask::$GOOGLE_MAPS_API_KEY"
+          echo "::add-mask::$GOOGLE_GEOCODING_API_KEY"
+
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+
+            echo "::error::GOOGLE_MAPS_API_KEY secret is not set. The release build would ship with a blank Maps SDK key and the map would render empty. Add it under Settings > Secrets and variables > Actions."
+
+            exit 1
+
+          fi
+
+          cat > .env <<EOF
+          GOOGLE_MAPS_API_KEY=$GOOGLE_MAPS_API_KEY
+          GOOGLE_GEOCODING_API_KEY=$GOOGLE_GEOCODING_API_KEY
+          EOF
+
+          echo "Build-time API keys restored successfully."
+
+
+      # --------------------------------------------------------
+      # 8. Build signed release APK
+      # --------------------------------------------------------
+
+      - name: Build signed release APK
+
+        working-directory: android
+
+        run: |
+
+          chmod +x gradlew
+
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --build-cache \
+            --parallel
+
+
+      # --------------------------------------------------------
+      # 9. Verify APK exists
+      # --------------------------------------------------------
+
+      - name: Verify APK exists
+
+        run: |
+
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+
+          if [ ! -f "$APK" ]; then
+
+            echo "::error::Release APK was not created."
+
+            exit 1
+
+          fi
+
+          echo "=========================================="
+          echo "APK successfully created"
+          echo "=========================================="
+
+          ls -lh "$APK"
+
+          echo "=========================================="
+
+
+      # --------------------------------------------------------
+      # 10. Verify release certificate
+      # --------------------------------------------------------
+      #
+      # The APK certificate is compared directly against the
+      # certificate inside the restored production keystore.
+      #
+      # This prevents accidentally publishing a debug-signed APK.
+      #
+      # --------------------------------------------------------
+
+      - name: Verify APK release certificate
+
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+
+        run: |
+
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+
+          KEYSTORE="android/app/tas-release-key.keystore"
+
+          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/$(ls "$ANDROID_SDK_ROOT/build-tools" | sort -V | tail -1)"
+
+          echo "=========================================="
+          echo "APK certificate"
+          echo "=========================================="
+
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
+
+
+          APK_FINGERPRINT=$(
+            "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" |
+            grep "SHA-256 digest" |
+            awk '{print $NF}' |
+            tr -d ':[:space:]' |
+            tr '[:lower:]' '[:upper:]'
+          )
+
+
+          KEYSTORE_FINGERPRINT=$(
+            keytool -list -v \
+              -keystore "$KEYSTORE" \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -alias "$KEY_ALIAS" |
+            grep "SHA256:" |
+            awk '{print $2}' |
+            tr -d ':[:space:]' |
+            tr '[:lower:]' '[:upper:]'
+          )
+
+
+          echo ""
+          echo "Comparing APK certificate with release keystore..."
+
+
+          if [ -z "$APK_FINGERPRINT" ]; then
+
+            echo "::error::Could not read APK certificate fingerprint."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$KEYSTORE_FINGERPRINT" ]; then
+
+            echo "::error::Could not read release keystore certificate fingerprint."
+
+            exit 1
+
+          fi
+
+
+          if [ "$APK_FINGERPRINT" != "$KEYSTORE_FINGERPRINT" ]; then
+
+            echo "::error::APK certificate does not match the production release keystore."
+
+            echo "::error::Release upload has been blocked."
+
+            exit 1
+
+          fi
+
+
+          echo ""
+          echo "Release certificate verified successfully."
+
+
+      # --------------------------------------------------------
+      # 11. Extract and verify APK package
+      # --------------------------------------------------------
+      #
+      # Package/application ID must remain:
+      #
+      #   com.tasmobile
+      #
+      # We DO NOT change this when changing the display name.
+      #
+      # Display name:
+      #
+      #   NamraCred TAS Mobile
+      #
+      # is configured separately inside the Android project.
+      #
+      # --------------------------------------------------------
+
+      - name: Verify APK package
+
+        run: |
+
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+
+          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/$(ls "$ANDROID_SDK_ROOT/build-tools" | sort -V | tail -1)"
+
+          APK_INFO=$("$BUILD_TOOLS/aapt" dump badging "$APK" | head -1)
+
+          echo "=========================================="
+          echo "APK information"
+          echo "=========================================="
+
+          echo "$APK_INFO"
+
+          echo "=========================================="
+
+
+          echo "$APK_INFO" | grep -q "package: name='com.tasmobile'" || {
+
+            echo "::error::APK package name is not com.tasmobile."
+
+            exit 1
+
+          }
+
+
+          echo "APK package verified successfully."
+
+
+      # --------------------------------------------------------
+      # 12. Extract version information
+      # --------------------------------------------------------
+      #
+      # Version is NOT hardcoded.
+      #
+      # Example:
+      #
+      #   versionName "1.30"
+      #   versionCode 31
+      #
+      # produces:
+      #
+      #   namracred-tas-mobile-1.30-31.apk
+      #
+      # --------------------------------------------------------
+
+      - name: Extract version information
+
+        id: version
+
+        run: |
+
+          VERSION_NAME=$(grep -oP 'versionName\s+"\K[^"]+' android/app/build.gradle | head -1)
+
+          VERSION_CODE=$(grep -oP 'versionCode\s+\K[0-9]+' android/app/build.gradle | head -1)
+
+
+          if [ -z "$VERSION_NAME" ]; then
+
+            echo "::error::Could not determine versionName from android/app/build.gradle."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$VERSION_CODE" ]; then
+
+            echo "::error::Could not determine versionCode from android/app/build.gradle."
+
+            exit 1
+
+          fi
+
+
+          APK_FILENAME="${APK_NAME_PREFIX}-${VERSION_NAME}-${VERSION_CODE}.apk"
+
+          S3_KEY="android/production/${VERSION_NAME}/${APK_FILENAME}"
+
+
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
+          echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+
+          echo "filename=$APK_FILENAME" >> "$GITHUB_OUTPUT"
+
+          echo "s3_key=$S3_KEY" >> "$GITHUB_OUTPUT"
+
+
+          echo "=========================================="
+          echo "Release information"
+          echo "=========================================="
+
+          echo "App: NamraCred TAS Mobile"
+          echo "Package: com.tasmobile"
+          echo "Version Name: $VERSION_NAME"
+          echo "Version Code: $VERSION_CODE"
+          echo "APK Filename: $APK_FILENAME"
+          echo "S3 Key: $S3_KEY"
+
+          echo "=========================================="
+
+
+      # --------------------------------------------------------
+      # 13. Verify APK version matches Gradle
+      # --------------------------------------------------------
+
+      - name: Verify APK version
+
+        run: |
+
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+
+          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/$(ls "$ANDROID_SDK_ROOT/build-tools" | sort -V | tail -1)"
+
+          APK_INFO=$("$BUILD_TOOLS/aapt" dump badging "$APK" | head -1)
+
+
+          APK_VERSION_CODE=$(echo "$APK_INFO" | grep -oP "versionCode='\K[0-9]+")
+
+          APK_VERSION_NAME=$(echo "$APK_INFO" | grep -oP "versionName='\K[^']+")
+
+
+          EXPECTED_VERSION_CODE="${{ steps.version.outputs.code }}"
+
+          EXPECTED_VERSION_NAME="${{ steps.version.outputs.name }}"
+
+
+          echo "APK versionCode: $APK_VERSION_CODE"
+
+          echo "Gradle versionCode: $EXPECTED_VERSION_CODE"
+
+          echo ""
+
+          echo "APK versionName: $APK_VERSION_NAME"
+
+          echo "Gradle versionName: $EXPECTED_VERSION_NAME"
+
+
+          if [ "$APK_VERSION_CODE" != "$EXPECTED_VERSION_CODE" ]; then
+
+            echo "::error::APK versionCode does not match Gradle versionCode."
+
+            exit 1
+
+          fi
+
+
+          if [ "$APK_VERSION_NAME" != "$EXPECTED_VERSION_NAME" ]; then
+
+            echo "::error::APK versionName does not match Gradle versionName."
+
+            exit 1
+
+          fi
+
+
+          echo ""
+
+          echo "APK package and version verified successfully."
+
+
+      # --------------------------------------------------------
+      # 14. Configure AWS using GitHub OIDC
+      # --------------------------------------------------------
+
+      - name: Configure AWS credentials using OIDC
+
+        uses: aws-actions/configure-aws-credentials@v4
+
+        with:
+
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # --------------------------------------------------------
+      # 15. Verify AWS identity
+      # --------------------------------------------------------
+
+      - name: Verify AWS identity
+
+        run: |
+
+          echo "=========================================="
+          echo "AWS Identity"
+          echo "=========================================="
+
+          aws sts get-caller-identity
+
+          echo "=========================================="
+
+
+      # --------------------------------------------------------
+      # 16. Upload APK to private S3
+      # --------------------------------------------------------
+      #
+      # Local Gradle file:
+      #
+      #   app-release.apk
+      #
+      # S3 filename:
+      #
+      #   namracred-tas-mobile-1.30-31.apk
+      #
+      # --------------------------------------------------------
+
+      - name: Upload APK to private S3
+
+        run: |
+
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+
+          S3_KEY="${{ steps.version.outputs.s3_key }}"
+
+
+          echo "=========================================="
+          echo "Uploading production APK"
+          echo "=========================================="
+
+          echo "Local APK:"
+          echo "$APK"
+
+          echo ""
+
+          echo "S3 destination:"
+          echo "s3://${S3_BUCKET}/${S3_KEY}"
+
+
+          aws s3 cp \
+            "$APK" \
+            "s3://${S3_BUCKET}/${S3_KEY}" \
+            --region "$AWS_REGION" \
+            --content-type "application/vnd.android.package-archive"
+
+
+          echo ""
+
+          echo "APK upload completed."
+
+
+      # --------------------------------------------------------
+      # 17. Verify uploaded S3 object
+      # --------------------------------------------------------
+
+      - name: Verify S3 upload
+
+        run: |
+
+          S3_KEY="${{ steps.version.outputs.s3_key }}"
+
+
+          echo "=========================================="
+          echo "Verifying S3 object"
+          echo "=========================================="
+
+
+          aws s3api head-object \
+            --bucket "$S3_BUCKET" \
+            --key "$S3_KEY" \
+            --region "$AWS_REGION"
+
+
+          echo ""
+
+          echo "S3 upload verified successfully."
+
+
+      # --------------------------------------------------------
+      # 17a. Register this release with the backend
+      # --------------------------------------------------------
+      #
+      # The backend's MobileRelease registry (which drives both the app's
+      # own in-app update check and the public "first install" download
+      # link below) previously had no writer at all — nothing ever created
+      # a row for a build this workflow produced. Registering it here,
+      # right after S3 upload is verified, keeps "latest release" always
+      # in sync with what's actually in the bucket.
+      #
+      # Skipped (not failed) when the secret isn't configured, so this
+      # stays optional per-environment rather than breaking every build
+      # for repos/forks that haven't set it up yet.
+      # --------------------------------------------------------
+
+      - name: Register release with backend
+
+        env:
+          MOBILE_RELEASE_REGISTER_TOKEN: ${{ secrets.MOBILE_RELEASE_REGISTER_TOKEN }}
+          BACKEND_API_BASE_URL: ${{ vars.BACKEND_API_BASE_URL }}
+
+        run: |
+
+          echo "::add-mask::$MOBILE_RELEASE_REGISTER_TOKEN"
+
+          if [ -z "$MOBILE_RELEASE_REGISTER_TOKEN" ] || [ -z "$BACKEND_API_BASE_URL" ]; then
+            echo "MOBILE_RELEASE_REGISTER_TOKEN and/or BACKEND_API_BASE_URL are not configured — skipping release registration."
+            exit 0
+          fi
+
+          HTTP_STATUS=$(curl -s -o /tmp/register_response.json -w "%{http_code}" \
+            -X POST "${BACKEND_API_BASE_URL}/organization/mobile-release/register/" \
+            -H "Content-Type: application/json" \
+            -H "X-Release-Token: ${MOBILE_RELEASE_REGISTER_TOKEN}" \
+            -d "{\"platform\": \"android\", \"version_name\": \"${{ steps.version.outputs.name }}\", \"version_code\": ${{ steps.version.outputs.code }}, \"s3_bucket\": \"${S3_BUCKET}\", \"s3_key\": \"${{ steps.version.outputs.s3_key }}\"}")
+
+          echo "Backend response ($HTTP_STATUS):"
+          cat /tmp/register_response.json
+          echo ""
+
+          if [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "::warning::Failed to register release with backend (HTTP $HTTP_STATUS). The build and S3 upload still succeeded — only the app's update-check and the public first-install link won't reflect this version until it's registered another way."
+          else
+            echo "Release registered successfully."
+          fi
+
+
+      # --------------------------------------------------------
+      # 17b. Create a GitHub Release with the APK attached
+      # --------------------------------------------------------
+      #
+      # S3 (above) stays the source of truth for the app's own in-app
+      # update-check/download flow (private, short-lived presigned URLs,
+      # requires a logged-in TAS Mobile user). This is a second, much
+      # simpler distribution path for anyone with repo access — testers,
+      # admins — who just want the latest APK without going through AWS:
+      #
+      #   github.com/<org>/tas-mobile/releases/latest
+      #
+      # Re-running the workflow for a version that already has a release
+      # (e.g. a re-run with no version bump) updates that same release's
+      # asset in place rather than failing on a duplicate tag.
+      # --------------------------------------------------------
+
+      - name: Rename APK for the release asset
+
+        run: |
+
+          cp "android/app/build/outputs/apk/release/app-release.apk" \
+             "android/app/build/outputs/apk/release/${{ steps.version.outputs.filename }}"
+
+
+      - name: Create GitHub Release
+
+        uses: softprops/action-gh-release@v2
+
+        with:
+
+          tag_name: v${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}
+
+          name: NamraCred TAS Mobile v${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})
+
+          body: |
+            Automated production release, built and signed by this workflow.
+
+            - Version: ${{ steps.version.outputs.name }}
+            - Version code: ${{ steps.version.outputs.code }}
+            - Commit: ${{ github.sha }}
+
+          files: android/app/build/outputs/apk/release/${{ steps.version.outputs.filename }}
+
+          fail_on_unmatched_files: true
+
+
+      # --------------------------------------------------------
+      # 18. Final release summary
+      # --------------------------------------------------------
+
+      - name: Release summary
+
+        run: |
+
+          echo ""
+          echo "=================================================="
+          echo "       NAMRACRED TAS MOBILE RELEASE"
+          echo "=================================================="
+
+          echo ""
+
+          echo "Application:"
+          echo "NamraCred TAS Mobile"
+
+          echo ""
+
+          echo "Package:"
+          echo "com.tasmobile"
+
+          echo ""
+
+          echo "Version:"
+          echo "${{ steps.version.outputs.name }}"
+
+          echo ""
+
+          echo "Version Code:"
+          echo "${{ steps.version.outputs.code }}"
+
+          echo ""
+
+          echo "APK:"
+          echo "${{ steps.version.outputs.filename }}"
+
+          echo ""
+
+          echo "S3:"
+          echo "s3://${S3_BUCKET}/${{ steps.version.outputs.s3_key }}"
+
+          echo ""
+
+          echo "GitHub Release (repo access needed):"
+          echo "${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}"
+
+          echo ""
+
+          echo "Public first-install link (no login, no repo access needed):"
+          echo "https://api.tas.namracred.co.in/api/v1/organization/mobile-release/download-latest/?platform=android"
+
+          echo ""
+
+          echo "Status:"
+          echo "PRODUCTION RELEASE UPLOADED"
+
+          echo ""
+          echo "=================================================="
+
+
+      # --------------------------------------------------------
+      # 19. Always clean signing credentials
+      # --------------------------------------------------------
+
+      - name: Clean up signing credentials
+
+        if: always()
+
+        run: |
+
+          rm -f android/app/tas-release-key.keystore
+
+          rm -f android/keystore.properties
+
+          rm -f .env
+
+          echo "Signing credentials removed from GitHub runner."

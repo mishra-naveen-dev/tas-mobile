@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, NativeModules, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import api, { getBaseURL } from '../api/api';
+import { secureGetItem } from '../utils/secureStorage';
 
 const IS_DEV = __DEV__;
 
@@ -159,7 +160,7 @@ class LiveTrackingService {
       // off, or the app has been closed — none of which a JS timer survives.
       // JS does NOT capture on Android (would double-count).
       try {
-        const token = await AsyncStorage.getItem('access');
+        const token = await secureGetItem('access');
         NativeModules.TrackingBridge?.startLiveTracking?.(
           getBaseURL(),
           token || '',

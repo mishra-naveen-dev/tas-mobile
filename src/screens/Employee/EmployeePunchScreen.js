@@ -1,27 +1,45 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, Alert, TextInput, Modal, ActivityIndicator, Dimensions,
+  Animated, Alert, TextInput, Modal, ActivityIndicator, Dimensions, Platform, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { usePunch, STATES } from '../../context/PunchContext';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
+import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
+import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
+import {
+  STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
+  PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
+  validateCollectionStatus, validateVisitType, validateCustomerPhone,
+} from '../../utils/collectionVisitRules';
 
 const { width } = Dimensions.get('window');
 
+// "Visit Type" here is a DIFFERENT, older axis from Collection Status below —
+// only Disbursement still uses it (Loan ID + Amount, no collection-outcome
+// concept). Collection/Visit reasons (below) drive their own flow directly
+// off `reason` and hide this row entirely — see isLoanLinkedReason.
 const VISIT_TYPES = [
   { value: 'COLLECTION', label: 'Collection' },
   { value: 'DISBURSEMENT', label: 'Disbursement' },
   { value: 'OTHER', label: 'Other' },
 ];
 
+// "Visit" replaces the old flat "Home Visit" preset — picking it now reveals
+// the same Home Visit / OD Visit / Other sub-type chips CollectionVisitScreen
+// uses (VISIT_TYPE_OPTIONS), instead of jumping straight into a Home-Visit-only
+// form. Every other preset here is unaffected by this change — still a plain
+// punch, no loan linkage, exactly as before.
 const REASON_PRESETS = [
   { value: 'Collection',    label: 'Collection' },
-  { value: 'Home Visit',    label: 'Home Visit' },
+  { value: 'Visit',         label: 'Visit' },
   { value: 'eKYC',          label: 'eKYC' },
   { value: 'Disbursement',  label: 'Disbursement' },
   { value: 'Audit',         label: 'Audit' },
@@ -32,16 +50,13 @@ const REASON_PRESETS = [
   { value: 'Branch_Visit',  label: 'Branch Visit' },
 ];
 
-const PAYMENT_MODES = [
-  { value: 'CASH', label: 'Cash' },
-  { value: 'UPI', label: 'UPI' },
-  { value: 'CHEQUE', label: 'Cheque' },
-];
-
 const TRAVEL_WITH = [
   { value: 'ALONE', label: 'Alone' },
   { value: 'WITH_EMPLOYEE', label: 'With Employee' },
 ];
+
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
 const Banner = ({ message, type, onDismiss }) => {
   const y = useRef(new Animated.Value(-100)).current;
@@ -141,7 +156,7 @@ const EmployeePunchScreen = ({ navigation }) => {
     error, errorMessage, success,
     punchIn, punchOut, fetchLocation, resetForm, dismissError,
     getTotalDistance, getTrackingDuration, LocationService,
-    pendingAutoClosure, submitForgotPunchRequest,
+    pendingAutoClosure, submitForgotPunchRequest, registerExternalPunchIn,
   } = usePunch();
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -156,12 +171,45 @@ const EmployeePunchScreen = ({ navigation }) => {
     upi_ref: '',
     cheque_no: '',
     customer_name: '',
+    customer_phone: '',
+    phone_correct: null,
+    corrected_customer_phone: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
     co_employee_phone: '',
     vehicle_number: '',
+    // Collection Status (reason === 'Collection', a real record resolved)
+    status: '',
+    collected_amount: '',
+    remarks: '',
+    promise_date: null,
+    // Visit (reason === 'Visit': Home Visit / OD Visit / Other)
+    visit_reason: '',
+    visit_dpd_bucket: '',
+    visit_purpose: '',
+    visit_outcome: '',
+    customer_available: null,
+    customer_met: null,
+    family_member_met: null,
+    follow_up_required: null,
   });
+  const [audioNote, setAudioNote] = useState(null); // { uri, fileName, mimeType, durationSeconds }
+  const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
+  const [visitSaving, setVisitSaving] = useState(false);
+  const visitStartTimeRef = useRef(new Date());
+
+  // Synchronous double-tap guard — `visitSaving`/PunchContext's submitting
+  // state can lag a fast second tap by a frame or two; this ref can't.
+  const submittingRef = useRef(false);
+
+  // Collection-status evidence (Cash photo(s) / UPI screenshot / cheque
+  // photo) — required by the same shared validateCollectionStatus rule
+  // CollectionVisitScreen enforces, so this screen needs the same capture
+  // UI, not just the same validation.
+  const [photos, setPhotos] = useState([]); // [{ uri, fileName, type, kind, capturedAt }]
+  const [upiScreenshot, setUpiScreenshot] = useState(null); // { uri, fileName, type }
+  const [chequePhoto, setChequePhoto] = useState(null); // { uri, fileName, type }
 
   // Out-of-range geofence confirmation (shown when the backend reports the
   // punch is more than 200m from the customer's stored geo-tag).
@@ -179,6 +227,18 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [loanSuggestions, setLoanSuggestions] = useState([]);
   const [showLoanSuggestions, setShowLoanSuggestions] = useState(false);
   const loanDebounceRef = useRef(null);
+
+  // Collection/Visit reasons resolve the typed/picked Loan ID to a real
+  // CollectionRecord before anything else can be filled in — there's no
+  // record to update otherwise. `resolvedRecord` backs the amount-due
+  // auto-fill and the promise-date bounds, exactly like CollectionVisitScreen's
+  // own `record`.
+  const [collectionId, setCollectionId] = useState(null);
+  const [resolvedRecord, setResolvedRecord] = useState(null);
+  const [loanLookupError, setLoanLookupError] = useState('');
+  const [loanResolving, setLoanResolving] = useState(false);
+
+  const isLoanLinkedReason = form.reason === 'Collection' || form.reason === 'Visit';
 
   const fetchLoanSuggestions = useCallback((query) => {
     if (loanDebounceRef.current) clearTimeout(loanDebounceRef.current);
@@ -205,9 +265,86 @@ const EmployeePunchScreen = ({ navigation }) => {
       loan_id: rec.loan_id,
       customer_name: rec.customer_name && rec.customer_name !== 'Unknown' ? rec.customer_name : prev.customer_name,
       amount: rec.amount_due ? String(rec.amount_due) : prev.amount,
+      // No phone on file at all — nothing to "confirm," go straight to
+      // asking for one (same corrected_customer_phone validation path as
+      // CollectionVisitScreen). Otherwise reset to unanswered so a
+      // previously-resolved record's answer never carries over to this one.
+      phone_correct: rec.customer_phone ? null : false,
+      corrected_customer_phone: '',
     }));
+    setCollectionId(rec.id);
+    setResolvedRecord(rec);
+    setLoanLookupError('');
     setShowLoanSuggestions(false);
     setLoanSuggestions([]);
+  };
+
+  // Officer typed a Loan ID and moved on without tapping a suggestion —
+  // resolve it via the exact (case-insensitive) lookup before allowing the
+  // Collection Status / Visit Type fields to appear. A no-match blocks
+  // progress with a clear error instead of silently letting the officer
+  // fill in fields for a record that doesn't exist.
+  const resolveLoanIdOnBlur = async () => {
+    if (!isLoanLinkedReason || collectionId || !form.loan_id.trim()) return;
+    setLoanResolving(true);
+    setLoanLookupError('');
+    try {
+      const res = await api.getCollectionByLoanId(form.loan_id.trim());
+      const list = res.data.results || res.data || [];
+      if (list.length >= 1) {
+        applyLoanSuggestion(list[0]);
+      } else {
+        setLoanLookupError('Loan ID not found. Please check and try again, or pick from suggestions.');
+      }
+    } catch {
+      setLoanLookupError('Could not verify this Loan ID. Please try again.');
+    } finally {
+      setLoanResolving(false);
+    }
+  };
+
+  const addPhoto = (kind) => {
+    Alert.alert('Add Photo', 'Choose a source', [
+      { text: 'Camera', onPress: () => pickPhoto(kind, true) },
+      { text: 'Gallery', onPress: () => pickPhoto(kind, false) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const pickPhoto = async (kind, fromCamera) => {
+    const options = { mediaType: 'photo', quality: 0.7, maxWidth: 1600, maxHeight: 1600, saveToPhotos: false };
+    const result = fromCamera ? await launchCamera(options) : await launchImageLibrary(options);
+    if (result.didCancel || result.errorCode) return;
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    setPhotos((prev) => [...prev, {
+      uri: asset.uri,
+      fileName: asset.fileName || `photo_${Date.now()}.jpg`,
+      type: asset.type || 'image/jpeg',
+      kind,
+      capturedAt: new Date().toISOString(),
+    }]);
+  };
+
+  const removePhoto = (index) => {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const addSingleImage = (label, setter) => {
+    Alert.alert(label, 'Choose a source', [
+      { text: 'Camera', onPress: () => pickSingleImage(setter, true) },
+      { text: 'Gallery', onPress: () => pickSingleImage(setter, false) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const pickSingleImage = async (setter, fromCamera) => {
+    const options = { mediaType: 'photo', quality: 0.7, maxWidth: 1600, maxHeight: 1600, saveToPhotos: false };
+    const result = fromCamera ? await launchCamera(options) : await launchImageLibrary(options);
+    if (result.didCancel || result.errorCode) return;
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    setter({ uri: asset.uri, fileName: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.type || 'image/jpeg' });
   };
 
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -306,31 +443,100 @@ const EmployeePunchScreen = ({ navigation }) => {
   };
 
   const validateForm = () => {
-    if (!form.visit_type) {
-      Alert.alert('Required', 'Please select a visit type');
-      return false;
-    }
+    if (isLoanLinkedReason) {
+      if (!collectionId) {
+        Alert.alert('Required', 'Please enter a valid Loan ID.');
+        return false;
+      }
+      if (form.reason === 'Collection') {
+        const err = validateCollectionStatus(form, { photos, upiScreenshot, chequePhoto, audioNote });
+        if (err) {
+          Alert.alert('Required', err);
+          return false;
+        }
+      }
+      if (form.reason === 'Visit') {
+        const err = validateVisitType(form, { audioNote });
+        if (err) {
+          Alert.alert('Required', err);
+          return false;
+        }
+      }
+    } else {
+      if (!form.visit_type) {
+        Alert.alert('Required', 'Please select a visit type');
+        return false;
+      }
 
-    if ((form.visit_type === 'COLLECTION' || form.visit_type === 'DISBURSEMENT')) {
-      if (!form.loan_id) {
-        Alert.alert('Required', 'Loan ID is required');
-        return false;
-      }
-      if (!form.amount) {
-        Alert.alert('Required', 'Amount is required');
-        return false;
-      }
-      if (isNaN(parseFloat(form.amount)) || parseFloat(form.amount) < 0) {
-        Alert.alert('Invalid', 'Amount cannot be negative');
-        return false;
-      }
-      if (form.loan_id.length > 10) {
-        Alert.alert('Invalid', 'Loan ID cannot be more than 10 characters');
-        return false;
-      }
-      if (form.visit_type === 'COLLECTION' && !form.payment_mode) {
-        Alert.alert('Required', 'Payment mode is required');
-        return false;
+      if ((form.visit_type === 'COLLECTION' || form.visit_type === 'DISBURSEMENT')) {
+        if (!form.loan_id) {
+          Alert.alert('Required', 'Loan ID is required');
+          return false;
+        }
+        if (!form.amount) {
+          Alert.alert('Required', 'Amount is required');
+          return false;
+        }
+        if (isNaN(parseFloat(form.amount)) || parseFloat(form.amount) < 0) {
+          Alert.alert('Invalid', 'Amount cannot be negative');
+          return false;
+        }
+        if (form.loan_id.length > 10) {
+          Alert.alert('Invalid', 'Loan ID cannot be more than 10 characters');
+          return false;
+        }
+        if (form.visit_type === 'COLLECTION' && !form.payment_mode) {
+          Alert.alert('Required', 'Payment mode is required');
+          return false;
+        }
+        if (form.customer_phone && !isPhone(form.customer_phone)) {
+          Alert.alert('Invalid', 'Enter a valid 10-digit customer phone number');
+          return false;
+        }
+        // Only applies once a real record has resolved (collectionId set) —
+        // that's the only case this submits through complete_visit, the
+        // endpoint CompleteVisitSerializer's phone-confirmation check
+        // actually gates. Matches CollectionVisitScreen's own validate().
+        if (form.visit_type === 'COLLECTION' && collectionId) {
+          const phoneErr = validateCustomerPhone(form);
+          if (phoneErr) {
+            Alert.alert('Customer Phone', phoneErr);
+            return false;
+          }
+        }
+
+        // Payment-evidence requirement — mirrors validateCollectionStatus's
+        // CASH/UPI/CHEQUE evidence rules, but without a `status` field (this
+        // flow has none) so it can't reuse that helper directly.
+        if (form.visit_type === 'COLLECTION') {
+          if (form.payment_mode === 'CASH') {
+            const hasAny = ['CUSTOMER', 'RECEIPT', 'DOCUMENT'].some((k) => photos.some((p) => p.kind === k));
+            if (!hasAny) {
+              Alert.alert('Required', 'Please add at least one photo — Customer, Receipt, or Document.');
+              return false;
+            }
+          }
+          if (form.payment_mode === 'UPI') {
+            if (!form.upi_ref?.trim()) {
+              Alert.alert('Required', 'Please enter the UPI reference number.');
+              return false;
+            }
+            if (!upiScreenshot) {
+              Alert.alert('Required', 'Please add the UPI screenshot.');
+              return false;
+            }
+          }
+          if (form.payment_mode === 'CHEQUE') {
+            if (!form.cheque_no?.trim()) {
+              Alert.alert('Required', 'Please enter the cheque number.');
+              return false;
+            }
+            if (!chequePhoto) {
+              Alert.alert('Required', 'Please add the cheque photo.');
+              return false;
+            }
+          }
+        }
       }
     }
 
@@ -348,24 +554,48 @@ const EmployeePunchScreen = ({ navigation }) => {
     return true;
   };
 
+  const blankForm = {
+    reason: '',
+    visit_type: '',
+    loan_id: '',
+    amount: '',
+    payment_mode: '',
+    upi_ref: '',
+    cheque_no: '',
+    customer_name: '',
+    customer_phone: '',
+    phone_correct: null,
+    corrected_customer_phone: '',
+    travel_with: 'ALONE',
+    co_employee_id: '',
+    co_employee_name: '',
+    co_employee_phone: '',
+    vehicle_number: '',
+    status: '',
+    collected_amount: '',
+    remarks: '',
+    promise_date: null,
+    visit_reason: '',
+    visit_dpd_bucket: '',
+    visit_purpose: '',
+    visit_outcome: '',
+    customer_available: null,
+    customer_met: null,
+    family_member_met: null,
+    follow_up_required: null,
+  };
+
   const resetPunchForm = () => {
     setModalVisible(false);
     setReasonDropdownOpen(false);
-    setForm({
-      reason: '',
-      visit_type: '',
-      loan_id: '',
-      amount: '',
-      payment_mode: '',
-      upi_ref: '',
-      cheque_no: '',
-      customer_name: '',
-      travel_with: 'ALONE',
-      co_employee_id: '',
-      co_employee_name: '',
-      co_employee_phone: '',
-      vehicle_number: '',
-    });
+    setForm(blankForm);
+    setAudioNote(null);
+    setPhotos([]);
+    setUpiScreenshot(null);
+    setChequePhoto(null);
+    setCollectionId(null);
+    setResolvedRecord(null);
+    setLoanLookupError('');
     setLocalLocation(null);
     setOutOfRangeModal({ visible: false, distanceM: 0 });
     setOutOfRangeReason('');
@@ -375,33 +605,116 @@ const EmployeePunchScreen = ({ navigation }) => {
     setDupLocationComment('');
   };
 
-  const submitPunch = async (extra = {}) => {
-    const locationData = {
-      ...localLocation,
-      current_address: localLocation.current_address,
-    };
-
-    const result = await punchIn({ ...form, ...extra }, locationData);
-
-    if (result.success) {
-      // Auto-close the dialog once the punch is recorded, instead of leaving
-      // it open for another entry.
+  const submitCompleteVisit = async (extra = {}) => {
+    setVisitSaving(true);
+    // Generated once per real submission, reused unchanged for both the
+    // live attempt and the offline-queued retry (if it falls through to
+    // that) — see CollectionUpdate.client_transaction_id server-side.
+    const clientTransactionId = generateTransactionId();
+    try {
+      const fd = buildCompleteVisitFormData({
+        form,
+        localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+        customerName: resolvedRecord?.customer_name || form.customer_name,
+        customerAddress: resolvedRecord?.address,
+        photos,
+        upiScreenshot,
+        chequePhoto,
+        audioNote,
+        visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current : null,
+        extra,
+        clientTransactionId,
+      });
+      const res = await api.completeVisit(collectionId, fd);
+      await registerExternalPunchIn(res.data, localLocation);
       resetPunchForm();
       resetForm();
-      Alert.alert('Success', 'Punch recorded!');
-      return;
+      Alert.alert('Success', 'Visit recorded successfully!');
+    } catch (err) {
+      if (isNetworkError(err)) {
+        await enqueue('COLLECTION_VISIT', {
+          collectionId,
+          form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
+          localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+          customerName: resolvedRecord?.customer_name || form.customer_name,
+          customerAddress: resolvedRecord?.address,
+          photos,
+          upiScreenshot,
+          chequePhoto,
+          audioNote,
+          visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
+          extra,
+          clientTransactionId,
+        });
+        resetPunchForm();
+        resetForm();
+        Alert.alert(
+          'Saved — will sync automatically',
+          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online.",
+        );
+        return;
+      }
+      const respData = err?.response?.data;
+      if (respData?.error === 'location_out_of_range') {
+        setOutOfRangeModal({ visible: true, distanceM: respData.distance_m });
+        return;
+      }
+      if (respData?.error === 'same_location_duplicate') {
+        setDupLocationModal({ visible: true, otherLoanId: respData.other_loan_id });
+        return;
+      }
+      const msg = respData?.error || respData?.detail || respData?.message || err?.message || 'Failed to save visit.';
+      Alert.alert('Error', msg);
+    } finally {
+      setVisitSaving(false);
     }
+  };
 
-    if (result.locationOutOfRange) {
-      setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
-      return;
+  const submitPunch = async (extra = {}) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      if (collectionId) {
+        await submitCompleteVisit(extra);
+        return;
+      }
+
+      const locationData = {
+        ...localLocation,
+        current_address: localLocation.current_address,
+      };
+
+      const result = await punchIn({ ...form, ...extra }, locationData);
+
+      if (result.success) {
+        // Auto-close the dialog once the punch is recorded, instead of leaving
+        // it open for another entry.
+        resetPunchForm();
+        resetForm();
+        Alert.alert('Success', 'Punch recorded!');
+        return;
+      }
+
+      if (result.queuedOffline) {
+        resetPunchForm();
+        resetForm();
+        Alert.alert('Saved — will sync automatically', result.error);
+        return;
+      }
+
+      if (result.locationOutOfRange) {
+        setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
+        return;
+      }
+      if (result.sameLocationDuplicate) {
+        setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
+        return;
+      }
+      // Any other failure already surfaces via the error Banner (errorMessage
+      // state set in PunchContext) — nothing else to do here.
+    } finally {
+      submittingRef.current = false;
     }
-    if (result.sameLocationDuplicate) {
-      setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
-      return;
-    }
-    // Any other failure already surfaces via the error Banner (errorMessage
-    // state set in PunchContext) — nothing else to do here.
   };
 
   const handleSubmit = async () => {
@@ -422,6 +735,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       Alert.alert('Required', 'Please add a comment for "Other".');
       return;
     }
+    setOutOfRangeModal({ visible: false, distanceM: 0 });
     await submitPunch({ out_of_range_reason: outOfRangeReason, out_of_range_comment: outOfRangeComment });
   };
 
@@ -434,6 +748,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       Alert.alert('Required', 'Please add a comment for "Other".');
       return;
     }
+    setDupLocationModal({ visible: false, otherLoanId: '' });
     await submitPunch({ duplicate_location_reason: dupLocationReason, duplicate_location_comment: dupLocationComment });
   };
 
@@ -447,27 +762,49 @@ const EmployeePunchScreen = ({ navigation }) => {
     setDupLocationModal({ visible: false, otherLoanId: '' });
     setDupLocationReason('');
     setDupLocationComment('');
-    setForm({
-      reason: '',
-      visit_type: '',
-      loan_id: '',
-      amount: '',
-      payment_mode: '',
-      upi_ref: '',
-      cheque_no: '',
-      customer_name: '',
-      travel_with: 'ALONE',
-      co_employee_id: '',
-      co_employee_name: '',
-      co_employee_phone: '',
-      vehicle_number: '',
-    });
+    setForm(blankForm);
+    setAudioNote(null);
+    setPhotos([]);
+    setUpiScreenshot(null);
+    setChequePhoto(null);
+    setCollectionId(null);
+    setResolvedRecord(null);
+    setLoanLookupError('');
     resetForm();
   };
 
   const updateForm = (key, value) => {
+    if (key === 'reason' && value !== form.reason) {
+      setAudioNote(null);
+      setPhotos([]);
+      setUpiScreenshot(null);
+      setChequePhoto(null);
+      setCollectionId(null);
+      setResolvedRecord(null);
+      setLoanLookupError('');
+    }
     setForm((prev) => {
       const updated = { ...prev, [key]: value };
+      if (key === 'reason' && value !== prev.reason) {
+        updated.loan_id = '';
+        updated.amount = '';
+        updated.payment_mode = '';
+        updated.upi_ref = '';
+        updated.cheque_no = '';
+        updated.status = '';
+        updated.collected_amount = '';
+        updated.remarks = '';
+        updated.promise_date = null;
+        updated.visit_reason = '';
+        updated.visit_dpd_bucket = '';
+        updated.visit_purpose = '';
+        updated.visit_outcome = '';
+        updated.customer_available = null;
+        updated.customer_met = null;
+        updated.family_member_met = null;
+        updated.follow_up_required = null;
+        if (value === 'Visit') visitStartTimeRef.current = new Date();
+      }
       if (key === 'visit_type') {
         updated.loan_id = '';
         updated.amount = '';
@@ -478,6 +815,34 @@ const EmployeePunchScreen = ({ navigation }) => {
       if (key === 'payment_mode') {
         updated.upi_ref = '';
         updated.cheque_no = '';
+      }
+      if (key === 'status') {
+        if (value === 'COLLECTED') {
+          const emi = resolvedRecord?.amount_due;
+          updated.collected_amount = emi != null ? String(emi) : updated.collected_amount;
+        }
+        if (value !== 'COLLECTED' && value !== 'PARTIALLY_COLLECTED') {
+          updated.collected_amount = '';
+          updated.payment_mode = '';
+          updated.upi_ref = '';
+          updated.cheque_no = '';
+        }
+        updated.promise_date = null;
+      }
+      if (key === 'visit_reason') {
+        if (value !== 'OD_VISIT') updated.visit_dpd_bucket = '';
+        if (value !== 'HOME_VISIT') {
+          updated.visit_purpose = '';
+          updated.visit_outcome = '';
+          updated.customer_available = null;
+          updated.customer_met = null;
+          updated.family_member_met = null;
+          updated.follow_up_required = null;
+          updated.promise_date = null;
+        }
+      }
+      if (key === 'follow_up_required' && value !== true) {
+        updated.promise_date = null;
       }
       if (key === 'travel_with') {
         updated.co_employee_id = '';
@@ -513,8 +878,189 @@ const EmployeePunchScreen = ({ navigation }) => {
     return { latitude: 28.6139, longitude: 77.2090, latitudeDelta: 0.5, longitudeDelta: 0.5 };
   };
 
+  const renderYesNo = (label, fieldKey, optional = false) => (
+    <>
+      <Text style={styles.label}>{label}{optional ? '' : ' *'}</Text>
+      <View style={styles.chips}>
+        {YES_NO_OPTIONS.map((o) => (
+          <TouchableOpacity
+            key={String(o.value)}
+            style={[styles.chip, form[fieldKey] === o.value && styles.chipActive]}
+            onPress={() => updateForm(fieldKey, o.value)}
+          >
+            <Text style={[styles.chipText, form[fieldKey] === o.value && styles.chipTextActive]}>{o.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </>
+  );
+
+  // Anchors to the resolved record's due date, exactly like
+  // CollectionVisitScreen — falls back to today when no record/due_date is
+  // known yet (e.g. before a Loan ID resolves).
+  const plannedDate = resolvedRecord?.due_date ? new Date(resolvedRecord.due_date) : new Date();
+  plannedDate.setHours(0, 0, 0, 0);
+  const maxPromiseDate = new Date(plannedDate);
+  maxPromiseDate.setMonth(maxPromiseDate.getMonth() + 1);
+
+  const promiseDateLabel = form.status === 'PARTIALLY_COLLECTED' ? 'Remaining Payment Date *'
+    : form.status === 'NOT_PAID' ? 'Next Follow-up Date *'
+    : form.visit_reason === 'HOME_VISIT' ? 'Next Follow-up Date *'
+    : 'Promise to Pay Date *';
+
+  const renderPromiseDatePicker = () => (
+    <>
+      <Text style={styles.label}>{promiseDateLabel}</Text>
+      <TouchableOpacity style={styles.input} onPress={() => setShowPromiseDatePicker(true)}>
+        <Text style={{ color: form.promise_date ? colors.text : colors.textMuted }}>
+          {form.promise_date ? fmtDate(form.promise_date) : 'Select date (required)'}
+        </Text>
+      </TouchableOpacity>
+      {showPromiseDatePicker && (
+        <DateTimePicker
+          value={form.promise_date || plannedDate}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          minimumDate={plannedDate}
+          maximumDate={maxPromiseDate}
+          onChange={(event, selectedDate) => {
+            setShowPromiseDatePicker(Platform.OS === 'ios');
+            if (selectedDate) updateForm('promise_date', selectedDate);
+          }}
+        />
+      )}
+    </>
+  );
+
+  // Payment Mode + its Collected/Partial sub-fields — shared shape with
+  // CollectionVisitScreen's own renderPaymentModeSection, minus the photo
+  // evidence pickers (this screen has no camera-capture UI wired up at all,
+  // matching its existing scope — not introduced by this change).
+  const renderPhotoColumns = (kinds) => (
+    <View style={styles.photoColumns}>
+      {kinds.map((k) => (
+        <View key={k.value} style={styles.photoColumn}>
+          <Text style={styles.photoKindLabel} numberOfLines={1}>{k.label}</Text>
+          <TouchableOpacity style={styles.photoAddBtn} onPress={() => addPhoto(k.value)}>
+            <Icon name="camera" size={18} color={colors.primary} />
+          </TouchableOpacity>
+          {photos.map((p, i) => p.kind === k.value && (
+            <View key={i} style={styles.photoThumbWrap}>
+              <Image source={{ uri: p.uri }} style={styles.photoThumb} />
+              <TouchableOpacity style={styles.photoRemove} onPress={() => removePhoto(i)}>
+                <Icon name="x" size={12} color="#fff" />
+              </TouchableOpacity>
+              <Text style={styles.photoTimestamp} numberOfLines={1}>{fmtDateTime(p.capturedAt)}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+
+  const renderSingleImagePicker = (label, image, setter) => (
+    <>
+      <Text style={styles.label}>{label} *</Text>
+      <View style={styles.photoColumns}>
+        <View style={styles.photoColumn}>
+          <TouchableOpacity style={styles.photoAddBtn} onPress={() => addSingleImage(label, setter)}>
+            <Icon name="camera" size={18} color={colors.primary} />
+          </TouchableOpacity>
+          {image && (
+            <View style={styles.photoThumbWrap}>
+              <Image source={{ uri: image.uri }} style={styles.photoThumb} />
+              <TouchableOpacity style={styles.photoRemove} onPress={() => setter(null)}>
+                <Icon name="x" size={12} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
+    </>
+  );
+
+  const renderPaymentModeSection = () => (
+    <>
+      <Text style={styles.label}>Payment Mode</Text>
+      <View style={styles.chips}>
+        {PAYMENT_MODES.map((m) => (
+          <TouchableOpacity key={m.value} style={[styles.chip, form.payment_mode === m.value && styles.chipActive]} onPress={() => updateForm('payment_mode', m.value)}>
+            <Text style={[styles.chipText, form.payment_mode === m.value && styles.chipTextActive]}>{m.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      {form.payment_mode === 'CASH' && (
+        <>
+          <Text style={styles.photoHint}>Add at least one photo — the other two are optional.</Text>
+          {renderPhotoColumns(PHOTO_KINDS)}
+        </>
+      )}
+      {form.payment_mode === 'UPI' && (
+        <>
+          <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Reference Number" placeholderTextColor={colors.textMuted} />
+          {renderSingleImagePicker('Screenshot', upiScreenshot, setUpiScreenshot)}
+        </>
+      )}
+      {form.payment_mode === 'CHEQUE' && (
+        <>
+          <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque Number" placeholderTextColor={colors.textMuted} />
+          {renderSingleImagePicker('Cheque Photo', chequePhoto, setChequePhoto)}
+        </>
+      )}
+    </>
+  );
+
+  const renderLoanResolution = () => (
+    <>
+      <Text style={styles.label}>Loan ID *</Text>
+      <TextInput
+        style={styles.input}
+        value={form.loan_id}
+        onChangeText={(t) => {
+          const v = t.slice(0, 10);
+          setForm((prev) => ({ ...prev, loan_id: v }));
+          setCollectionId(null);
+          setResolvedRecord(null);
+          setLoanLookupError('');
+          fetchLoanSuggestions(v);
+        }}
+        onBlur={resolveLoanIdOnBlur}
+        placeholder="Loan ID (max 10)"
+        placeholderTextColor={colors.textMuted}
+        maxLength={10}
+        autoCapitalize="characters"
+      />
+      {showLoanSuggestions && (
+        <View style={styles.suggestionBox}>
+          {loanSuggestions.map((s) => (
+            <TouchableOpacity key={s.id} style={styles.suggestionItem} onPress={() => applyLoanSuggestion(s)}>
+              <Text style={styles.suggestionLoan}>{s.loan_id}</Text>
+              <Text style={styles.suggestionMeta} numberOfLines={1}>
+                {(s.customer_name && s.customer_name !== 'Unknown') ? s.customer_name : 'Customer'}
+                {s.amount_due ? `  ·  ₹${Number(s.amount_due).toLocaleString('en-IN')}` : ''}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+      {loanResolving && <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: spacing.xs }} />}
+      {!!loanLookupError && <Text style={styles.loanErrorText}>{loanLookupError}</Text>}
+      {collectionId && resolvedRecord && (
+        <View style={styles.resolvedCard}>
+          <Icon name="check-circle" size={16} color={colors.success} />
+          <View style={{ flex: 1, marginLeft: spacing.xs }}>
+            <Text style={styles.resolvedName}>{resolvedRecord.customer_name}</Text>
+            {resolvedRecord.amount_due != null && (
+              <Text style={styles.resolvedMeta}>Amount Due: ₹{Number(resolvedRecord.amount_due).toLocaleString('en-IN')}</Text>
+            )}
+          </View>
+        </View>
+      )}
+    </>
+  );
+
   const isFetching = punchState === STATES.FETCHING_LOCATION;
-  const isSubmitting = punchState === STATES.SUBMITTING;
+  const isSubmitting = punchState === STATES.SUBMITTING || visitSaving;
   const isPunchingOut = punchState === STATES.PUNCHING_OUT;
   const totalDistance = getTotalDistance();
   const duration = getTrackingDuration();
@@ -603,10 +1149,10 @@ const EmployeePunchScreen = ({ navigation }) => {
               {isLoading ? (
                 <ActivityIndicator size="large" color="#fff" />
               ) : (
-                <Icon 
-                  name="map-pin" 
-                  size={48} 
-                  color="#fff" 
+                <Icon
+                  name="map-pin"
+                  size={48}
+                  color="#fff"
                 />
               )}
             </TouchableOpacity>
@@ -776,77 +1322,252 @@ const EmployeePunchScreen = ({ navigation }) => {
                 ))}
               </View>
 
-              <Text style={styles.label}>Visit Type *</Text>
-              <View style={styles.chips}>
-                {VISIT_TYPES.map((t) => (
-                  <TouchableOpacity key={t.value} style={[styles.chip, form.visit_type === t.value && styles.chipActive]} onPress={() => updateForm('visit_type', t.value)}>
-                    <Text style={[styles.chipText, form.visit_type === t.value && styles.chipTextActive]}>{t.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {(form.visit_type === 'COLLECTION' || form.visit_type === 'DISBURSEMENT') && (
+              {/* Old Visit Type axis — Disbursement's plain Loan ID + Amount
+                  flow only now; Collection/Visit reasons drive their own flow
+                  below and hide this redundant second selector entirely. */}
+              {!isLoanLinkedReason && (
                 <>
-                  <Text style={styles.label}>Loan ID *</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={form.loan_id}
-                    onChangeText={(t) => {
-                      const v = t.slice(0, 10);
-                      updateForm('loan_id', v);
-                      fetchLoanSuggestions(v);
-                    }}
-                    placeholder="Loan ID (max 10)"
-                    placeholderTextColor={colors.textMuted}
-                    maxLength={10}
-                    autoCapitalize="characters"
-                  />
-                  {showLoanSuggestions && (
-                    <View style={styles.suggestionBox}>
-                      {loanSuggestions.map((s) => (
-                        <TouchableOpacity key={s.id} style={styles.suggestionItem} onPress={() => applyLoanSuggestion(s)}>
-                          <Text style={styles.suggestionLoan}>{s.loan_id}</Text>
-                          <Text style={styles.suggestionMeta} numberOfLines={1}>
-                            {(s.customer_name && s.customer_name !== 'Unknown') ? s.customer_name : 'Customer'}
-                            {s.amount_due ? `  ·  ₹${Number(s.amount_due).toLocaleString('en-IN')}` : ''}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
+                  <Text style={styles.label}>Visit Type *</Text>
+                  <View style={styles.chips}>
+                    {VISIT_TYPES.map((t) => (
+                      <TouchableOpacity key={t.value} style={[styles.chip, form.visit_type === t.value && styles.chipActive]} onPress={() => updateForm('visit_type', t.value)}>
+                        <Text style={[styles.chipText, form.visit_type === t.value && styles.chipTextActive]}>{t.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
 
-                  <Text style={styles.label}>Amount *</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={form.amount}
-                    onChangeText={(t) => updateForm('amount', t.replace(/[^0-9.]/g, ''))}
-                    placeholder="Amount"
-                    placeholderTextColor={colors.textMuted}
-                    keyboardType="numeric"
-                  />
-
-                  {form.visit_type === 'COLLECTION' && (
+                  {(form.visit_type === 'COLLECTION' || form.visit_type === 'DISBURSEMENT') && (
                     <>
-                      <Text style={styles.label}>Payment Mode *</Text>
+                      <Text style={styles.label}>Loan ID *</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={form.loan_id}
+                        onChangeText={(t) => {
+                          const v = t.slice(0, 10);
+                          updateForm('loan_id', v);
+                          fetchLoanSuggestions(v);
+                        }}
+                        placeholder="Loan ID (max 10)"
+                        placeholderTextColor={colors.textMuted}
+                        maxLength={10}
+                        autoCapitalize="characters"
+                      />
+                      {showLoanSuggestions && (
+                        <View style={styles.suggestionBox}>
+                          {loanSuggestions.map((s) => (
+                            <TouchableOpacity key={s.id} style={styles.suggestionItem} onPress={() => applyLoanSuggestion(s)}>
+                              <Text style={styles.suggestionLoan}>{s.loan_id}</Text>
+                              <Text style={styles.suggestionMeta} numberOfLines={1}>
+                                {(s.customer_name && s.customer_name !== 'Unknown') ? s.customer_name : 'Customer'}
+                                {s.amount_due ? `  ·  ₹${Number(s.amount_due).toLocaleString('en-IN')}` : ''}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+
+                      <Text style={styles.label}>Amount *</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={form.amount}
+                        onChangeText={(t) => updateForm('amount', t.replace(/[^0-9.]/g, ''))}
+                        placeholder="Amount"
+                        placeholderTextColor={colors.textMuted}
+                        keyboardType="numeric"
+                      />
+
+                      <Text style={styles.label}>Customer Phone</Text>
+                      {collectionId && resolvedRecord?.customer_phone ? (
+                        <>
+                          <View style={styles.phoneRecordedRow}>
+                            <Icon name="phone" size={14} color={colors.textMuted} />
+                            <Text style={styles.phoneRecordedText}>{resolvedRecord.customer_phone}</Text>
+                          </View>
+                          <View style={styles.chips}>
+                            {YES_NO_OPTIONS.map((o) => (
+                              <TouchableOpacity
+                                key={String(o.value)}
+                                style={[styles.chip, form.phone_correct === o.value && styles.chipActive]}
+                                onPress={() => updateForm('phone_correct', o.value)}
+                              >
+                                <Text style={[styles.chipText, form.phone_correct === o.value && styles.chipTextActive]}>{o.label}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                          {form.phone_correct === false && (
+                            <TextInput
+                              style={styles.input}
+                              value={form.corrected_customer_phone}
+                              onChangeText={(t) => updateForm('corrected_customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                              placeholder="Customer's correct 10-digit number"
+                              placeholderTextColor={colors.textMuted}
+                              keyboardType="number-pad"
+                              maxLength={10}
+                            />
+                          )}
+                        </>
+                      ) : collectionId ? (
+                        <>
+                          <Text style={styles.phoneRecordedText}>No phone number on file for this customer.</Text>
+                          <TextInput
+                            style={styles.input}
+                            value={form.corrected_customer_phone}
+                            onChangeText={(t) => updateForm('corrected_customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                            placeholder="Customer's 10-digit number"
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="number-pad"
+                            maxLength={10}
+                          />
+                        </>
+                      ) : (
+                        <TextInput
+                          style={styles.input}
+                          value={form.customer_phone}
+                          onChangeText={(t) => updateForm('customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                          placeholder="10-digit mobile number"
+                          placeholderTextColor={colors.textMuted}
+                          keyboardType="number-pad"
+                          maxLength={10}
+                        />
+                      )}
+
+                      {form.visit_type === 'COLLECTION' && renderPaymentModeSection()}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* Collection — real loan resolution, then the same Collection
+                  Status flow as CollectionVisitScreen. */}
+              {form.reason === 'Collection' && (
+                <>
+                  {renderLoanResolution()}
+
+                  {collectionId && (
+                    <>
+                      <Text style={styles.label}>Collection Status</Text>
                       <View style={styles.chips}>
-                        {PAYMENT_MODES.map((m) => (
-                          <TouchableOpacity key={m.value} style={[styles.chip, form.payment_mode === m.value && styles.chipActive]} onPress={() => updateForm('payment_mode', m.value)}>
-                            <Text style={[styles.chipText, form.payment_mode === m.value && styles.chipTextActive]}>{m.label}</Text>
+                        {STATUS_OPTIONS.map((o) => {
+                          const active = form.status === o.value;
+                          return (
+                            <TouchableOpacity key={o.value} style={[styles.statusChip, active && { backgroundColor: o.color, borderColor: o.color }]} onPress={() => updateForm('status', o.value)}>
+                              <Text style={[styles.statusChipText, active && { color: '#fff' }]}>{o.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      {form.status === 'PENDING' && renderPromiseDatePicker()}
+
+                      {(form.status === 'COLLECTED' || form.status === 'PARTIALLY_COLLECTED') && (
+                        <>
+                          <Text style={styles.label}>Collected Amount (₹)</Text>
+                          <TextInput
+                            style={styles.input}
+                            keyboardType="numeric"
+                            value={form.collected_amount}
+                            onChangeText={(v) => updateForm('collected_amount', v.replace(/[^0-9.]/g, ''))}
+                            placeholder="0"
+                            placeholderTextColor={colors.textMuted}
+                          />
+                          {renderPaymentModeSection()}
+                        </>
+                      )}
+
+                      {form.status === 'PARTIALLY_COLLECTED' && renderPromiseDatePicker()}
+
+                      {!!form.status && (
+                        <>
+                          <Text style={styles.label}>{form.status === 'NOT_PAID' ? 'Reason Why Not Paid *' : 'Remarks'}</Text>
+                          <TextInput
+                            style={[styles.input, { height: 70, textAlignVertical: 'top' }]}
+                            multiline
+                            value={form.remarks}
+                            onChangeText={(v) => updateForm('remarks', v)}
+                            placeholder={form.status === 'NOT_PAID' ? 'Why did the customer not pay? (required)' : 'Optional notes'}
+                            placeholderTextColor={colors.textMuted}
+                          />
+                        </>
+                      )}
+
+                      {form.status === 'NOT_PAID' && renderPromiseDatePicker()}
+
+                      {!!form.status && (
+                        <>
+                          <Text style={styles.label}>Voice Note</Text>
+                          <VoiceNoteRecorder value={audioNote} onChange={setAudioNote} required={isAudioRequiredFor(form)} />
+                        </>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* Visit — real loan resolution, then the same Home Visit / OD
+                  Visit / Other flow as CollectionVisitScreen. */}
+              {form.reason === 'Visit' && (
+                <>
+                  {renderLoanResolution()}
+
+                  {collectionId && (
+                    <>
+                      <Text style={styles.label}>Visit Type</Text>
+                      <View style={styles.chips}>
+                        {VISIT_TYPE_OPTIONS.map((o) => (
+                          <TouchableOpacity key={o.value} style={[styles.chip, form.visit_reason === o.value && styles.chipActive]} onPress={() => updateForm('visit_reason', o.value)}>
+                            <Text style={[styles.chipText, form.visit_reason === o.value && styles.chipTextActive]}>{o.label}</Text>
                           </TouchableOpacity>
                         ))}
                       </View>
 
-                      {form.payment_mode === 'UPI' && (
+                      {form.visit_reason === 'OD_VISIT' && (
                         <>
-                          <Text style={styles.label}>UPI Reference ID</Text>
-                          <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Ref" placeholderTextColor={colors.textMuted} />
+                          <Text style={styles.label}>DPD Bucket</Text>
+                          <View style={styles.chips}>
+                            {DPD_BUCKET_OPTIONS.map((o) => (
+                              <TouchableOpacity key={o.value} style={[styles.chip, form.visit_dpd_bucket === o.value && styles.chipActive]} onPress={() => updateForm('visit_dpd_bucket', o.value)}>
+                                <Text style={[styles.chipText, form.visit_dpd_bucket === o.value && styles.chipTextActive]}>{o.label}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
                         </>
                       )}
 
-                      {form.payment_mode === 'CHEQUE' && (
+                      {form.visit_reason === 'HOME_VISIT' && (
                         <>
-                          <Text style={styles.label}>Cheque Number</Text>
-                          <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque No" placeholderTextColor={colors.textMuted} />
+                          <Text style={styles.label}>Visit Purpose *</Text>
+                          <TextInput style={styles.input} value={form.visit_purpose} onChangeText={(t) => updateForm('visit_purpose', t)} placeholder="Purpose of this visit" placeholderTextColor={colors.textMuted} />
+
+                          <Text style={styles.label}>Visit Outcome *</Text>
+                          <TextInput style={styles.input} value={form.visit_outcome} onChangeText={(t) => updateForm('visit_outcome', t)} placeholder="Outcome of this visit" placeholderTextColor={colors.textMuted} />
+
+                          {renderYesNo('Customer Available', 'customer_available')}
+                          {renderYesNo('Customer Met', 'customer_met')}
+                          {renderYesNo('Family Member Met', 'family_member_met', true)}
+                        </>
+                      )}
+
+                      {(form.visit_reason === 'OD_VISIT' || form.visit_reason === 'HOME_VISIT' || form.visit_reason === 'OTHER') && (
+                        <>
+                          <Text style={styles.label}>{form.visit_reason === 'HOME_VISIT' ? 'Remarks *' : 'Remarks'}</Text>
+                          <TextInput
+                            style={[styles.input, { height: 70, textAlignVertical: 'top' }]}
+                            multiline
+                            value={form.remarks}
+                            onChangeText={(v) => updateForm('remarks', v)}
+                            placeholder="Optional notes"
+                            placeholderTextColor={colors.textMuted}
+                          />
+                        </>
+                      )}
+
+                      {form.visit_reason === 'HOME_VISIT' && (
+                        <>
+                          {renderYesNo('Follow-up Required', 'follow_up_required')}
+                          {form.follow_up_required === true && renderPromiseDatePicker()}
+
+                          <Text style={styles.label}>Voice Note *</Text>
+                          <VoiceNoteRecorder value={audioNote} onChange={setAudioNote} required />
                         </>
                       )}
                     </>
@@ -1095,11 +1816,15 @@ const styles = StyleSheet.create({
   locText: { fontSize: typography.sizes.sm, fontWeight: '500' },
   mockText: { fontSize: typography.sizes.xs, color: colors.warning, marginTop: spacing.xs },
   label: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.text, marginBottom: spacing.sm, marginTop: spacing.md },
+  phoneRecordedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
+  phoneRecordedText: { fontSize: typography.sizes.sm, color: colors.textDark, fontWeight: '600' },
   chips: { flexDirection: 'row', flexWrap: 'wrap' },
   chip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.background, borderRadius: 20, marginRight: spacing.sm, marginBottom: spacing.sm },
   chipActive: { backgroundColor: colors.primary },
   chipText: { fontSize: typography.sizes.sm, color: colors.textMuted },
   chipTextActive: { color: '#fff', fontWeight: '600' },
+  statusChip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.background, borderRadius: 20, marginRight: spacing.sm, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
+  statusChipText: { fontSize: typography.sizes.sm, color: colors.textMuted, fontWeight: '600' },
   input: { backgroundColor: colors.background, borderRadius: 12, padding: spacing.md, fontSize: typography.sizes.md, color: colors.text },
 
   suggestionBox: {
@@ -1118,6 +1843,23 @@ const styles = StyleSheet.create({
   },
   suggestionLoan: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.text },
   suggestionMeta: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
+  loanErrorText: { fontSize: typography.sizes.xs, color: colors.danger, marginTop: spacing.xs },
+  resolvedCard: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: colors.successLight,
+    borderRadius: 12, padding: spacing.sm, marginTop: spacing.sm,
+  },
+  resolvedName: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.text },
+  resolvedMeta: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
+
+  photoColumns: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
+  photoColumn: { flex: 1, alignItems: 'center' },
+  photoKindLabel: { fontSize: typography.sizes.xs, color: colors.textMuted, marginBottom: spacing.xs, textAlign: 'center' },
+  photoHint: { fontSize: typography.sizes.xs, color: colors.textMuted, marginBottom: spacing.xs },
+  photoThumbWrap: { marginTop: spacing.sm, alignItems: 'center' },
+  photoThumb: { width: 56, height: 56, borderRadius: 8 },
+  photoRemove: { position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center' },
+  photoAddBtn: { width: 56, height: 56, borderRadius: 8, borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' },
+  photoTimestamp: { fontSize: 9, color: colors.textMuted, marginTop: 2, maxWidth: 70, textAlign: 'center' },
 
   // ── Reason combo field ────────────────────────────────────────────────────
   reasonWrap: {

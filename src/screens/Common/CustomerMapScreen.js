@@ -41,7 +41,8 @@ const STATUS_FILTER_OPTIONS = [
     { value: 'NOT_PAID', label: 'Not Paid' },
 ];
 
-const RADIUS_OPTIONS_KM = [1, 2, 3, 5, 10, 20];
+const RADIUS_OPTIONS_KM = [2, 5, 10, 15];
+const DEFAULT_RADIUS_KM = 5;
 
 const DEFAULT_REGION = { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 8, longitudeDelta: 8 };
 const REGION_FETCH_DEBOUNCE_MS = 500;
@@ -97,7 +98,7 @@ const CustomerMapScreen = ({ navigation }) => {
     const [filterVisible, setFilterVisible] = useState(false);
 
     const [radiusEnabled, setRadiusEnabled] = useState(false);
-    const [radiusKm, setRadiusKm] = useState(5);
+    const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
 
     const [search, setSearch] = useState('');
     const [searchResults, setSearchResults] = useState([]);
@@ -209,6 +210,17 @@ const CustomerMapScreen = ({ navigation }) => {
     const onRefresh = useCallback(() => {
         fetchMarkers(region);
     }, [fetchMarkers, region]);
+
+    // Clears every filter back to its default — the effect below (keyed on
+    // statusFilter/radiusEnabled/radiusKm) picks this up and refetches the
+    // current viewport automatically, same as any other filter change.
+    const resetFilters = useCallback(() => {
+        setStatusFilter('ALL');
+        setRadiusEnabled(false);
+        setRadiusKm(DEFAULT_RADIUS_KM);
+    }, []);
+
+    const hasActiveFilters = statusFilter !== 'ALL' || radiusEnabled;
 
     // Filter changes refetch the current viewport immediately (no debounce —
     // these are deliberate taps, not rapid pan/zoom gestures).
@@ -579,9 +591,20 @@ const CustomerMapScreen = ({ navigation }) => {
                             )}
                         </ScrollView>
 
-                        <TouchableOpacity style={styles.applyBtn} onPress={() => setFilterVisible(false)} activeOpacity={0.85}>
-                            <Text style={styles.applyBtnText}>Apply</Text>
-                        </TouchableOpacity>
+                        <View style={styles.filterFooterRow}>
+                            <TouchableOpacity
+                                style={[styles.resetBtn, !hasActiveFilters && styles.resetBtnDisabled]}
+                                onPress={resetFilters}
+                                disabled={!hasActiveFilters}
+                                activeOpacity={0.85}
+                            >
+                                <Icon name="rotate-ccw" size={15} color={hasActiveFilters ? colors.primary : colors.textLight} />
+                                <Text style={[styles.resetBtnText, !hasActiveFilters && styles.resetBtnTextDisabled]}>Reset Filters</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.applyBtn} onPress={() => setFilterVisible(false)} activeOpacity={0.85}>
+                                <Text style={styles.applyBtnText}>Apply</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </Modal>
@@ -824,8 +847,17 @@ const styles = StyleSheet.create({
     chipText: { fontSize: typography.sizes.xs, color: colors.textMedium, fontWeight: typography.weights.medium },
     chipTextActive: { color: '#fff' },
 
-    applyBtn: { backgroundColor: colors.primary, borderRadius: borderRadius.md, paddingVertical: spacing.sm, alignItems: 'center', marginTop: spacing.lg },
+    filterFooterRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
+    applyBtn: { flex: 1, backgroundColor: colors.primary, borderRadius: borderRadius.md, paddingVertical: spacing.sm, alignItems: 'center' },
     applyBtnText: { color: '#fff', fontWeight: typography.weights.bold, fontSize: typography.sizes.sm },
+    resetBtn: {
+        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+        borderRadius: borderRadius.md, paddingVertical: spacing.sm,
+        borderWidth: 1.5, borderColor: colors.primary, backgroundColor: `${colors.primary}10`,
+    },
+    resetBtnDisabled: { borderColor: colors.border, backgroundColor: colors.background },
+    resetBtnText: { color: colors.primary, fontWeight: typography.weights.bold, fontSize: typography.sizes.sm },
+    resetBtnTextDisabled: { color: colors.textLight },
 
     detailName: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     detailSub: { fontSize: typography.sizes.sm, color: colors.textMuted, marginBottom: spacing.sm },

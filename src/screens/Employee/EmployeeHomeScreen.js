@@ -10,16 +10,19 @@ import {
     Animated,
     Alert,
     Linking,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import api from '../../api/api';
+import { useApiQuery } from '../../hooks/useApiQuery';
 import { useAuth } from '../../context/AuthContext';
-import { usePunch } from '../../context/PunchContext';
+import { usePunch, STATES } from '../../context/PunchContext';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import HeroHeader from '../../components/HeroHeader';
+import DailyPunchPrompt from '../../components/DailyPunchPrompt';
 import ActivityCard from '../../components/ActivityCard';
 import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
@@ -29,8 +32,8 @@ import { SkeletonStatsGrid, SkeletonListItem } from '../../components/SkeletonCo
 
 const ZOHO_CHART_URL = 'https://analytics.zoho.in/open-view/334082000154073362';
 
-// ─── Static monthly target (swap for API value when backend exposes it) ───────
-const MONTHLY_AMOUNT_TARGET = 100000; // ₹1,00,000
+const MONTH_KEY = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const isSameMonth = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
 
 // ─── Radial ring (View-based, no native SVG module required) ─────────────────
 const RadialRing = ({ size, strokeWidth, progress, max, color, trackColor }) => {
@@ -68,12 +71,20 @@ const RadialRing = ({ size, strokeWidth, progress, max, color, trackColor }) => 
 };
 
 // ─── Monthly collection ring card ─────────────────────────────────────────────
-const MonthlyCollectionCard = ({ collected, target }) => {
+// `target`/`collected`/`achievementPct`/`remainingAmt`/`excessAmt` come
+// straight from the backend's monthly_target response (apps/loans/views.py::
+// CollectionRecordViewSet.monthly_target) — never recomputed independently
+// on-device, per "backend is the source of truth." The ring's fill
+// proportion still derives from collected/target locally since that's pure
+// rendering geometry, not an alternate calculation.
+const MonthlyCollectionCard = ({
+    collected, target, achievementPct, remainingAmt, excessAmt,
+    monthLabel, onPrevMonth, onNextMonth, canGoNext, loading,
+}) => {
     const RING = 112;
     const STROKE = 11;
     const pct = target > 0 ? Math.min(collected / target, 1) : 0;
-    const pctLabel = Math.round(pct * 100);
-    const remaining = Math.max(target - collected, 0);
+    const pctLabel = Math.round(achievementPct ?? 0);
 
     const fmtCompact = (n) => {
         if (n >= 100000) return `₹${(n / 100000).toFixed(2)}L`;
@@ -85,9 +96,6 @@ const MonthlyCollectionCard = ({ collected, target }) => {
     const ringColor = pct >= 1 ? colors.success : pct >= 0.5 ? colors.warning : colors.primary;
     const trackColor = pct >= 1 ? colors.successLight : pct >= 0.5 ? colors.warningLight : colors.primaryLight;
 
-    const now = new Date();
-    const monthName = now.toLocaleString('en-IN', { month: 'long' });
-
     return (
         <View style={homeStyles.mcCard}>
             {/* Card header */}
@@ -98,7 +106,15 @@ const MonthlyCollectionCard = ({ collected, target }) => {
                     </View>
                     <View>
                         <Text style={homeStyles.mcTitle}>Monthly Collection</Text>
-                        <Text style={homeStyles.mcMonth}>{monthName} target</Text>
+                        <View style={homeStyles.mcMonthSelector}>
+                            <TouchableOpacity onPress={onPrevMonth} disabled={loading} hitSlop={{ top: 6, bottom: 6, left: 6, right: 10 }}>
+                                <Icon name="chevron-left" size={15} color={colors.textMuted} />
+                            </TouchableOpacity>
+                            <Text style={homeStyles.mcMonth}>{monthLabel}</Text>
+                            <TouchableOpacity onPress={onNextMonth} disabled={loading || !canGoNext} hitSlop={{ top: 6, bottom: 6, left: 10, right: 6 }}>
+                                <Icon name="chevron-right" size={15} color={canGoNext ? colors.textMuted : colors.textLight} />
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
                 <View style={[homeStyles.mcBadge, { backgroundColor: ringColor + '18' }]}>
@@ -145,8 +161,8 @@ const MonthlyCollectionCard = ({ collected, target }) => {
                     <View style={homeStyles.mcStatRow}>
                         <View style={[homeStyles.mcDot, { backgroundColor: colors.textLight }]} />
                         <View>
-                            <Text style={homeStyles.mcStatLabel}>Remaining</Text>
-                            <Text style={homeStyles.mcStatVal}>{fmtFull(remaining)}</Text>
+                            <Text style={homeStyles.mcStatLabel}>{excessAmt > 0 ? 'Excess' : 'Remaining'}</Text>
+                            <Text style={homeStyles.mcStatVal}>{fmtFull(excessAmt > 0 ? excessAmt : remainingAmt)}</Text>
                         </View>
                     </View>
                 </View>
@@ -154,7 +170,7 @@ const MonthlyCollectionCard = ({ collected, target }) => {
 
             {/* Progress bar strip */}
             <View style={homeStyles.mcStrip}>
-                <View style={[homeStyles.mcStripFill, { width: `${pctLabel}%`, backgroundColor: ringColor }]} />
+                <View style={[homeStyles.mcStripFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: ringColor }]} />
             </View>
             <View style={homeStyles.mcStripLabels}>
                 <Text style={homeStyles.mcStripLabel}>₹0</Text>
@@ -297,14 +313,7 @@ const IS_DEV = __DEV__;
 
 const MapPreview = React.memo(({ points, mapRef }) => {
     const navigation = useNavigation();
-    
-    if (!points || points.length === 0) {
-        return null;
-    }
-    
-    const latestPoint = points[0];
-    const startPoint = points[points.length - 1];
-    
+
     const fitAll = useCallback(() => {
         if (points.length > 1 && mapRef.current) {
             mapRef.current.fitToCoordinates(points, {
@@ -319,6 +328,13 @@ const MapPreview = React.memo(({ points, mapRef }) => {
             navigation.navigate('RouteMap');
         }
     }, [navigation]);
+
+    if (!points || points.length === 0) {
+        return null;
+    }
+
+    const latestPoint = points[0];
+    const startPoint = points[points.length - 1];
 
     return (
         <View style={styles.mapContainer}>
@@ -393,39 +409,87 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const auth = useAuth() || {};
     const punchCtx = usePunch() || {};
     
-    const { 
-        isActive = false, 
+    const {
+        isActive = false,
         isTracking = false,
         currentPunch = null,
         todayPunches = [],
         success = false,
+        punchState = STATES.IDLE,
     } = punchCtx;
-    
+
     const getTotalDistance = punchCtx.getTotalDistance || (() => 0);
     const getTrackingDuration = punchCtx.getTrackingDuration || (() => 0);
     const refreshPunches = punchCtx.fetchTodayPunches || (() => {});
+    const punchOut = punchCtx.punchOut || (async () => ({ success: false, error: 'Not available' }));
+    const isPunchingOut = punchState === STATES.PUNCHING_OUT;
     
     const { logout = () => {}, user = null } = auth;
     const mapRef = useRef(null);
     const pulseAnim = useRef(new Animated.Value(1)).current;
-    const isMountedRef = useRef(true);
-    const lastFetchRef = useRef(0);
 
-    const [isLoading, setIsLoading] = useState(true);
-    const [isRefreshing, setIsRefreshing] = useState(false);
-    const [summary, setSummary] = useState({});
-    const [correctionSummary, setCorrectionSummary] = useState({});
-    const [punches, setPunches] = useState([]);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
-    const [monthlyCollection, setMonthlyCollection] = useState(0);
-    const [collectionStats, setCollectionStats] = useState(null);
+    const [selectedMonth, setSelectedMonth] = useState(() => new Date());
 
-    useEffect(() => {
-        isMountedRef.current = true;
-        return () => {
-            isMountedRef.current = false;
-        };
-    }, []);
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    // Six independent queries — react-query fires them in parallel the same
+    // way the old Promise.all did, but each caches/revalidates on its own,
+    // and the screen shows the last-known page instantly instead of blank
+    // while useFocusEffect's refetch (below) is in flight.
+    const summaryQuery = useApiQuery(['homeDailySummary'], () => api.get('/attendance/punches/daily_summary/'));
+    const todayPunchesApiQuery = useApiQuery(['homeTodayPunchesApi'], () => api.get('/attendance/punches/today_punches/'));
+    // getCorrectionCounts() already returns the counts object directly, not
+    // an axios response — wrap it so useApiQuery's res.data unwrap still works.
+    const correctionQuery = useApiQuery(['homeCorrectionCounts'], () => api.getCorrectionCounts().then((counts) => ({ data: counts })));
+    const monthlyPerfQuery = useApiQuery(['homeMonthlyPerformance'], () => api.getPerformance('monthly'));
+    const collectionStatsQuery = useApiQuery(['homeCollectionDashboardStats'], () => api.getCollectionDashboardStats());
+    const collectionUpdatesQuery = useApiQuery(
+        ['homeCollectionUpdatesToday', user?.id, todayStr],
+        () => api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }),
+        { enabled: !!user?.id },
+    );
+    const {
+        data: monthlyTarget,
+        isLoading: monthlyTargetLoading,
+        refetch: refetchMonthlyTarget,
+    } = useApiQuery(['monthlyTarget', MONTH_KEY(selectedMonth)], () => api.getMonthlyTarget(MONTH_KEY(selectedMonth)));
+
+    const isLoading = summaryQuery.isLoading || todayPunchesApiQuery.isLoading || correctionQuery.isLoading;
+    const isRefreshing = summaryQuery.isFetching && !summaryQuery.isLoading;
+
+    const summary = useMemo(() => summaryQuery.data || {}, [summaryQuery.data]);
+    const correctionSummary = useMemo(() => correctionQuery.data || {}, [correctionQuery.data]);
+    const monthlyCollection = Number(monthlyPerfQuery.data?.total_collection_amount) || 0;
+    const collectionStats = collectionStatsQuery.data || null;
+
+    // Field activity (e.g. a collection outcome update) doesn't always
+    // happen inside an explicit punch-tracked GPS session — shape each
+    // update to look like a punch so mapApiResponseToActivities' own
+    // visit_type dispatch (see models/ActivityModel.js) picks it up as a
+    // COLLECTION activity without needing any changes there.
+    const punches = useMemo(() => {
+        const livePunches = todayPunchesApiQuery.data?.results || todayPunchesApiQuery.data || [];
+        const todayCollectionActivities = (collectionUpdatesQuery.data?.results || collectionUpdatesQuery.data || [])
+            .map(c => ({
+                id: `coll-${c.id}`,
+                visit_type: 'COLLECTION',
+                punched_at: c.created_at,
+                current_address: c.location_address,
+                latitude: c.latitude,
+                longitude: c.longitude,
+                total_amount: c.collected_amount,
+                client_name: c.customer_name,
+                reason: c.remarks || c.status_display,
+                // The unified Collection Visit flow (complete_visit) creates
+                // both this CollectionUpdate AND a PUNCH_IN AttendancePunch
+                // for the same real-world visit — c.punch links back to it
+                // so allPunches (below) can drop that raw punch instead of
+                // showing the same visit as two separate activity rows.
+                linked_punch_id: c.punch,
+            }));
+        return [...livePunches, ...todayCollectionActivities];
+    }, [todayPunchesApiQuery.data, collectionUpdatesQuery.data]);
 
     useEffect(() => {
         let animation;
@@ -451,80 +515,70 @@ const EmployeeHomeScreen = ({ navigation }) => {
         return () => animation?.stop();
     }, [isActive, isTracking, pulseAnim]);
 
-    const fetchData = useCallback(async (isRefresh = false) => {
-        const now = Date.now();
-        if (!isRefresh && now - lastFetchRef.current < 1000) {
-            return;
-        }
-        lastFetchRef.current = now;
-
-        try {
-            if (!isRefresh) setIsLoading(true);
-
-            const todayStr = new Date().toISOString().slice(0, 10);
-            const [summaryRes, punchRes, correctionRes, monthlyRes, collectionRes, collectionUpdatesRes] = await Promise.all([
-                api.get('/attendance/punches/daily_summary/'),
-                api.get('/attendance/punches/today_punches/'),
-                api.getCorrectionCounts(),
-                api.getPerformance('monthly').catch(() => null),
-                api.getCollectionDashboardStats().catch(() => null),
-                api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }).catch(() => null),
-            ]).catch(() => [null, null, null, null, null, null]);
-
-            if (!isMountedRef.current) return;
-
-            const liveSummary = summaryRes?.data || {};
-            const livePunches = punchRes?.data?.results || punchRes?.data || [];
-            const correctionCounts = correctionRes || {};
-            // Field activity (e.g. a collection outcome update) doesn't always
-            // happen inside an explicit punch-tracked GPS session — shape each
-            // update to look like a punch so mapApiResponseToActivities' own
-            // visit_type dispatch (see models/ActivityModel.js) picks it up as
-            // a COLLECTION activity without needing any changes there.
-            const todayCollectionActivities = (collectionUpdatesRes?.data?.results || collectionUpdatesRes?.data || [])
-                .map(c => ({
-                    id: `coll-${c.id}`,
-                    visit_type: 'COLLECTION',
-                    punched_at: c.created_at,
-                    current_address: c.location_address,
-                    latitude: c.latitude,
-                    longitude: c.longitude,
-                    total_amount: c.collected_amount,
-                    client_name: c.customer_name,
-                    reason: c.remarks || c.status_display,
-                    // The unified Collection Visit flow (complete_visit) creates
-                    // both this CollectionUpdate AND a PUNCH_IN AttendancePunch
-                    // for the same real-world visit — c.punch links back to it
-                    // so allPunches (below) can drop that raw punch instead of
-                    // showing the same visit as two separate activity rows.
-                    linked_punch_id: c.punch,
-                }));
-
-            setSummary(liveSummary);
-            setPunches([...livePunches, ...todayCollectionActivities]);
-            setCorrectionSummary(correctionCounts);
-            setMonthlyCollection(Number(monthlyRes?.data?.total_collection_amount) || 0);
-            if (collectionRes?.data) setCollectionStats(collectionRes.data);
-        } catch {
-            // Server unavailable or session expired — interceptor already handles 401
-        } finally {
-            if (isMountedRef.current) {
-                setIsLoading(false);
-                setIsRefreshing(false);
-            }
-        }
-    }, [user?.id]);
-
+    // Re-fetch everything whenever the Home tab regains focus — matches the
+    // original fetchData/fetchMonthlyTarget behavior exactly, just via
+    // react-query's refetch() instead of a hand-rolled Promise.all. Data
+    // fetched here already had the 1s debounce lastFetchRef used to guard
+    // against — react-query's own in-flight-request dedup makes that guard
+    // unnecessary (a second refetch while one is already pending is a no-op).
     useFocusEffect(useCallback(() => {
-        fetchData(false);
+        summaryQuery.refetch();
+        todayPunchesApiQuery.refetch();
+        correctionQuery.refetch();
+        monthlyPerfQuery.refetch();
+        collectionStatsQuery.refetch();
+        collectionUpdatesQuery.refetch();
+        refetchMonthlyTarget();
         refreshPunches();
-    }, [fetchData, refreshPunches]));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [refreshPunches]));
+
+    const changeMonth = useCallback((delta) => {
+        setSelectedMonth((prev) => {
+            const next = new Date(prev.getFullYear(), prev.getMonth() + delta, 1);
+            // Never navigate past the current month — the backend would
+            // correctly return zero data for a genuine future month, but
+            // there is nothing useful to show ahead of "now" here.
+            if (delta > 0 && next > new Date()) return prev;
+            return next;
+        });
+    }, []);
 
     const onRefresh = useCallback(() => {
-        setIsRefreshing(true);
-        fetchData(true);
+        summaryQuery.refetch();
+        todayPunchesApiQuery.refetch();
+        correctionQuery.refetch();
+        monthlyPerfQuery.refetch();
+        collectionStatsQuery.refetch();
+        collectionUpdatesQuery.refetch();
+        refetchMonthlyTarget();
         refreshPunches();
-    }, [fetchData, refreshPunches]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [refreshPunches]);
+
+    // Mirrors EmployeePunchScreen.handlePunchOutPress — punchOut() needs no
+    // form/location pre-fetch of its own (it captures GPS internally and
+    // degrades gracefully to the last known fix), so a single confirm-then-call
+    // is all that's needed here too.
+    const handlePunchOutPress = useCallback(() => {
+        Alert.alert(
+            'Punch Out',
+            'Are you sure you want to punch out?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Punch Out',
+                    style: 'destructive',
+                    onPress: async () => {
+                        const result = await punchOut();
+                        if (!result.success) {
+                            Alert.alert('Error', result.error || 'Failed to punch out.');
+                        }
+                    },
+                },
+            ]
+        );
+    }, [punchOut]);
 
     const handleLogout = useCallback(() => {
         Alert.alert(
@@ -680,7 +734,9 @@ const EmployeeHomeScreen = ({ navigation }) => {
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
-            
+
+            <DailyPunchPrompt />
+
             <HeroHeader
                 user={user}
                 role="Employee"
@@ -717,6 +773,22 @@ const EmployeeHomeScreen = ({ navigation }) => {
                                 </Text>
                             )}
                         </View>
+
+                        <TouchableOpacity
+                            style={[styles.homePunchOutBtn, isPunchingOut && styles.homePunchOutBtnDisabled]}
+                            onPress={handlePunchOutPress}
+                            disabled={isPunchingOut}
+                            activeOpacity={0.85}
+                        >
+                            {isPunchingOut ? (
+                                <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                                <>
+                                    <Icon name="log-out" size={18} color="#fff" />
+                                    <Text style={styles.homePunchOutBtnText}>Punch Out</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
 
                         <View style={styles.trackingStatsRow}>
                             <View style={styles.miniStat}>
@@ -778,7 +850,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     onPress={() => navigation.navigate('EmployeeCollections')}
                 />
 
-                {/* ── Analytics Chart (Zoho) ── */}
+                {/* ── Analytics Chart (Zoho) — commented out, not deleted, per request ──
                 <TouchableOpacity
                     style={styles.chartCard}
                     activeOpacity={0.85}
@@ -801,10 +873,19 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         </View>
                     </View>
                 </TouchableOpacity>
+                */}
 
                 <MonthlyCollectionCard
-                    collected={collectionStats?.mtd?.amount ?? monthlyCollection}
-                    target={MONTHLY_AMOUNT_TARGET}
+                    collected={monthlyTarget?.monthly_collected ?? (collectionStats?.mtd?.amount ?? monthlyCollection)}
+                    target={monthlyTarget?.monthly_target ?? 0}
+                    achievementPct={monthlyTarget?.achievement_percentage ?? 0}
+                    remainingAmt={monthlyTarget?.remaining_amount ?? 0}
+                    excessAmt={monthlyTarget?.excess_amount ?? 0}
+                    monthLabel={selectedMonth.toLocaleString('en-IN', { month: 'long', year: 'numeric' })}
+                    onPrevMonth={() => changeMonth(-1)}
+                    onNextMonth={() => changeMonth(1)}
+                    canGoNext={!isSameMonth(selectedMonth, new Date())}
+                    loading={monthlyTargetLoading}
                 />
 
                 {routePoints.length > 0 && (
@@ -888,6 +969,25 @@ const styles = StyleSheet.create({
     punchInTime: {
         fontSize: typography.sizes.xs,
         color: colors.textMuted,
+    },
+    homePunchOutBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#E53935',
+        paddingVertical: spacing.sm,
+        borderRadius: 12,
+        marginTop: spacing.sm,
+        gap: spacing.xs,
+        ...shadows.sm,
+    },
+    homePunchOutBtnDisabled: {
+        opacity: 0.6,
+    },
+    homePunchOutBtnText: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.bold,
+        color: '#fff',
     },
     trackingStatsRow: {
         flexDirection: 'row',
@@ -1156,6 +1256,12 @@ const homeStyles = StyleSheet.create({
     mcMonth: {
         fontSize: 11,
         color: colors.textMuted,
+        marginTop: 1,
+    },
+    mcMonthSelector: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
         marginTop: 1,
     },
     mcBadge: {

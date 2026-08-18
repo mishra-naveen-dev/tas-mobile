@@ -15,7 +15,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import { useFocusEffect } from '@react-navigation/native';
 import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useApiQuery } from '../../hooks/useApiQuery';
 import { filterGpsOutliers, calcTotalDistanceKm } from '../../utils/gpsUtils';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
@@ -28,8 +28,6 @@ import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
-
-const IS_DEV = __DEV__;
 
 const MapPreview = React.memo(({ points, mapRef, navigation }) => {
     const latestPoint = points[0];
@@ -144,91 +142,66 @@ const DashboardScreen = ({ navigation }) => {
     const user = auth?.user;
     const mapRef = useRef(null);
 
-    const [isLoading, setIsLoading] = useState(true);
-    const [isRefreshing, setIsRefreshing] = useState(false);
-    const [hasError, setHasError] = useState(false);
-    const [summary, setSummary] = useState({});
-    const [punches, setPunches] = useState([]);
-    const [cleanDistanceKm, setCleanDistanceKm] = useState(null); // outlier-filtered
-    const [isGpsActive, setIsGpsActive] = useState(false);
     const [selectedFilter, setSelectedFilter] = useState('ALL');
+    const todayStr = new Date().toISOString().slice(0, 10);
 
-    const fetchData = useCallback(async (isRefresh = false) => {
-        try {
-            setHasError(false);
-            if (!isRefresh) setIsLoading(true);
+    // Cache-then-network is now react-query's job (persisted to AsyncStorage
+    // via the app-level persister in src/queryClient.js) instead of this
+    // screen hand-rolling its own @dashboard_summary/@dashboard_punches/
+    // @dashboard_clean_dist snapshot.
+    const summaryQuery = useApiQuery(['dashboardDailySummary'], () => api.get('/attendance/punches/daily_summary/'));
+    const punchesQuery = useApiQuery(['dashboardTodayPunches'], () => api.get('/attendance/punches/today_punches/'));
+    const liveRouteQuery = useApiQuery(['dashboardLiveRoute', todayStr], () => api.getLiveDailyRoute({ date: todayStr }));
 
-            const cachedSummary  = await AsyncStorage.getItem('@dashboard_summary');
-            const cachedPunches  = await AsyncStorage.getItem('@dashboard_punches');
-            const cachedCleanDist = await AsyncStorage.getItem('@dashboard_clean_dist');
-            if (cachedSummary)   setSummary(JSON.parse(cachedSummary));
-            if (cachedPunches)   setPunches(JSON.parse(cachedPunches));
-            if (cachedCleanDist) setCleanDistanceKm(Number(cachedCleanDist));
+    const isLoading = summaryQuery.isLoading || punchesQuery.isLoading;
+    const isRefreshing = (summaryQuery.isFetching || punchesQuery.isFetching) && !isLoading;
 
-            try {
-                const today = new Date().toISOString().slice(0, 10);
-                const [summaryRes, punchRes, liveRes] = await Promise.all([
-                    api.get(`/attendance/punches/daily_summary/`),
-                    api.get(`/attendance/punches/today_punches/`),
-                    api.getLiveDailyRoute({ date: today }).catch(() => null), // non-blocking
-                ]);
+    // Kept quiet on a session-expired error (matches the original: the
+    // global interceptor handles the actual logout/redirect, this screen
+    // just avoids flashing its own error banner right before that happens).
+    const isSessionExpiredError = (err) => {
+        const msg = err?.message || '';
+        return msg.includes('Session expired') || msg.includes('login');
+    };
+    const hasError = !!(
+        (summaryQuery.error && !isSessionExpiredError(summaryQuery.error)) ||
+        (punchesQuery.error && !isSessionExpiredError(punchesQuery.error))
+    );
 
-                const liveSummary = summaryRes?.data || {};
-                const livePunches = punchRes?.data?.results || punchRes?.data || [];
-                setSummary(liveSummary);
-                setPunches(livePunches);
-                setIsGpsActive(livePunches.length > 0);
+    const summary = useMemo(() => summaryQuery.data || {}, [summaryQuery.data]);
+    const punches = useMemo(() => punchesQuery.data?.results || punchesQuery.data || [], [punchesQuery.data]);
+    const isGpsActive = punches.length > 0;
 
-                // Use live tracking distance with GPS outlier filtering.
-                // The daily_summary distance can be wildly wrong when any punch
-                // record was captured with a bad GPS fix (multipath / NLOS outlier).
-                // The live track gives the actual travelled path — filter it for
-                // any remaining bad points and use that as the displayed distance.
-                if (liveRes?.data?.route?.length > 0) {
-                    const clean = filterGpsOutliers(liveRes.data.route);
-                    setCleanDistanceKm(calcTotalDistanceKm(clean));
-                } else {
-                    setCleanDistanceKm(null); // fall back to summary value
-                }
-
-                AsyncStorage.setItem('@dashboard_summary', JSON.stringify(liveSummary));
-                AsyncStorage.setItem('@dashboard_punches', JSON.stringify(livePunches));
-                if (liveRes?.data?.route?.length > 0) {
-                    const clean = filterGpsOutliers(liveRes.data.route);
-                    const dist  = calcTotalDistanceKm(clean);
-                    setCleanDistanceKm(dist);
-                    AsyncStorage.setItem('@dashboard_clean_dist', String(dist));
-                }
-            } catch (apiError) {
-                if (IS_DEV) console.log('[Dashboard] API error:', apiError?.message || apiError);
-                // If session expired, try to use cached data
-                if (apiError?.message?.includes('Session expired') || apiError?.message?.includes('login')) {
-                    // Keep cached data, just show refresh needed
-                    if (IS_DEV) console.log('[Dashboard] Session expired, using cached data');
-                } else {
-                    // Other API error - keep showing error
-                    setHasError(true);
-                }
-            }
-        } catch (error) {
-            if (IS_DEV) console.log('[Dashboard] Fetch error:', error?.message);
-            if (!summary || !punches) {
-                setHasError(true);
-            }
-        } finally {
-            setIsLoading(false);
-            setIsRefreshing(false);
+    // Use live tracking distance with GPS outlier filtering. The
+    // daily_summary distance can be wildly wrong when any punch record was
+    // captured with a bad GPS fix (multipath / NLOS outlier). The live track
+    // gives the actual travelled path — filter it for any remaining bad
+    // points and use that as the displayed distance; falls back to the
+    // summary value (null here) when there's no live route yet.
+    const cleanDistanceKm = useMemo(() => {
+        const route = liveRouteQuery.data?.route;
+        if (route?.length > 0) {
+            return calcTotalDistanceKm(filterGpsOutliers(route));
         }
-    }, []);
+        return null;
+    }, [liveRouteQuery.data]);
 
     useFocusEffect(useCallback(() => {
-        fetchData(false);
-    }, [fetchData]));
+        summaryQuery.refetch();
+        punchesQuery.refetch();
+        liveRouteQuery.refetch();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []));
 
     const onRefresh = useCallback(() => {
-        setIsRefreshing(true);
-        fetchData(true);
-    }, [fetchData]);
+        summaryQuery.refetch();
+        punchesQuery.refetch();
+        liveRouteQuery.refetch();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Same combined refetch, exposed as a no-args retry for ErrorView.
+    const retryAll = onRefresh;
 
     const statsData = useMemo(() => {
         // Prefer the outlier-filtered live tracking distance.
@@ -313,7 +286,7 @@ const DashboardScreen = ({ navigation }) => {
 
             <View style={styles.contentSection}>
                 {hasError ? (
-                    <ErrorView onRetry={fetchData} style={{ marginTop: spacing.lg }} />
+                    <ErrorView onRetry={retryAll} style={{ marginTop: spacing.lg }} />
                 ) : isLoading ? (
                     <SkeletonStatsGrid style={{ marginTop: spacing.md }} />
                 ) : (
@@ -335,7 +308,7 @@ const DashboardScreen = ({ navigation }) => {
                 />
             </View>
         </>
-    ), [user, logout, isGpsActive, hasError, isLoading, statsData, routePoints, navigation, fetchData, activities, selectedFilter]);
+    ), [user, logout, isGpsActive, hasError, isLoading, statsData, routePoints, navigation, retryAll, activities, selectedFilter]);
 
     const renderItem = useCallback(({ item }) => {
         if (item.type === 'sectionHeader') {

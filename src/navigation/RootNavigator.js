@@ -21,6 +21,9 @@ import EmployeeMoreScreen from '../screens/Employee/EmployeeMoreScreen';
 import CollectionsScreen from '../screens/Common/CollectionsScreen';
 import CollectionDoneScreen from '../screens/Common/CollectionDoneScreen';
 import CollectionVisitScreen from '../screens/Common/CollectionVisitScreen';
+import MyCollectionCorrectionsScreen from '../screens/Common/MyCollectionCorrectionsScreen';
+import CollectionCorrectionFormScreen from '../screens/Common/CollectionCorrectionFormScreen';
+import CollectionCorrectionDetailScreen from '../screens/Common/CollectionCorrectionDetailScreen';
 import HelpSupportScreen from '../screens/Common/HelpSupportScreen';
 
 // Admin Screens
@@ -45,6 +48,9 @@ import ReportsScreen from '../screens/SuperAdmin/ReportsScreen';
 import RouteMapScreen from '../screens/Common/RouteMapScreen';
 import CustomerMapScreen from '../screens/Common/CustomerMapScreen';
 import PunchHistoryScreen from '../screens/Common/PunchHistoryScreen';
+import CompanionHistoryScreen from '../screens/Common/CompanionHistoryScreen';
+import PunchSessionDetailScreen from '../screens/Common/PunchSessionDetailScreen';
+import PunchVerificationMapScreen from '../screens/Common/PunchVerificationMapScreen';
 import PunchCorrectionScreen from '../screens/Common/PunchCorrectionScreen';
 import AllowanceHistoryScreen from '../screens/Common/AllowanceHistoryScreen';
 import ApplyAllowanceScreen from '../screens/Common/ApplyAllowanceScreen';
@@ -110,9 +116,15 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="Punch" component={EmployeePunchScreen} />
         <EmployeeStack.Screen name="CollectionDone" component={CollectionDoneScreen} />
         <EmployeeStack.Screen name="CollectionVisit" component={CollectionVisitScreen} />
+        <EmployeeStack.Screen name="MyCollectionCorrections" component={MyCollectionCorrectionsScreen} />
+        <EmployeeStack.Screen name="CollectionCorrectionForm" component={CollectionCorrectionFormScreen} />
+        <EmployeeStack.Screen name="CollectionCorrectionDetail" component={CollectionCorrectionDetailScreen} />
         <EmployeeStack.Screen name="RouteMap" component={RouteMapScreen} />
         <EmployeeStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <EmployeeStack.Screen name="PunchHistory" component={PunchHistoryScreen} />
+        <EmployeeStack.Screen name="CompanionHistory" component={CompanionHistoryScreen} />
+        <EmployeeStack.Screen name="PunchSessionDetail" component={PunchSessionDetailScreen} />
+        <EmployeeStack.Screen name="PunchVerificationMap" component={PunchVerificationMapScreen} />
         <EmployeeStack.Screen name="PunchCorrection" component={PunchCorrectionScreen} />
         <EmployeeStack.Screen name="AllowanceHistory" component={AllowanceHistoryScreen} />
         <EmployeeStack.Screen name="ApplyAllowance" component={ApplyAllowanceScreen} />

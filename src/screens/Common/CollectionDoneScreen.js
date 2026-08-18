@@ -41,6 +41,16 @@ const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const fmtAmount = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 
+// Client-side hint only — the 7-day window is enforced server-side from
+// last_collection_date using server time (see CollectionCorrectionRequestViewSet.create).
+// This just avoids showing the button on a collection that's obviously past it.
+const CORRECTION_WINDOW_DAYS = 7;
+const withinCorrectionWindow = (lastCollectionDate) => {
+    if (!lastCollectionDate) return false;
+    const days = (Date.now() - new Date(lastCollectionDate).getTime()) / 86400000;
+    return days <= CORRECTION_WINDOW_DAYS;
+};
+
 // Same fade-in-on-mount treatment as the main Collections list, so the two
 // screens feel like one continuous list rather than two different products.
 const AnimatedCard = React.memo(({ index, children }) => {
@@ -226,12 +236,21 @@ const CollectionDoneScreen = ({ navigation }) => {
                             >
                                 <Icon name="navigation" size={16} color={colors.primary} />
                             </TouchableOpacity>
+                            {withinCorrectionWindow(item.last_collection_date) && (
+                                <TouchableOpacity
+                                    style={styles.correctionBtn}
+                                    onPress={() => navigation.navigate('CollectionCorrectionForm', { record: item })}
+                                >
+                                    <Icon name="edit-3" size={15} color={colors.warning} />
+                                    <Text style={styles.correctionBtnText}>Request Correction</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
                     </View>
                 </View>
             </AnimatedCard>
         );
-    }, [navigateToCustomer]);
+    }, [navigateToCustomer, navigation]);
 
     const ListHeader = useCallback(() => (
         <View style={styles.listHeader}>
@@ -341,6 +360,12 @@ const styles = StyleSheet.create({
         width: 40, height: 40, borderRadius: borderRadius.md,
         borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center',
     },
+    correctionBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6, height: 40,
+        paddingHorizontal: spacing.sm, borderRadius: borderRadius.md,
+        borderWidth: 1, borderColor: colors.warning, backgroundColor: `${colors.warning}12`,
+    },
+    correctionBtnText: { fontSize: 12, fontWeight: '700', color: colors.warning },
     emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingTop: 100 },
     emptyText: { fontSize: 16, color: colors.textMuted, marginTop: 16 },
 });

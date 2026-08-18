@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import { cacheWrite, cacheRead, makeCacheKey } from '../utils/dataCache';
 import { serverStatus } from '../utils/serverStatus';
+import { secureGetItem, secureSetItem, secureMultiRemove } from '../utils/secureStorage';
 
 const PROD_URL = 'https://api.tas.namracred.co.in/api/v1';
 
@@ -79,13 +80,41 @@ const generateDeviceFingerprint = async () => {
 
 const getDeviceId = async () => {
     let deviceId = await AsyncStorage.getItem('device_fingerprint');
-    
+
     if (!deviceId) {
         deviceId = await generateDeviceFingerprint();
         await AsyncStorage.setItem('device_fingerprint', deviceId);
     }
-    
+
     return deviceId;
+};
+
+// A random id generated once per app install, distinct from the device
+// fingerprint above — that fingerprint is derived from Android's ANDROID_ID
+// and survives an uninstall/reinstall on the same physical device, so it
+// alone can't tell the backend "still the same install" apart from
+// "reinstalled." This lives in AsyncStorage, which IS wiped on uninstall, so
+// a reinstall always gets a fresh value — the backend uses a mismatch here to
+// require device re-approval again after a reinstall. Not a credential, just
+// a correlation marker, so a simple RFC4122-ish v4 generator is sufficient —
+// no crypto/uuid dependency needed.
+const generateInstallId = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+};
+
+const getInstallId = async () => {
+    let installId = await AsyncStorage.getItem('install_id');
+
+    if (!installId) {
+        installId = generateInstallId();
+        await AsyncStorage.setItem('install_id', installId);
+    }
+
+    return installId;
 };
 
 const getPlatform = () => {
@@ -118,7 +147,8 @@ const getDeviceInfo = async () => {
 };
 
 const clearAuthData = async () => {
-    await AsyncStorage.multiRemove(['access', 'refresh', 'user', 'device_id', 'device_fingerprint', 'device_info', 'session_token']);
+    await secureMultiRemove(['access', 'refresh', 'session_token']);
+    await AsyncStorage.multiRemove(['user', 'device_id', 'device_fingerprint', 'device_info']);
 };
 
 const api = axios.create({
@@ -127,10 +157,11 @@ const api = axios.create({
 });
 
 api.interceptors.request.use(async (config) => {
-    const token = await AsyncStorage.getItem('access');
+    const token = await secureGetItem('access');
     const deviceId = await getDeviceId();
+    const installId = await getInstallId();
     const deviceInfo = await getDeviceInfo();
-    const sessionToken = await AsyncStorage.getItem('session_token');
+    const sessionToken = await secureGetItem('session_token');
 
     if (token && !config.url.includes('/auth/token')) {
         config.headers.Authorization = `Bearer ${token}`;
@@ -141,6 +172,7 @@ api.interceptors.request.use(async (config) => {
     }
 
     config.headers['X-DEVICE-ID'] = deviceId;
+    config.headers['X-INSTALL-ID'] = installId;
     config.headers['X-PLATFORM'] = getPlatform();
     config.headers['X-DEVICE-INFO'] = JSON.stringify(deviceInfo);
     config.headers['X-APP-VERSION'] = '1.0.0';
@@ -163,7 +195,7 @@ function startReconnectPolling() {
     if (_reconnectTimer) return;
     _reconnectTimer = setInterval(async () => {
         try {
-            const token = await AsyncStorage.getItem('access');
+            const token = await secureGetItem('access');
             await axios.get(`${getBaseURL()}/organization/roles/`, {
                 params: { page_size: 1 },
                 timeout: 8000,
@@ -239,13 +271,13 @@ api.interceptors.response.use(
             }
 
             try {
-                const refresh = await AsyncStorage.getItem('refresh');
+                const refresh = await secureGetItem('refresh');
 
                 if (!refresh) {
                     // No refresh token — check whether user was ever authenticated.
                     // On a fresh install both access and refresh are absent; firing
                     // "Session Expired" in that state is wrong — silently reject.
-                    const access = await AsyncStorage.getItem('access');
+                    const access = await secureGetItem('access');
                     if (!access) {
                         return Promise.reject(error);
                     }
@@ -266,10 +298,10 @@ api.interceptors.response.use(
                 const newRefresh = res.data.refresh || refresh;
                 const newSessionToken = res.data.session_token;
 
-                await AsyncStorage.setItem('access', newAccess);
-                await AsyncStorage.setItem('refresh', newRefresh);
+                await secureSetItem('access', newAccess);
+                await secureSetItem('refresh', newRefresh);
                 if (newSessionToken) {
-                    await AsyncStorage.setItem('session_token', newSessionToken);
+                    await secureSetItem('session_token', newSessionToken);
                 }
 
                 originalRequest.headers.Authorization = `Bearer ${newAccess}`;
@@ -347,6 +379,21 @@ api.getAvailableDates = () => {
 
 api.getPunchHistory = (params = {}) => {
     return api.get('/attendance/punches/', { params });
+};
+
+api.getCompanionHistory = (params = {}) => {
+    return api.get('/attendance/punches/named_as_companion/', { params });
+};
+
+// Punch & Activity Verification — session-level aggregation, computed and
+// stored server-side (see apps.attendance.views.AttendancePunchViewSet.
+// sessions/session_detail on the backend). Never recomputed on-device.
+api.getPunchSessions = (params = {}) => {
+    return api.get('/attendance/punches/sessions/', { params });
+};
+
+api.getPunchSessionDetail = (punchId) => {
+    return api.get(`/attendance/punches/${punchId}/session_detail/`);
 };
 
 api.createCorrectionRequest = (data) => {
@@ -591,7 +638,13 @@ api.refreshToken = async (refreshToken) => {
 };
 
 api.logout = async () => {
-    return api.post('/auth/logout/');
+    // Sent so the backend can actively blacklist it — without this,
+    // "logout" only marked the server-side session inactive while the JWT
+    // refresh token itself stayed valid for its full lifetime (up to 95
+    // days on mobile) and could still be replayed to mint new access
+    // tokens after a user logged out.
+    const refresh = await secureGetItem('refresh');
+    return api.post('/auth/logout/', { refresh });
 };
 
 // Reverse geocode proxy — key stays on the server, never in the APK
@@ -649,6 +702,13 @@ api.getCollections = (params = {}) =>
 api.getCollectionRecord = (id) =>
     api.get(`/loans/collections/${id}/`);
 
+// Exact (case-insensitive) Loan ID lookup — distinct from getCollections'
+// fuzzy ?search=; used when a caller has a specific Loan ID (typed manually,
+// not picked from an autosuggest list) and needs to resolve it to exactly
+// one record before it can act on it (e.g. hand off to complete_visit).
+api.getCollectionByLoanId = (loanId) =>
+    api.get('/loans/collections/', { params: { loan_id: loanId } });
+
 api.getDistinctProducts = () =>
     api.get('/loans/collections/distinct_products/');
 
@@ -660,6 +720,13 @@ api.updateCollectionStatus = (id, data) =>
 
 api.getCollectionDashboardStats = () =>
     api.get('/loans/collections/dashboard_stats/');
+
+// Dynamic Monthly Collection Target (Home Screen) — server-computed from
+// assigned scheduled/demand amount (CollectionRecord.amount_due, REGULAR+OD,
+// due within the given month), never a static/manual value. `month` is
+// optional, format 'YYYY-MM'; omit for the current month.
+api.getMonthlyTarget = (month) =>
+    api.get('/loans/collections/monthly_target/', { params: month ? { month } : {} });
 
 // History of collection updates (an employee's outcome entries on a
 // collection record) — used to surface today's field activity even when it
@@ -695,5 +762,26 @@ api.getNearbyEmployees = (params = {}) =>
 
 api.setRiskCategory = (id, riskCategory) =>
     api.post(`/loans/collections/${id}/set_risk_category/`, { risk_category: riskCategory });
+
+// ── Collection Correction Requests ──
+// create/edit accept a FormData instance (supporting_document is an
+// optional file) — same multipart convention as completeVisit above.
+api.getCollectionCorrections = (params = {}) =>
+    api.get('/loans/collection-corrections/', { params });
+
+api.getCollectionCorrection = (id) =>
+    api.get(`/loans/collection-corrections/${id}/`);
+
+api.createCollectionCorrection = (formData) =>
+    api.post('/loans/collection-corrections/', formData);
+
+api.editCollectionCorrection = (id, formData) =>
+    api.post(`/loans/collection-corrections/${id}/edit/`, formData);
+
+api.withdrawCollectionCorrection = (id) =>
+    api.post(`/loans/collection-corrections/${id}/withdraw/`);
+
+api.getCollectionCorrectionTimeline = (id) =>
+    api.get(`/loans/collection-corrections/${id}/timeline/`);
 
 export default api;
