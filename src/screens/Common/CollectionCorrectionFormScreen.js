@@ -15,6 +15,25 @@ import Icon from 'react-native-vector-icons/Feather';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
+import { enqueue, registerReplayer, isNetworkError } from '../../services/OfflineQueue';
+
+registerReplayer('COLLECTION_CORRECTION', async (payload) => {
+    const fd = new FormData();
+    fd.append('collection_record', payload.collectionRecordId);
+    fd.append('requested_amount', payload.amount);
+    fd.append('reason', payload.reason);
+    if (payload.remarks) fd.append('remarks', payload.remarks);
+    if (payload.latitude) fd.append('latitude', String(payload.latitude));
+    if (payload.longitude) fd.append('longitude', String(payload.longitude));
+    if (payload.document) {
+        fd.append('supporting_document', {
+            uri: payload.document.uri,
+            type: payload.document.type || 'image/jpeg',
+            name: payload.document.fileName || 'correction_document.jpg',
+        });
+    }
+    await api.createCollectionCorrection(fd);
+});
 import { colors, typography, spacing } from '../../theme/tokens';
 
 const REASON_MIN_LENGTH = 10;
@@ -73,8 +92,10 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
         if (!validate()) return;
 
         setSubmitting(true);
+        // Declared outside the outer try block so the catch handler can
+        // still queue it for offline sync on a network failure.
+        let coords = {};
         try {
-            let coords = {};
             try {
                 const loc = await LocationService.getCurrentLocation();
                 if (loc?.latitude && loc?.longitude) {
@@ -112,6 +133,23 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
                 ]);
             }
         } catch (err) {
+            if (!editMode && isNetworkError(err)) {
+                await enqueue('COLLECTION_CORRECTION', {
+                    collectionRecordId: record.id,
+                    amount,
+                    reason: reason.trim(),
+                    remarks: remarks.trim(),
+                    latitude: coords.latitude || null,
+                    longitude: coords.longitude || null,
+                    document,
+                });
+                Alert.alert(
+                    'Saved — will sync automatically',
+                    "No internet connection right now. Your correction request has been saved on this device and will upload automatically once you're back online.",
+                    [{ text: 'OK', onPress: () => navigation.goBack() }],
+                );
+                return;
+            }
             const msg = err?.response?.data?.error || err?.response?.data?.detail || 'Failed to submit correction request.';
             setError(Array.isArray(msg) ? msg.join(', ') : msg);
         } finally {

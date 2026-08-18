@@ -13,6 +13,7 @@ import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
+import { enqueue, isNetworkError } from '../../services/OfflineQueue';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
@@ -197,6 +198,10 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
   const [visitSaving, setVisitSaving] = useState(false);
   const visitStartTimeRef = useRef(new Date());
+
+  // Synchronous double-tap guard — `visitSaving`/PunchContext's submitting
+  // state can lag a fast second tap by a frame or two; this ref can't.
+  const submittingRef = useRef(false);
 
   // Collection-status evidence (Cash photo(s) / UPI screenshot / cheque
   // photo) — required by the same shared validateCollectionStatus rule
@@ -499,6 +504,39 @@ const EmployeePunchScreen = ({ navigation }) => {
             return false;
           }
         }
+
+        // Payment-evidence requirement — mirrors validateCollectionStatus's
+        // CASH/UPI/CHEQUE evidence rules, but without a `status` field (this
+        // flow has none) so it can't reuse that helper directly.
+        if (form.visit_type === 'COLLECTION') {
+          if (form.payment_mode === 'CASH') {
+            const hasAny = ['CUSTOMER', 'RECEIPT', 'DOCUMENT'].some((k) => photos.some((p) => p.kind === k));
+            if (!hasAny) {
+              Alert.alert('Required', 'Please add at least one photo — Customer, Receipt, or Document.');
+              return false;
+            }
+          }
+          if (form.payment_mode === 'UPI') {
+            if (!form.upi_ref?.trim()) {
+              Alert.alert('Required', 'Please enter the UPI reference number.');
+              return false;
+            }
+            if (!upiScreenshot) {
+              Alert.alert('Required', 'Please add the UPI screenshot.');
+              return false;
+            }
+          }
+          if (form.payment_mode === 'CHEQUE') {
+            if (!form.cheque_no?.trim()) {
+              Alert.alert('Required', 'Please enter the cheque number.');
+              return false;
+            }
+            if (!chequePhoto) {
+              Alert.alert('Required', 'Please add the cheque photo.');
+              return false;
+            }
+          }
+        }
       }
     }
 
@@ -588,6 +626,28 @@ const EmployeePunchScreen = ({ navigation }) => {
       resetForm();
       Alert.alert('Success', 'Visit recorded successfully!');
     } catch (err) {
+      if (isNetworkError(err)) {
+        await enqueue('COLLECTION_VISIT', {
+          collectionId,
+          form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
+          localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+          customerName: resolvedRecord?.customer_name || form.customer_name,
+          customerAddress: resolvedRecord?.address,
+          photos,
+          upiScreenshot,
+          chequePhoto,
+          audioNote,
+          visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
+          extra,
+        });
+        resetPunchForm();
+        resetForm();
+        Alert.alert(
+          'Saved — will sync automatically',
+          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online.",
+        );
+        return;
+      }
       const respData = err?.response?.data;
       if (respData?.error === 'location_out_of_range') {
         setOutOfRangeModal({ visible: true, distanceM: respData.distance_m });
@@ -605,37 +665,50 @@ const EmployeePunchScreen = ({ navigation }) => {
   };
 
   const submitPunch = async (extra = {}) => {
-    if (collectionId) {
-      await submitCompleteVisit(extra);
-      return;
-    }
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      if (collectionId) {
+        await submitCompleteVisit(extra);
+        return;
+      }
 
-    const locationData = {
-      ...localLocation,
-      current_address: localLocation.current_address,
-    };
+      const locationData = {
+        ...localLocation,
+        current_address: localLocation.current_address,
+      };
 
-    const result = await punchIn({ ...form, ...extra }, locationData);
+      const result = await punchIn({ ...form, ...extra }, locationData);
 
-    if (result.success) {
-      // Auto-close the dialog once the punch is recorded, instead of leaving
-      // it open for another entry.
-      resetPunchForm();
-      resetForm();
-      Alert.alert('Success', 'Punch recorded!');
-      return;
-    }
+      if (result.success) {
+        // Auto-close the dialog once the punch is recorded, instead of leaving
+        // it open for another entry.
+        resetPunchForm();
+        resetForm();
+        Alert.alert('Success', 'Punch recorded!');
+        return;
+      }
 
-    if (result.locationOutOfRange) {
-      setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
-      return;
+      if (result.queuedOffline) {
+        resetPunchForm();
+        resetForm();
+        Alert.alert('Saved — will sync automatically', result.error);
+        return;
+      }
+
+      if (result.locationOutOfRange) {
+        setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
+        return;
+      }
+      if (result.sameLocationDuplicate) {
+        setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
+        return;
+      }
+      // Any other failure already surfaces via the error Banner (errorMessage
+      // state set in PunchContext) — nothing else to do here.
+    } finally {
+      submittingRef.current = false;
     }
-    if (result.sameLocationDuplicate) {
-      setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
-      return;
-    }
-    // Any other failure already surfaces via the error Banner (errorMessage
-    // state set in PunchContext) — nothing else to do here.
   };
 
   const handleSubmit = async () => {
@@ -1352,32 +1425,7 @@ const EmployeePunchScreen = ({ navigation }) => {
                         />
                       )}
 
-                      {form.visit_type === 'COLLECTION' && (
-                        <>
-                          <Text style={styles.label}>Payment Mode *</Text>
-                          <View style={styles.chips}>
-                            {PAYMENT_MODES.map((m) => (
-                              <TouchableOpacity key={m.value} style={[styles.chip, form.payment_mode === m.value && styles.chipActive]} onPress={() => updateForm('payment_mode', m.value)}>
-                                <Text style={[styles.chipText, form.payment_mode === m.value && styles.chipTextActive]}>{m.label}</Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-
-                          {form.payment_mode === 'UPI' && (
-                            <>
-                              <Text style={styles.label}>UPI Reference ID</Text>
-                              <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Ref" placeholderTextColor={colors.textMuted} />
-                            </>
-                          )}
-
-                          {form.payment_mode === 'CHEQUE' && (
-                            <>
-                              <Text style={styles.label}>Cheque Number</Text>
-                              <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque No" placeholderTextColor={colors.textMuted} />
-                            </>
-                          )}
-                        </>
-                      )}
+                      {form.visit_type === 'COLLECTION' && renderPaymentModeSection()}
                     </>
                   )}
                 </>

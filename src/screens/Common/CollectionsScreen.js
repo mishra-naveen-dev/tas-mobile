@@ -71,10 +71,11 @@ const TYPE_META = {
 
 // DPD (days past due) sub-buckets — only relevant when Type filter = OD
 const DPD_BUCKET_OPTIONS = [
-    { value: '0-30', label: '0-30', min: 0, max: 30 },
-    { value: '31-60', label: '31-60', min: 31, max: 60 },
-    { value: '61-90', label: '61-90', min: 61, max: 90 },
-    { value: '91+', label: '91+', min: 91, max: Infinity },
+    { value: '60', label: '1-60', min: 0, max: 60 },
+    { value: '90', label: '61-90', min: 61, max: 90 },
+    { value: '180', label: '91-180', min: 91, max: 180 },
+    { value: '360', label: '181-360', min: 181, max: 360 },
+    { value: '360+', label: '360+', min: 361, max: Infinity },
 ];
 const matchesDpdBucket = (days, bucketValue) => {
     if (days == null) return false;
@@ -813,9 +814,9 @@ const CollectionsScreen = ({ route }) => {
                                 })()}
                                 {item.dpd_days != null && item.dpd_days > 0 && (() => {
                                     const d = item.dpd_days;
-                                    const c = d > 90 ? '#7f1d1d'
-                                            : d > 60 ? '#b91c1c'
-                                            : d > 30 ? '#d97706'
+                                    const c = d > 360 ? '#7f1d1d'
+                                            : d > 180 ? '#b91c1c'
+                                            : d > 90 ? '#d97706'
                                             : '#f59e0b';
                                     return (
                                         <View style={[styles.typeTag, { backgroundColor: c + '22' }]}>

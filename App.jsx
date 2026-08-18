@@ -14,8 +14,12 @@ import ApplicationActivityService from './src/services/ApplicationActivityServic
 import { colors } from './src/theme/tokens';
 import SplashScreen from './src/components/SplashScreen';
 import { queryClient, asyncStoragePersister, wireReactQueryToAppEvents } from './src/queryClient';
+import { startAutoSync } from './src/services/OfflineQueue';
+import { registerCollectionVisitOfflineReplayer } from './src/utils/collectionVisitRules';
 
 wireReactQueryToAppEvents();
+registerCollectionVisitOfflineReplayer();
+startAutoSync();
 
 const AppContent = () => {
     const auth = useAuth();

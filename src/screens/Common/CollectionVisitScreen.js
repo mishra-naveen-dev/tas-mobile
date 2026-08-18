@@ -14,6 +14,7 @@ import { usePunch } from '../../context/PunchContext';
 import { useAuth } from '../../context/AuthContext';
 import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
 import GeocodingService from '../../services/GeocodingService';
+import { enqueue, isNetworkError } from '../../services/OfflineQueue';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import { colors, typography, spacing } from '../../theme/tokens';
 import {
@@ -403,6 +404,27 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch (err) {
+      if (isNetworkError(err)) {
+        await enqueue('COLLECTION_VISIT', {
+          collectionId,
+          form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
+          localLocation,
+          customerName: record?.customer_name || customerName,
+          customerAddress: record?.address || customerAddress,
+          photos,
+          upiScreenshot,
+          chequePhoto,
+          audioNote,
+          visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
+          extra,
+        });
+        Alert.alert(
+          'Saved — will sync automatically',
+          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online.",
+          [{ text: 'OK', onPress: () => navigation.goBack() }],
+        );
+        return;
+      }
       const respData = err?.response?.data;
       if (respData?.error === 'location_out_of_range') {
         setOutOfRangeModal({ visible: true, distanceM: respData.distance_m });

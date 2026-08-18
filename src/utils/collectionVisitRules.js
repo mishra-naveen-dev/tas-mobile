@@ -7,6 +7,8 @@
 // _audio_required_reason, CompleteVisitSerializer) so all three stay in sync.
 import { colors } from '../theme/tokens';
 import { isPhone } from '../common/helpers/validationHelpers';
+import { registerReplayer } from '../services/OfflineQueue';
+import api from '../api/api';
 
 export const STATUS_OPTIONS = [
   { value: 'PENDING', label: 'P2P', color: colors.textMuted },
@@ -22,10 +24,11 @@ export const VISIT_TYPE_OPTIONS = [
 ];
 
 export const DPD_BUCKET_OPTIONS = [
-  { value: '0-30', label: '0-30' },
-  { value: '31-60', label: '31-60' },
-  { value: '61-90', label: '61-90' },
-  { value: '91+', label: '91+' },
+  { value: '60', label: '1-60' },
+  { value: '90', label: '61-90' },
+  { value: '180', label: '91-180' },
+  { value: '360', label: '181-360' },
+  { value: '360+', label: '360+' },
 ];
 
 export const YES_NO_OPTIONS = [
@@ -158,6 +161,32 @@ export const buildCompleteVisitFormData = ({
 
   return fd;
 };
+
+/**
+ * Wires the offline outbox's 'COLLECTION_VISIT' replayer — called once from
+ * App.jsx at startup, not from either screen, so it's registered regardless
+ * of which screen (if either) happens to be mounted when connectivity comes
+ * back and the queue drains.
+ *
+ * Deliberately does NOT call PunchContext's registerExternalPunchIn: that
+ * side effect ("I am punching in right now" — flips live punch state,
+ * starts live tracking) only makes sense for an in-the-moment submit, not a
+ * background sync that may complete minutes later after the user has
+ * already moved on. The visit itself still saves correctly either way.
+ */
+export function registerCollectionVisitOfflineReplayer() {
+  registerReplayer('COLLECTION_VISIT', async (payload) => {
+    const fd = buildCompleteVisitFormData({
+      ...payload,
+      form: {
+        ...payload.form,
+        promise_date: payload.form.promise_date ? new Date(payload.form.promise_date) : null,
+      },
+      visitStartTime: payload.visitStartTime ? new Date(payload.visitStartTime) : null,
+    });
+    await api.completeVisit(payload.collectionId, fd);
+  });
+}
 
 /**
  * Collection-status validation shared by both screens — returns an error
