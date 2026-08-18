@@ -6,9 +6,20 @@ import { captureFieldActivityLocation } from '../hooks/useFieldActivityLocation'
 import GeocodingService from '../services/GeocodingService';
 import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
+import { enqueue, isNetworkError, registerReplayer, generateTransactionId } from '../services/OfflineQueue';
 
 const IS_DEV = __DEV__;
 const GEOCODE_TIMEOUT_MS = 6000;
+
+// The punch-in payload built below is already a plain, JSON-safe object
+// (no Date/File instances), so it can be queued and replayed as-is. Not
+// optimistic about live/tracking state on queue — isActive/LiveTracking are
+// only ever flipped once the server actually confirms the punch, so the UI
+// never claims "you're punched in and tracking" for something that hasn't
+// landed yet; fetchTodayPunches() picks up the real state once it does.
+registerReplayer('PUNCH_IN', async (payload) => {
+  await api.post('/attendance/punches/', payload);
+});
 
 // Reverse geocoding must never be able to hang the punch flow — race it
 // against a timeout and fall back to null (caller uses raw coordinates).
@@ -197,9 +208,16 @@ export const PunchProvider = ({ children }) => {
     setPunchState(STATES.SUBMITTING);
     setErrorMessage(null);
     setSuccess(false);
-    
+
+    // Declared outside the try block so the catch handler can still queue
+    // it for offline sync on a network failure.
+    let payload;
     try {
-      const payload = {
+      payload = {
+        // Generated once per real submission, reused unchanged for both the
+        // live attempt and the offline-queued retry (if it falls through to
+        // that) — see AttendancePunch.client_transaction_id server-side.
+        client_transaction_id: generateTransactionId(),
         punch_type: 'PUNCH_IN',  // Always PUNCH_IN for initial punch
         latitude: locationData.latitude,
         longitude: locationData.longitude,
@@ -305,6 +323,17 @@ export const PunchProvider = ({ children }) => {
           sameLocationDuplicate: true,
           otherLoanId: respData.other_loan_id,
           error: respData.message,
+        };
+      }
+
+      if (isNetworkError(err)) {
+        await enqueue('PUNCH_IN', payload);
+        setPunchState(STATES.IDLE);
+        setErrorMessage(null);
+        return {
+          success: false,
+          queuedOffline: true,
+          error: "No internet connection. Your punch has been saved on this device and will sync automatically once you're back online.",
         };
       }
 

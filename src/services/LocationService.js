@@ -17,7 +17,9 @@ const CONFIG = {
   gpsTimeout: 20000,
   trackingInterval: 120000, // 2 minutes — battery efficient per spec
   distanceFilter: 100,      // 100 metres — triggers update on movement even within interval
-  maxAccuracy: 100,         // reject fixes worse than 100 m — filters WiFi/cell-tower noise
+  maxAccuracy: 100,         // live-tracking stream only — drops noisy points from the route line
+  sampleWindowMs: 8000,     // one-off capture (punch/visit): keep sampling for up to this long...
+  goodEnoughAccuracyM: 25,  // ...or stop early the moment a reading this good comes in
 };
 
 class LocationService {
@@ -148,41 +150,48 @@ class LocationService {
     // keeps working when the app is in the background. Best-effort; never blocks.
     this.ensureBackgroundPermission();
 
+    // Multi-sample acquisition: a single GPS fix — especially the first one
+    // after a cold start, or indoors — is often much worse than the chip
+    // settles to a couple of seconds later (e.g. 157m → 92m → 61m → 48m as
+    // successive fixes come in). Keep sampling for a short window and keep
+    // the best (lowest accuracy value) reading seen, instead of taking
+    // whichever fix happens to arrive first. Never rejects on the final
+    // accuracy — the caller always gets a usable point; poor accuracy is
+    // just recorded as-is, not blocked.
     return new Promise((resolve) => {
       let resolved = false;
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          console.warn('[Location] GPS timeout');
-          if (CONFIG.mockEnabled) {
-            resolve(this.getMockLocation());
-          } else {
-            resolve(this.createError('GPS request timed out. Please try again.', 'TIMEOUT'));
-          }
+      let bestReading = null;
+      let watchId = null;
+
+      const finish = (result) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(windowTimer);
+        if (watchId != null) Geolocation.clearWatch(watchId);
+        resolve(result);
+      };
+
+      const windowTimer = setTimeout(() => {
+        if (bestReading) {
+          if (__DEV__) console.log('[Location] Sample window elapsed, using best reading:', bestReading.accuracy, 'm');
+          finish(bestReading);
+        } else if (CONFIG.mockEnabled) {
+          finish(this.getMockLocation());
+        } else {
+          console.warn('[Location] GPS timeout — no usable sample');
+          finish(this.createError('GPS request timed out. Please try again.', 'TIMEOUT'));
         }
-      }, CONFIG.gpsTimeout);
+      }, CONFIG.sampleWindowMs);
 
-      Geolocation.getCurrentPosition(
+      watchId = Geolocation.watchPosition(
         (position) => {
-          if (resolved) return;
-          clearTimeout(timeout);
-          resolved = true;
-
           const { latitude, longitude, accuracy, speed, altitude, heading, mocked } = position.coords;
-
           if (!this.isValidCoord(latitude, longitude)) {
-            console.warn('[Location] Invalid coordinates');
-            if (CONFIG.mockEnabled) {
-              resolve(this.getMockLocation());
-            } else {
-              resolve(this.createError('Invalid GPS coordinates detected.', 'INVALID'));
-            }
+            console.warn('[Location] Ignoring invalid coordinates sample');
             return;
           }
 
-          if (__DEV__) console.log('[Location] GPS success:', latitude.toFixed(4), longitude.toFixed(4));
-
-          resolve({
+          const reading = {
             latitude,
             longitude,
             accuracy: accuracy || 50,
@@ -195,30 +204,46 @@ class LocationService {
             timestamp: Date.now(),
             isMock: false,
             address: '',
-          });
+          };
+
+          if (__DEV__) console.log('[Location] Sample:', reading.accuracy, 'm');
+
+          if (!bestReading || reading.accuracy < bestReading.accuracy) {
+            bestReading = reading;
+          }
+
+          if (bestReading.accuracy <= CONFIG.goodEnoughAccuracyM) {
+            if (__DEV__) console.log('[Location] Good enough, stopping early:', bestReading.accuracy, 'm');
+            finish(bestReading);
+          }
         },
         (error) => {
-          if (resolved) return;
-          clearTimeout(timeout);
-          resolved = true;
+          if (bestReading) {
+            // Already have at least one usable sample from before the watch
+            // errored (e.g. GPS dropped mid-window) — use it rather than
+            // failing outright.
+            finish(bestReading);
+            return;
+          }
 
           console.error('[Location] GPS error:', error.code, error.message);
 
           if (CONFIG.mockEnabled) {
             if (__DEV__) console.log('[Location] Falling back to mock');
-            resolve(this.getMockLocation());
+            finish(this.getMockLocation());
           } else {
             // code 1 = permission, 2 = location services (GPS) off, 3 = timeout
             const type = error.code === 1 ? 'PERMISSION_BLOCKED'
               : error.code === 2 ? 'LOCATION_OFF'
               : 'GPS_ERROR';
-            resolve(this.createError(this.getErrorMessage(error.code), type));
+            finish(this.createError(this.getErrorMessage(error.code), type));
           }
         },
         {
           enableHighAccuracy: true,
-          timeout: CONFIG.gpsTimeout + 5000,
-          maximumAge: 0,
+          distanceFilter: 0,
+          interval: 1000,
+          fastestInterval: 500,
         }
       );
     });

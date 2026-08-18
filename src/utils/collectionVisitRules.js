@@ -74,11 +74,12 @@ export const isAudioRequiredFor = (form) => (
 export const buildCompleteVisitFormData = ({
   form, localLocation, customerName, customerAddress,
   photos = [], upiScreenshot, chequePhoto, audioNote,
-  visitStartTime, extra = {},
+  visitStartTime, extra = {}, clientTransactionId,
 }) => {
   const fd = new FormData();
   const put = (k, v) => { if (v !== undefined && v !== null && v !== '') fd.append(k, String(v)); };
 
+  put('client_transaction_id', clientTransactionId);
   put('latitude', localLocation.latitude);
   put('longitude', localLocation.longitude);
   put('accuracy', localLocation.accuracy);

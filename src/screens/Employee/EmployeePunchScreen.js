@@ -13,10 +13,11 @@ import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
+import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
-  validateCollectionStatus, validateVisitType,
+  validateCollectionStatus, validateVisitType, validateCustomerPhone,
 } from '../../utils/collectionVisitRules';
 
 const { width } = Dimensions.get('window');
@@ -171,6 +172,8 @@ const EmployeePunchScreen = ({ navigation }) => {
     cheque_no: '',
     customer_name: '',
     customer_phone: '',
+    phone_correct: null,
+    corrected_customer_phone: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
@@ -195,6 +198,10 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
   const [visitSaving, setVisitSaving] = useState(false);
   const visitStartTimeRef = useRef(new Date());
+
+  // Synchronous double-tap guard — `visitSaving`/PunchContext's submitting
+  // state can lag a fast second tap by a frame or two; this ref can't.
+  const submittingRef = useRef(false);
 
   // Collection-status evidence (Cash photo(s) / UPI screenshot / cheque
   // photo) — required by the same shared validateCollectionStatus rule
@@ -258,6 +265,12 @@ const EmployeePunchScreen = ({ navigation }) => {
       loan_id: rec.loan_id,
       customer_name: rec.customer_name && rec.customer_name !== 'Unknown' ? rec.customer_name : prev.customer_name,
       amount: rec.amount_due ? String(rec.amount_due) : prev.amount,
+      // No phone on file at all — nothing to "confirm," go straight to
+      // asking for one (same corrected_customer_phone validation path as
+      // CollectionVisitScreen). Otherwise reset to unanswered so a
+      // previously-resolved record's answer never carries over to this one.
+      phone_correct: rec.customer_phone ? null : false,
+      corrected_customer_phone: '',
     }));
     setCollectionId(rec.id);
     setResolvedRecord(rec);
@@ -480,6 +493,50 @@ const EmployeePunchScreen = ({ navigation }) => {
           Alert.alert('Invalid', 'Enter a valid 10-digit customer phone number');
           return false;
         }
+        // Only applies once a real record has resolved (collectionId set) —
+        // that's the only case this submits through complete_visit, the
+        // endpoint CompleteVisitSerializer's phone-confirmation check
+        // actually gates. Matches CollectionVisitScreen's own validate().
+        if (form.visit_type === 'COLLECTION' && collectionId) {
+          const phoneErr = validateCustomerPhone(form);
+          if (phoneErr) {
+            Alert.alert('Customer Phone', phoneErr);
+            return false;
+          }
+        }
+
+        // Payment-evidence requirement — mirrors validateCollectionStatus's
+        // CASH/UPI/CHEQUE evidence rules, but without a `status` field (this
+        // flow has none) so it can't reuse that helper directly.
+        if (form.visit_type === 'COLLECTION') {
+          if (form.payment_mode === 'CASH') {
+            const hasAny = ['CUSTOMER', 'RECEIPT', 'DOCUMENT'].some((k) => photos.some((p) => p.kind === k));
+            if (!hasAny) {
+              Alert.alert('Required', 'Please add at least one photo — Customer, Receipt, or Document.');
+              return false;
+            }
+          }
+          if (form.payment_mode === 'UPI') {
+            if (!form.upi_ref?.trim()) {
+              Alert.alert('Required', 'Please enter the UPI reference number.');
+              return false;
+            }
+            if (!upiScreenshot) {
+              Alert.alert('Required', 'Please add the UPI screenshot.');
+              return false;
+            }
+          }
+          if (form.payment_mode === 'CHEQUE') {
+            if (!form.cheque_no?.trim()) {
+              Alert.alert('Required', 'Please enter the cheque number.');
+              return false;
+            }
+            if (!chequePhoto) {
+              Alert.alert('Required', 'Please add the cheque photo.');
+              return false;
+            }
+          }
+        }
       }
     }
 
@@ -507,6 +564,8 @@ const EmployeePunchScreen = ({ navigation }) => {
     cheque_no: '',
     customer_name: '',
     customer_phone: '',
+    phone_correct: null,
+    corrected_customer_phone: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
@@ -548,6 +607,10 @@ const EmployeePunchScreen = ({ navigation }) => {
 
   const submitCompleteVisit = async (extra = {}) => {
     setVisitSaving(true);
+    // Generated once per real submission, reused unchanged for both the
+    // live attempt and the offline-queued retry (if it falls through to
+    // that) — see CollectionUpdate.client_transaction_id server-side.
+    const clientTransactionId = generateTransactionId();
     try {
       const fd = buildCompleteVisitFormData({
         form,
@@ -560,6 +623,7 @@ const EmployeePunchScreen = ({ navigation }) => {
         audioNote,
         visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current : null,
         extra,
+        clientTransactionId,
       });
       const res = await api.completeVisit(collectionId, fd);
       await registerExternalPunchIn(res.data, localLocation);
@@ -567,6 +631,29 @@ const EmployeePunchScreen = ({ navigation }) => {
       resetForm();
       Alert.alert('Success', 'Visit recorded successfully!');
     } catch (err) {
+      if (isNetworkError(err)) {
+        await enqueue('COLLECTION_VISIT', {
+          collectionId,
+          form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
+          localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+          customerName: resolvedRecord?.customer_name || form.customer_name,
+          customerAddress: resolvedRecord?.address,
+          photos,
+          upiScreenshot,
+          chequePhoto,
+          audioNote,
+          visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
+          extra,
+          clientTransactionId,
+        });
+        resetPunchForm();
+        resetForm();
+        Alert.alert(
+          'Saved — will sync automatically',
+          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online.",
+        );
+        return;
+      }
       const respData = err?.response?.data;
       if (respData?.error === 'location_out_of_range') {
         setOutOfRangeModal({ visible: true, distanceM: respData.distance_m });
@@ -584,37 +671,50 @@ const EmployeePunchScreen = ({ navigation }) => {
   };
 
   const submitPunch = async (extra = {}) => {
-    if (collectionId) {
-      await submitCompleteVisit(extra);
-      return;
-    }
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      if (collectionId) {
+        await submitCompleteVisit(extra);
+        return;
+      }
 
-    const locationData = {
-      ...localLocation,
-      current_address: localLocation.current_address,
-    };
+      const locationData = {
+        ...localLocation,
+        current_address: localLocation.current_address,
+      };
 
-    const result = await punchIn({ ...form, ...extra }, locationData);
+      const result = await punchIn({ ...form, ...extra }, locationData);
 
-    if (result.success) {
-      // Auto-close the dialog once the punch is recorded, instead of leaving
-      // it open for another entry.
-      resetPunchForm();
-      resetForm();
-      Alert.alert('Success', 'Punch recorded!');
-      return;
-    }
+      if (result.success) {
+        // Auto-close the dialog once the punch is recorded, instead of leaving
+        // it open for another entry.
+        resetPunchForm();
+        resetForm();
+        Alert.alert('Success', 'Punch recorded!');
+        return;
+      }
 
-    if (result.locationOutOfRange) {
-      setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
-      return;
+      if (result.queuedOffline) {
+        resetPunchForm();
+        resetForm();
+        Alert.alert('Saved — will sync automatically', result.error);
+        return;
+      }
+
+      if (result.locationOutOfRange) {
+        setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
+        return;
+      }
+      if (result.sameLocationDuplicate) {
+        setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
+        return;
+      }
+      // Any other failure already surfaces via the error Banner (errorMessage
+      // state set in PunchContext) — nothing else to do here.
+    } finally {
+      submittingRef.current = false;
     }
-    if (result.sameLocationDuplicate) {
-      setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
-      return;
-    }
-    // Any other failure already surfaces via the error Banner (errorMessage
-    // state set in PunchContext) — nothing else to do here.
   };
 
   const handleSubmit = async () => {
@@ -1277,42 +1377,61 @@ const EmployeePunchScreen = ({ navigation }) => {
                       />
 
                       <Text style={styles.label}>Customer Phone</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={form.customer_phone}
-                        onChangeText={(t) => updateForm('customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
-                        placeholder="10-digit mobile number"
-                        placeholderTextColor={colors.textMuted}
-                        keyboardType="number-pad"
-                        maxLength={10}
-                      />
-
-                      {form.visit_type === 'COLLECTION' && (
+                      {collectionId && resolvedRecord?.customer_phone ? (
                         <>
-                          <Text style={styles.label}>Payment Mode *</Text>
+                          <View style={styles.phoneRecordedRow}>
+                            <Icon name="phone" size={14} color={colors.textMuted} />
+                            <Text style={styles.phoneRecordedText}>{resolvedRecord.customer_phone}</Text>
+                          </View>
                           <View style={styles.chips}>
-                            {PAYMENT_MODES.map((m) => (
-                              <TouchableOpacity key={m.value} style={[styles.chip, form.payment_mode === m.value && styles.chipActive]} onPress={() => updateForm('payment_mode', m.value)}>
-                                <Text style={[styles.chipText, form.payment_mode === m.value && styles.chipTextActive]}>{m.label}</Text>
+                            {YES_NO_OPTIONS.map((o) => (
+                              <TouchableOpacity
+                                key={String(o.value)}
+                                style={[styles.chip, form.phone_correct === o.value && styles.chipActive]}
+                                onPress={() => updateForm('phone_correct', o.value)}
+                              >
+                                <Text style={[styles.chipText, form.phone_correct === o.value && styles.chipTextActive]}>{o.label}</Text>
                               </TouchableOpacity>
                             ))}
                           </View>
-
-                          {form.payment_mode === 'UPI' && (
-                            <>
-                              <Text style={styles.label}>UPI Reference ID</Text>
-                              <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Ref" placeholderTextColor={colors.textMuted} />
-                            </>
-                          )}
-
-                          {form.payment_mode === 'CHEQUE' && (
-                            <>
-                              <Text style={styles.label}>Cheque Number</Text>
-                              <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque No" placeholderTextColor={colors.textMuted} />
-                            </>
+                          {form.phone_correct === false && (
+                            <TextInput
+                              style={styles.input}
+                              value={form.corrected_customer_phone}
+                              onChangeText={(t) => updateForm('corrected_customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                              placeholder="Customer's correct 10-digit number"
+                              placeholderTextColor={colors.textMuted}
+                              keyboardType="number-pad"
+                              maxLength={10}
+                            />
                           )}
                         </>
+                      ) : collectionId ? (
+                        <>
+                          <Text style={styles.phoneRecordedText}>No phone number on file for this customer.</Text>
+                          <TextInput
+                            style={styles.input}
+                            value={form.corrected_customer_phone}
+                            onChangeText={(t) => updateForm('corrected_customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                            placeholder="Customer's 10-digit number"
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="number-pad"
+                            maxLength={10}
+                          />
+                        </>
+                      ) : (
+                        <TextInput
+                          style={styles.input}
+                          value={form.customer_phone}
+                          onChangeText={(t) => updateForm('customer_phone', t.replace(/[^0-9]/g, '').slice(0, 10))}
+                          placeholder="10-digit mobile number"
+                          placeholderTextColor={colors.textMuted}
+                          keyboardType="number-pad"
+                          maxLength={10}
+                        />
                       )}
+
+                      {form.visit_type === 'COLLECTION' && renderPaymentModeSection()}
                     </>
                   )}
                 </>
@@ -1697,6 +1816,8 @@ const styles = StyleSheet.create({
   locText: { fontSize: typography.sizes.sm, fontWeight: '500' },
   mockText: { fontSize: typography.sizes.xs, color: colors.warning, marginTop: spacing.xs },
   label: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.text, marginBottom: spacing.sm, marginTop: spacing.md },
+  phoneRecordedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
+  phoneRecordedText: { fontSize: typography.sizes.sm, color: colors.textDark, fontWeight: '600' },
   chips: { flexDirection: 'row', flexWrap: 'wrap' },
   chip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.background, borderRadius: 20, marginRight: spacing.sm, marginBottom: spacing.sm },
   chipActive: { backgroundColor: colors.primary },
