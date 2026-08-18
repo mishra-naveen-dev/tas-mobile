@@ -13,6 +13,7 @@ import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
+import { enqueue, isNetworkError } from '../../services/OfflineQueue';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
@@ -197,12 +198,9 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [showPromiseDatePicker, setShowPromiseDatePicker] = useState(false);
   const [visitSaving, setVisitSaving] = useState(false);
   const visitStartTimeRef = useRef(new Date());
-  // Synchronous double-tap guard — `isSubmitting` (React state, derived
-  // from punchState/visitSaving) can lag a fast second tap by a frame or
-  // two before the submit button actually disables; this ref can't. Same
-  // pattern CollectionVisitScreen already uses for the same reason — a
-  // missed guard here let one real visit submit twice, showing up as
-  // duplicate Punch In + Collection entries on the Route Map.
+
+  // Synchronous double-tap guard — `visitSaving`/PunchContext's submitting
+  // state can lag a fast second tap by a frame or two; this ref can't.
   const submittingRef = useRef(false);
 
   // Collection-status evidence (Cash photo(s) / UPI screenshot / cheque
@@ -491,9 +489,25 @@ const EmployeePunchScreen = ({ navigation }) => {
           Alert.alert('Required', 'Payment mode is required');
           return false;
         }
-        // Same evidence requirement as validateCollectionStatus (reused
-        // as-is here, not via that helper, since this flow has no
-        // Collection Status field for it to check first).
+        if (form.customer_phone && !isPhone(form.customer_phone)) {
+          Alert.alert('Invalid', 'Enter a valid 10-digit customer phone number');
+          return false;
+        }
+        // Only applies once a real record has resolved (collectionId set) —
+        // that's the only case this submits through complete_visit, the
+        // endpoint CompleteVisitSerializer's phone-confirmation check
+        // actually gates. Matches CollectionVisitScreen's own validate().
+        if (form.visit_type === 'COLLECTION' && collectionId) {
+          const phoneErr = validateCustomerPhone(form);
+          if (phoneErr) {
+            Alert.alert('Customer Phone', phoneErr);
+            return false;
+          }
+        }
+
+        // Payment-evidence requirement — mirrors validateCollectionStatus's
+        // CASH/UPI/CHEQUE evidence rules, but without a `status` field (this
+        // flow has none) so it can't reuse that helper directly.
         if (form.visit_type === 'COLLECTION') {
           if (form.payment_mode === 'CASH') {
             const hasAny = ['CUSTOMER', 'RECEIPT', 'DOCUMENT'].some((k) => photos.some((p) => p.kind === k));
@@ -521,21 +535,6 @@ const EmployeePunchScreen = ({ navigation }) => {
               Alert.alert('Required', 'Please add the cheque photo.');
               return false;
             }
-          }
-        }
-        if (form.customer_phone && !isPhone(form.customer_phone)) {
-          Alert.alert('Invalid', 'Enter a valid 10-digit customer phone number');
-          return false;
-        }
-        // Only applies once a real record has resolved (collectionId set) —
-        // that's the only case this submits through complete_visit, the
-        // endpoint CompleteVisitSerializer's phone-confirmation check
-        // actually gates. Matches CollectionVisitScreen's own validate().
-        if (form.visit_type === 'COLLECTION' && collectionId) {
-          const phoneErr = validateCustomerPhone(form);
-          if (phoneErr) {
-            Alert.alert('Customer Phone', phoneErr);
-            return false;
           }
         }
       }
@@ -627,6 +626,28 @@ const EmployeePunchScreen = ({ navigation }) => {
       resetForm();
       Alert.alert('Success', 'Visit recorded successfully!');
     } catch (err) {
+      if (isNetworkError(err)) {
+        await enqueue('COLLECTION_VISIT', {
+          collectionId,
+          form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
+          localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+          customerName: resolvedRecord?.customer_name || form.customer_name,
+          customerAddress: resolvedRecord?.address,
+          photos,
+          upiScreenshot,
+          chequePhoto,
+          audioNote,
+          visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
+          extra,
+        });
+        resetPunchForm();
+        resetForm();
+        Alert.alert(
+          'Saved — will sync automatically',
+          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online.",
+        );
+        return;
+      }
       const respData = err?.response?.data;
       if (respData?.error === 'location_out_of_range') {
         setOutOfRangeModal({ visible: true, distanceM: respData.distance_m });
@@ -665,6 +686,13 @@ const EmployeePunchScreen = ({ navigation }) => {
         resetPunchForm();
         resetForm();
         Alert.alert('Success', 'Punch recorded!');
+        return;
+      }
+
+      if (result.queuedOffline) {
+        resetPunchForm();
+        resetForm();
+        Alert.alert('Saved — will sync automatically', result.error);
         return;
       }
 
@@ -1397,13 +1425,6 @@ const EmployeePunchScreen = ({ navigation }) => {
                         />
                       )}
 
-                      {/* Same shared Payment Mode section CollectionVisitScreen's
-                          reason==='Collection' flow uses (renderPaymentModeSection,
-                          defined above) — was previously its own separate, simpler
-                          inline chips-only block here with no evidence requirement
-                          at all (no Cash photo, no UPI screenshot, no Cheque photo),
-                          inconsistent with every other collection-payment flow in
-                          this app. */}
                       {form.visit_type === 'COLLECTION' && renderPaymentModeSection()}
                     </>
                   )}
