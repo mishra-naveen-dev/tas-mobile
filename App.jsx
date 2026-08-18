@@ -3,6 +3,7 @@ import { StatusBar, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 
 import RootNavigator from './src/navigation/RootNavigator';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
@@ -12,6 +13,13 @@ import SSEClient from './src/services/SSEClient';
 import ApplicationActivityService from './src/services/ApplicationActivityService';
 import { colors } from './src/theme/tokens';
 import SplashScreen from './src/components/SplashScreen';
+import { queryClient, asyncStoragePersister, wireReactQueryToAppEvents } from './src/queryClient';
+import { startAutoSync } from './src/services/OfflineQueue';
+import { registerCollectionVisitOfflineReplayer } from './src/utils/collectionVisitRules';
+
+wireReactQueryToAppEvents();
+registerCollectionVisitOfflineReplayer();
+startAutoSync();
 
 const AppContent = () => {
     const auth = useAuth();
@@ -107,11 +115,13 @@ const App = () => {
         <GestureHandlerRootView style={styles.container}>
             <SafeAreaProvider>
                 <StatusBar barStyle="light-content" backgroundColor="#C62828" />
-                <AuthProvider>
-                    <NotificationProvider>
-                        <AppContent />
-                    </NotificationProvider>
-                </AuthProvider>
+                <PersistQueryClientProvider client={queryClient} persistOptions={{ persister: asyncStoragePersister }}>
+                    <AuthProvider>
+                        <NotificationProvider>
+                            <AppContent />
+                        </NotificationProvider>
+                    </AuthProvider>
+                </PersistQueryClientProvider>
             </SafeAreaProvider>
         </GestureHandlerRootView>
     );

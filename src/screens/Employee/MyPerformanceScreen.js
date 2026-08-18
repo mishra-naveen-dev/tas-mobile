@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -10,13 +10,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../../api/api';
+import { useApiQuery } from '../../hooks/useApiQuery';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 import { colors, typography, spacing } from '../../theme/tokens';
 import { SkeletonStatsGrid, SkeletonCard } from '../../components/SkeletonComponents';
-
-const CACHE_PREFIX = '@performance_cache_';
 
 const PERIODS = [
     { key: 'daily', label: 'Today' },
@@ -229,54 +227,29 @@ const MetricCard = ({ icon, iconColor, iconBg, label, value, sub }) => (
 // ─── Screen ──────────────────────────────────────────────────────────────────
 const MyPerformanceScreen = ({ navigation }) => {
     const [period, setPeriod] = useState('daily');
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [error, setError] = useState(null);
-    const [isStale, setIsStale] = useState(false);
-    const [staleAsOf, setStaleAsOf] = useState(null);
 
-    const fetchData = useCallback(async (selectedPeriod, isRefresh = false) => {
-        if (isRefresh) setRefreshing(true);
-        else setLoading(true);
-        const cacheKey = `${CACHE_PREFIX}${selectedPeriod}`;
-        try {
-            const res = await api.getPerformance(selectedPeriod);
-            setData(res.data);
-            setError(null);
-            setIsStale(false);
-            setStaleAsOf(null);
-            AsyncStorage.setItem(cacheKey, JSON.stringify({ data: res.data, savedAt: Date.now() })).catch(() => {});
-        } catch (err) {
-            if (err?.response?.status === 401) {
-                setLoading(false);
-                setRefreshing(false);
-                return;
-            }
-            // Network/server hiccup — fall back to the last synced snapshot for
-            // this period instead of a hard error screen, if we have one.
-            try {
-                const cached = await AsyncStorage.getItem(cacheKey);
-                if (cached) {
-                    const { data: cachedData, savedAt } = JSON.parse(cached);
-                    setData(cachedData);
-                    setIsStale(true);
-                    setStaleAsOf(savedAt);
-                    setError(null);
-                    return;
-                }
-            } catch (cacheErr) {
-                // fall through to showing the error below
-            }
-            const { message } = parseApiError(err);
-            setError(message);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, []);
+    // Cache-then-network is now react-query's job (persisted to AsyncStorage
+    // via the app-level persister in src/queryClient.js) instead of this
+    // screen hand-rolling its own @performance_cache_{period} snapshot —
+    // isStale/staleAsOf below are derived from the query result the same
+    // way, just without a second, screen-local copy of the same data.
+    const {
+        data,
+        isLoading: loading,
+        isFetching,
+        error: queryError,
+        dataUpdatedAt,
+        refetch,
+    } = useApiQuery(['performance', period], () => api.getPerformance(period));
 
-    useEffect(() => { fetchData(period); }, [period, fetchData]);
+    const refreshing = isFetching && !loading;
+    // A global interceptor already handles 401 (logout/redirect) — this
+    // screen just avoids flashing its own error banner right before that
+    // happens, matching the original fetchData's early-return on 401.
+    const is401 = queryError?.response?.status === 401;
+    const error = (queryError && !is401 && !data) ? parseApiError(queryError).message : null;
+    const isStale = !!(data && queryError && !is401);
+    const staleAsOf = isStale ? dataUpdatedAt : null;
 
     const fmt = (num) => {
         if (num === undefined || num === null) return '—';
@@ -456,7 +429,7 @@ const MyPerformanceScreen = ({ navigation }) => {
                     refreshControl={
                         <RefreshControl
                             refreshing={refreshing}
-                            onRefresh={() => fetchData(period, true)}
+                            onRefresh={() => refetch()}
                             colors={[colors.primary]}
                             tintColor={colors.primary}
                         />
@@ -466,7 +439,7 @@ const MyPerformanceScreen = ({ navigation }) => {
                         <View style={styles.centered}>
                             <Icon name="alert-circle" size={48} color={colors.danger} />
                             <Text style={styles.errorText}>{error}</Text>
-                            <TouchableOpacity style={styles.retryBtn} onPress={() => fetchData(period, true)}>
+                            <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()}>
                                 <Icon name="refresh-cw" size={16} color="#fff" />
                                 <Text style={styles.retryBtnText}>Try Again</Text>
                             </TouchableOpacity>

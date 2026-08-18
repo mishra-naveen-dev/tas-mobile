@@ -69,12 +69,19 @@ const TYPE_META = {
     ADVANCE: { label: 'Advance', color: '#7b1fa2' },
 };
 
+// Fixed loan product categories — a business-defined set, not derived from
+// whatever happens to be in this employee's currently-assigned records, so
+// all four are always selectable even before any of that employee's own
+// collections use a given type.
+const PRODUCT_TYPE_OPTIONS = ['IL', 'ILC', 'IBL', 'JLG'];
+
 // DPD (days past due) sub-buckets — only relevant when Type filter = OD
 const DPD_BUCKET_OPTIONS = [
-    { value: '0-30', label: '0-30', min: 0, max: 30 },
-    { value: '31-60', label: '31-60', min: 31, max: 60 },
-    { value: '61-90', label: '61-90', min: 61, max: 90 },
-    { value: '91+', label: '91+', min: 91, max: Infinity },
+    { value: '60', label: '1-60', min: 0, max: 60 },
+    { value: '90', label: '61-90', min: 61, max: 90 },
+    { value: '180', label: '91-180', min: 91, max: 180 },
+    { value: '360', label: '181-360', min: 181, max: 360 },
+    { value: '360+', label: '360+', min: 361, max: Infinity },
 ];
 const matchesDpdBucket = (days, bucketValue) => {
     if (days == null) return false;
@@ -392,7 +399,6 @@ const CollectionsScreen = ({ route }) => {
     const [typeFilter, setTypeFilter] = useState('ALL');
     const [dpdFilter, setDpdFilter] = useState('ALL');
     const [productFilter, setProductFilter] = useState('ALL');
-    const [productTypes, setProductTypes] = useState([]);
     const [filterModalVisible, setFilterModalVisible] = useState(false);
 
     // Aggregate counts (all assigned records, independent of the paginated/
@@ -418,7 +424,6 @@ const CollectionsScreen = ({ route }) => {
     const nearMeTimerRef = useRef(null);
 
     const [listError, setListError] = useState(false);
-    const productTypesLoadedRef = useRef(false);
     // Bumped on every fetchRecords/fetchMapRecords call; a response is only
     // applied if it's still the latest request in flight. Without this, rapid
     // filter/search changes can fire overlapping requests, and a slower older
@@ -593,19 +598,6 @@ const CollectionsScreen = ({ route }) => {
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
-    // Product types are lazy-loaded when the filter modal is first opened so
-    // they don't race with the initial collections fetch on mount. Uses the
-    // grouped product_type (e.g. JLG, IBL) rather than the raw per-scheme
-    // product_id, which can run into 50+ distinct values and overwhelm the
-    // filter sheet with an unusable wall of chips.
-    const loadProductTypes = useCallback(() => {
-        if (productTypesLoadedRef.current) return;
-        productTypesLoadedRef.current = true;
-        api.getDistinctProductTypes()
-            .then(res => setProductTypes(Array.isArray(res.data) ? res.data : []))
-            .catch(() => { productTypesLoadedRef.current = false; }); // allow retry on next open
-    }, []);
-
     useEffect(() => {
         if (view === 'map' && mapRecords.length === 0 && !mapLoading) {
             fetchMapRecords();
@@ -649,6 +641,7 @@ const CollectionsScreen = ({ route }) => {
             return (
                 (r.customer_name || '').toLowerCase().includes(q) ||
                 (r.loan_id || '').toLowerCase().includes(q) ||
+                (r.center_id || '').toLowerCase().includes(q) ||
                 (r.address || '').toLowerCase().includes(q) ||
                 (r.area || '').toLowerCase().includes(q) ||
                 (r.pincode || '').toLowerCase().includes(q) ||
@@ -812,9 +805,9 @@ const CollectionsScreen = ({ route }) => {
                                 })()}
                                 {item.dpd_days != null && item.dpd_days > 0 && (() => {
                                     const d = item.dpd_days;
-                                    const c = d > 90 ? '#7f1d1d'
-                                            : d > 60 ? '#b91c1c'
-                                            : d > 30 ? '#d97706'
+                                    const c = d > 360 ? '#7f1d1d'
+                                            : d > 180 ? '#b91c1c'
+                                            : d > 90 ? '#d97706'
                                             : '#f59e0b';
                                     return (
                                         <View style={[styles.typeTag, { backgroundColor: c + '22' }]}>
@@ -829,6 +822,18 @@ const CollectionsScreen = ({ route }) => {
                                         <Text style={styles.productTagText} numberOfLines={1}>{item.product_type}</Text>
                                     </View>
                                 )}
+                                {!!item.account_status && (() => {
+                                    const isWriteOff = /write.?off/i.test(item.account_status);
+                                    const isActive = /active/i.test(item.account_status);
+                                    const c = isWriteOff ? colors.error : isActive ? colors.success : colors.textMuted;
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: c + '22' }]}>
+                                            <Text style={[styles.typeTagText, { color: c }]} numberOfLines={1}>
+                                                {item.account_status}
+                                            </Text>
+                                        </View>
+                                    );
+                                })()}
                             </View>
                         </View>
                         <View style={{ alignItems: 'flex-end', gap: 4 }}>
@@ -1120,7 +1125,7 @@ const CollectionsScreen = ({ route }) => {
                                     <Icon name="search" size={15} color={colors.textMuted} />
                                     <TextInput
                                         style={styles.mapSearchInput}
-                                        placeholder="Search name, loan ID, address, area, date…"
+                                        placeholder="Search name, loan ID, center ID, address, area, date…"
                                         placeholderTextColor={colors.textMuted}
                                         value={mapSearch}
                                         onChangeText={setMapSearch}
@@ -1174,7 +1179,7 @@ const CollectionsScreen = ({ route }) => {
                         <Icon name="search" size={18} color={colors.textMuted} />
                         <TextInput
                             style={styles.searchInput}
-                            placeholder="Search name, loan id, phone, address, pincode…"
+                            placeholder="Search name, loan id, center id, phone, address, pincode…"
                             placeholderTextColor={colors.textMuted}
                             value={search}
                             onChangeText={setSearch}
@@ -1190,7 +1195,7 @@ const CollectionsScreen = ({ route }) => {
                     <View style={styles.filterBar}>
                         <TouchableOpacity
                             style={styles.filterBtn}
-                            onPress={() => { setFilterModalVisible(true); loadProductTypes(); }}
+                            onPress={() => setFilterModalVisible(true)}
                             activeOpacity={0.85}
                         >
                             <Icon name="sliders" size={15} color={colors.primary} />
@@ -1311,31 +1316,27 @@ const CollectionsScreen = ({ route }) => {
                                     </>
                                 )}
 
-                                {productTypes.length > 0 && (
-                                    <>
-                                        <Text style={styles.fieldLabel}>Product Type</Text>
-                                        <View style={styles.statusGrid}>
+                                <Text style={styles.fieldLabel}>Product Type</Text>
+                                <View style={styles.statusGrid}>
+                                    <TouchableOpacity
+                                        style={[styles.statusOption, productFilter === 'ALL' && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
+                                        onPress={() => setProductFilter('ALL')}
+                                    >
+                                        <Text style={[styles.statusOptionText, productFilter === 'ALL' && { color: '#FFFFFF' }]}>All Types</Text>
+                                    </TouchableOpacity>
+                                    {PRODUCT_TYPE_OPTIONS.map(p => {
+                                        const active = productFilter === p;
+                                        return (
                                             <TouchableOpacity
-                                                style={[styles.statusOption, productFilter === 'ALL' && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
-                                                onPress={() => setProductFilter('ALL')}
+                                                key={p}
+                                                style={[styles.statusOption, active && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
+                                                onPress={() => setProductFilter(p)}
                                             >
-                                                <Text style={[styles.statusOptionText, productFilter === 'ALL' && { color: '#FFFFFF' }]}>All Types</Text>
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{p}</Text>
                                             </TouchableOpacity>
-                                            {productTypes.map(p => {
-                                                const active = productFilter === p;
-                                                return (
-                                                    <TouchableOpacity
-                                                        key={p}
-                                                        style={[styles.statusOption, active && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
-                                                        onPress={() => setProductFilter(p)}
-                                                    >
-                                                        <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{p}</Text>
-                                                    </TouchableOpacity>
-                                                );
-                                            })}
-                                        </View>
-                                    </>
-                                )}
+                                        );
+                                    })}
+                                </View>
 
                                 <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
                                     <TouchableOpacity
@@ -1473,9 +1474,38 @@ const CollectionsScreen = ({ route }) => {
                             </TouchableOpacity>
                         </View>
                         {modal.record && (
-                            <Text style={styles.modalSub}>
-                                {modal.record.customer_name} · Loan {modal.record.loan_id}
-                            </Text>
+                            <>
+                                <Text style={styles.modalSub}>
+                                    {modal.record.customer_name} · Loan {modal.record.loan_id}
+                                </Text>
+                                {!!modal.record.account_status && (() => {
+                                    const isWriteOff = /write.?off/i.test(modal.record.account_status);
+                                    const isActive = /active/i.test(modal.record.account_status);
+                                    const c = isWriteOff ? colors.error : isActive ? colors.success : colors.textMuted;
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: c + '22', alignSelf: 'flex-start', marginTop: 4 }]}>
+                                            <Text style={[styles.typeTagText, { color: c }]}>
+                                                Account Status: {modal.record.account_status}
+                                            </Text>
+                                        </View>
+                                    );
+                                })()}
+                                <View style={styles.loanDetailsBox}>
+                                    {[
+                                        ['Product Type', modal.record.product_type],
+                                        ['Outstanding Principal', modal.record.principal_arrear != null ? `₹${Number(modal.record.principal_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Interest Arrear', modal.record.interest_arrear != null ? `₹${Number(modal.record.interest_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Total Arrear', modal.record.total_arrear != null ? `₹${Number(modal.record.total_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Disbursement Date', modal.record.disbursement_date ? new Date(modal.record.disbursement_date).toLocaleDateString('en-IN') : null],
+                                        ['Region / Center', [modal.record.region_name, modal.record.center_id].filter(Boolean).join(' / ') || null],
+                                    ].filter(([, value]) => !!value).map(([label, value]) => (
+                                        <View key={label} style={styles.loanDetailRow}>
+                                            <Text style={styles.loanDetailLabel}>{label}</Text>
+                                            <Text style={styles.loanDetailValue}>{value}</Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            </>
                         )}
 
                         <Text style={styles.fieldLabel}>Status</Text>
@@ -1879,6 +1909,15 @@ const styles = StyleSheet.create({
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     modalTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     modalSub: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4, marginBottom: spacing.sm },
+    loanDetailsBox: {
+        backgroundColor: colors.backgroundLight || '#F8FAFC',
+        borderRadius: borderRadius.md,
+        padding: spacing.sm,
+        marginBottom: spacing.sm,
+    },
+    loanDetailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
+    loanDetailLabel: { fontSize: typography.sizes.xs, color: colors.textMuted },
+    loanDetailValue: { fontSize: typography.sizes.xs, fontWeight: '600', color: colors.textDark },
     fieldLabel: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textMedium, marginTop: spacing.sm, marginBottom: spacing.xs },
     amountLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm, marginBottom: spacing.xs },
     emiHint: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },

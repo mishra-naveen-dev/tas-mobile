@@ -17,6 +17,13 @@ import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { colors, typography, spacing } from '../../theme/tokens';
 import GeocodingService from '../../services/GeocodingService';
+import { enqueue, registerReplayer, isNetworkError } from '../../services/OfflineQueue';
+
+// payload is already plain/JSON-safe (correction_date is a string, not a
+// Date) by the time it's built below, so it can be queued and replayed as-is.
+registerReplayer('CORRECTION_REQUEST', async (payload) => {
+  await api.createCorrectionRequest(payload);
+});
 
 const CORRECTION_TYPES = [
     { value: 'ADD', label: 'Add Punch', color: colors.success, icon: 'plus-circle' },
@@ -277,6 +284,9 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
         setSubmitting(true);
         setError('');
 
+        // Declared outside the try block so the catch handler can still
+        // queue it for offline sync on a network failure.
+        let payload;
         try {
             const timeStr = formData.correction_time.toTimeString().slice(0, 5);
 
@@ -295,7 +305,7 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
 
             const manual = claimedDistance ? parseFloat(claimedDistance) : 0;
 
-            const payload = {
+            payload = {
                 correction_type: formData.correction_type,
                 correction_date: formData.correction_date.toISOString().split('T')[0],
                 correction_time: timeStr,
@@ -329,6 +339,15 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
                 ]);
             }
         } catch (err) {
+            if (!editMode && isNetworkError(err)) {
+                await enqueue('CORRECTION_REQUEST', payload);
+                Alert.alert(
+                    'Saved — will sync automatically',
+                    "No internet connection right now. Your correction request has been saved on this device and will upload automatically once you're back online.",
+                    [{ text: 'OK', onPress: () => navigation.goBack() }],
+                );
+                return;
+            }
             const errMsg = err?.response?.data?.error || err?.response?.data?.detail || 'Failed to submit request';
             setError(Array.isArray(errMsg) ? errMsg.join(', ') : errMsg);
         } finally {
