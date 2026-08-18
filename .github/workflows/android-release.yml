@@ -693,13 +693,12 @@ jobs:
       # right after S3 upload is verified, keeps "latest release" always
       # in sync with what's actually in the bucket.
       #
-      # Skipped (not failed) only when the secret/variable genuinely aren't
-      # configured, so this stays optional per-environment rather than
-      # breaking every build for repos/forks that haven't set it up yet.
-      # Once both ARE configured, a failed call fails this step for real
-      # (see below) — a silent ::warning:: here is exactly what let the
-      # registry drift stale for several releases in a row without anyone
-      # noticing: the build+upload steps kept going green while the app's
+      # Required, not optional — both MOBILE_RELEASE_REGISTER_TOKEN and
+      # BACKEND_API_BASE_URL must be configured, and the registration call
+      # must succeed, or this step fails the build. A silent ::warning::
+      # here (the previous behavior) is exactly what let the registry
+      # drift stale for several releases in a row without anyone noticing:
+      # the build+upload steps kept going green while the app's
       # update-check and the public first-install link quietly kept
       # serving an old version.
       # --------------------------------------------------------
@@ -715,8 +714,8 @@ jobs:
           echo "::add-mask::$MOBILE_RELEASE_REGISTER_TOKEN"
 
           if [ -z "$MOBILE_RELEASE_REGISTER_TOKEN" ] || [ -z "$BACKEND_API_BASE_URL" ]; then
-            echo "MOBILE_RELEASE_REGISTER_TOKEN and/or BACKEND_API_BASE_URL are not configured — skipping release registration."
-            exit 0
+            echo "::error::MOBILE_RELEASE_REGISTER_TOKEN and/or BACKEND_API_BASE_URL are not configured."
+            exit 1
           fi
 
           # Trim a trailing slash so a variable set as
@@ -738,11 +737,11 @@ jobs:
           echo ""
 
           if [ "$HTTP_STATUS" -ge 300 ]; then
-            echo "::error::Failed to register release with backend (HTTP $HTTP_STATUS) at $REGISTER_URL. The build and S3 upload succeeded, but the app's update-check and the public first-install link will keep serving the previous version until this is fixed. Check BACKEND_API_BASE_URL / MOBILE_RELEASE_REGISTER_TOKEN and the response body above."
+            echo "::error::Failed to register release with backend (HTTP $HTTP_STATUS)."
             exit 1
+          else
+            echo "Release registered successfully."
           fi
-
-          echo "Release registered successfully."
 
 
       # --------------------------------------------------------
