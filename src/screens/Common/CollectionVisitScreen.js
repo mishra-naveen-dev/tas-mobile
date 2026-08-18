@@ -971,6 +971,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
             {[
               { value: 'FORGOT', label: 'Forgot to punch at customer location' },
               { value: 'WRONG_LOCATION', label: 'Existing customer location is wrong' },
+              {
+                value: 'JLG',
+                label: form.reasonBucket === 'COLLECTION'
+                  ? 'JLG Customer — Group Collection Location'
+                  : 'JLG Customer — Group Meeting Location',
+              },
               { value: 'OTHER', label: 'Others' },
             ].map((r) => (
               <TouchableOpacity key={r.value} style={styles.oorReasonRow} onPress={() => setOutOfRangeReason(r.value)} activeOpacity={0.7}>
@@ -1011,6 +1017,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
             {[
               { value: 'GROUP_MEETING', label: 'Group / joint meeting — multiple customers at this location' },
               { value: 'SHARED_BUILDING', label: 'Shared building or complex — customer is also here' },
+              {
+                value: 'JLG',
+                label: form.reasonBucket === 'COLLECTION'
+                  ? 'JLG Customer — Group Collection Location'
+                  : 'JLG Customer — Group Meeting Location',
+              },
               { value: 'OTHER', label: 'Others' },
             ].map((r) => (
               <TouchableOpacity key={r.value} style={styles.oorReasonRow} onPress={() => setDupLocationReason(r.value)} activeOpacity={0.7}>

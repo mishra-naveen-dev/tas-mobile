@@ -1635,6 +1635,12 @@ const EmployeePunchScreen = ({ navigation }) => {
             {[
               { value: 'FORGOT', label: 'Forgot to punch at customer location' },
               { value: 'WRONG_LOCATION', label: 'At customer location — existing customer location is wrong' },
+              {
+                value: 'JLG',
+                label: form.reason === 'Collection'
+                  ? 'JLG Customer — Group Collection Location'
+                  : 'JLG Customer — Group Meeting Location',
+              },
               { value: 'OTHER', label: 'Others' },
             ].map((r) => (
               <TouchableOpacity
@@ -1699,6 +1705,12 @@ const EmployeePunchScreen = ({ navigation }) => {
             {[
               { value: 'GROUP_MEETING', label: 'Group / joint meeting — multiple customers at this location' },
               { value: 'SHARED_BUILDING', label: 'Shared building or complex — customer is also here' },
+              {
+                value: 'JLG',
+                label: form.reason === 'Collection'
+                  ? 'JLG Customer — Group Collection Location'
+                  : 'JLG Customer — Group Meeting Location',
+              },
               { value: 'OTHER', label: 'Others' },
             ].map((r) => (
               <TouchableOpacity
