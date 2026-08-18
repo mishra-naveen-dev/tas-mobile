@@ -1,38 +1,57 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, Linking, ActivityIndicator, BackHandler } from 'react-native';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, Linking, ActivityIndicator, BackHandler, AppState } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import DeviceInfo from 'react-native-device-info';
 import api from '../api/api';
 import { colors, typography, spacing } from '../theme/tokens';
 
-// Checked once per app session, right after login (mounted from
-// AppNavigator once `token` is set) — deliberately fails silent on any
-// network/API error so a flaky check never blocks or alarms the user;
-// this is a courtesy prompt, not a gate, except when the release is
-// explicitly marked `mandatory` on the backend.
+// A sideloaded (non-Play-Store) APK can never silently install an update —
+// Android always requires a human tap to confirm the install, no matter how
+// this is built. What this component *can* do is notice a new release
+// sooner: on first mount, whenever the app returns to the foreground, and
+// on a standing timer while it stays open — instead of only once per cold
+// launch. Every check fails silent on any network/API error (a courtesy
+// prompt, not a gate, except when the release is explicitly `mandatory`).
+const RECHECK_INTERVAL_MS = 20 * 60 * 1000;
+
 const UpdatePrompt = () => {
     const [release, setRelease] = useState(null);
     const [dismissed, setDismissed] = useState(false);
     const [opening, setOpening] = useState(false);
-    const checkedRef = useRef(false);
+    // Which version_code "Later" was tapped for — re-checking must not
+    // re-open the same prompt every cycle, but a *newer* release than the
+    // one dismissed should still surface.
+    const dismissedVersionRef = useRef(null);
+
+    const checkForUpdate = useCallback(async () => {
+        try {
+            const versionCode = parseInt(DeviceInfo.getBuildNumber(), 10);
+            if (!versionCode) return;
+            const res = await api.checkMobileRelease(versionCode);
+            const latest = res.data?.latest;
+            if (res.data?.update_available && latest) {
+                if (latest.version_code === dismissedVersionRef.current) return;
+                setDismissed(false);
+                setRelease(latest);
+            }
+        } catch (e) {
+            if (__DEV__) console.warn('[UpdatePrompt] Check failed (non-fatal):', e.message);
+        }
+    }, []);
 
     useEffect(() => {
-        if (checkedRef.current) return;
-        checkedRef.current = true;
+        checkForUpdate();
 
-        (async () => {
-            try {
-                const versionCode = parseInt(DeviceInfo.getBuildNumber(), 10);
-                if (!versionCode) return;
-                const res = await api.checkMobileRelease(versionCode);
-                if (res.data?.update_available && res.data?.latest) {
-                    setRelease(res.data.latest);
-                }
-            } catch (e) {
-                if (__DEV__) console.warn('[UpdatePrompt] Check failed (non-fatal):', e.message);
-            }
-        })();
-    }, []);
+        const appStateSub = AppState.addEventListener('change', (nextState) => {
+            if (nextState === 'active') checkForUpdate();
+        });
+        const interval = setInterval(checkForUpdate, RECHECK_INTERVAL_MS);
+
+        return () => {
+            appStateSub.remove();
+            clearInterval(interval);
+        };
+    }, [checkForUpdate]);
 
     // A mandatory update blocks the hardware back button too — there's
     // nothing else on screen to go back to.
@@ -89,7 +108,13 @@ const UpdatePrompt = () => {
                     </TouchableOpacity>
 
                     {!release.mandatory && (
-                        <TouchableOpacity style={styles.laterBtn} onPress={() => setDismissed(true)}>
+                        <TouchableOpacity
+                            style={styles.laterBtn}
+                            onPress={() => {
+                                dismissedVersionRef.current = release.version_code;
+                                setDismissed(true);
+                            }}
+                        >
                             <Text style={styles.laterBtnText}>Later</Text>
                         </TouchableOpacity>
                     )}
