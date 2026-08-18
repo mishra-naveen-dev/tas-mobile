@@ -69,6 +69,12 @@ const TYPE_META = {
     ADVANCE: { label: 'Advance', color: '#7b1fa2' },
 };
 
+// Fixed loan product categories — a business-defined set, not derived from
+// whatever happens to be in this employee's currently-assigned records, so
+// all four are always selectable even before any of that employee's own
+// collections use a given type.
+const PRODUCT_TYPE_OPTIONS = ['IL', 'ILC', 'IBL', 'JLG'];
+
 // DPD (days past due) sub-buckets — only relevant when Type filter = OD
 const DPD_BUCKET_OPTIONS = [
     { value: '60', label: '1-60', min: 0, max: 60 },
@@ -393,7 +399,6 @@ const CollectionsScreen = ({ route }) => {
     const [typeFilter, setTypeFilter] = useState('ALL');
     const [dpdFilter, setDpdFilter] = useState('ALL');
     const [productFilter, setProductFilter] = useState('ALL');
-    const [productTypes, setProductTypes] = useState([]);
     const [filterModalVisible, setFilterModalVisible] = useState(false);
 
     // Aggregate counts (all assigned records, independent of the paginated/
@@ -419,7 +424,6 @@ const CollectionsScreen = ({ route }) => {
     const nearMeTimerRef = useRef(null);
 
     const [listError, setListError] = useState(false);
-    const productTypesLoadedRef = useRef(false);
     // Bumped on every fetchRecords/fetchMapRecords call; a response is only
     // applied if it's still the latest request in flight. Without this, rapid
     // filter/search changes can fire overlapping requests, and a slower older
@@ -593,19 +597,6 @@ const CollectionsScreen = ({ route }) => {
         nearMeEnabled, nearMeRadiusKm, userLocation?.latitude, userLocation?.longitude]);
 
     useEffect(() => { fetchSummary(); }, [fetchSummary]);
-
-    // Product types are lazy-loaded when the filter modal is first opened so
-    // they don't race with the initial collections fetch on mount. Uses the
-    // grouped product_type (e.g. JLG, IBL) rather than the raw per-scheme
-    // product_id, which can run into 50+ distinct values and overwhelm the
-    // filter sheet with an unusable wall of chips.
-    const loadProductTypes = useCallback(() => {
-        if (productTypesLoadedRef.current) return;
-        productTypesLoadedRef.current = true;
-        api.getDistinctProductTypes()
-            .then(res => setProductTypes(Array.isArray(res.data) ? res.data : []))
-            .catch(() => { productTypesLoadedRef.current = false; }); // allow retry on next open
-    }, []);
 
     useEffect(() => {
         if (view === 'map' && mapRecords.length === 0 && !mapLoading) {
@@ -831,6 +822,18 @@ const CollectionsScreen = ({ route }) => {
                                         <Text style={styles.productTagText} numberOfLines={1}>{item.product_type}</Text>
                                     </View>
                                 )}
+                                {!!item.account_status && (() => {
+                                    const isWriteOff = /write.?off/i.test(item.account_status);
+                                    const isActive = /active/i.test(item.account_status);
+                                    const c = isWriteOff ? colors.error : isActive ? colors.success : colors.textMuted;
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: c + '22' }]}>
+                                            <Text style={[styles.typeTagText, { color: c }]} numberOfLines={1}>
+                                                {item.account_status}
+                                            </Text>
+                                        </View>
+                                    );
+                                })()}
                             </View>
                         </View>
                         <View style={{ alignItems: 'flex-end', gap: 4 }}>
@@ -1192,7 +1195,7 @@ const CollectionsScreen = ({ route }) => {
                     <View style={styles.filterBar}>
                         <TouchableOpacity
                             style={styles.filterBtn}
-                            onPress={() => { setFilterModalVisible(true); loadProductTypes(); }}
+                            onPress={() => setFilterModalVisible(true)}
                             activeOpacity={0.85}
                         >
                             <Icon name="sliders" size={15} color={colors.primary} />
@@ -1313,31 +1316,27 @@ const CollectionsScreen = ({ route }) => {
                                     </>
                                 )}
 
-                                {productTypes.length > 0 && (
-                                    <>
-                                        <Text style={styles.fieldLabel}>Product Type</Text>
-                                        <View style={styles.statusGrid}>
+                                <Text style={styles.fieldLabel}>Product Type</Text>
+                                <View style={styles.statusGrid}>
+                                    <TouchableOpacity
+                                        style={[styles.statusOption, productFilter === 'ALL' && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
+                                        onPress={() => setProductFilter('ALL')}
+                                    >
+                                        <Text style={[styles.statusOptionText, productFilter === 'ALL' && { color: '#FFFFFF' }]}>All Types</Text>
+                                    </TouchableOpacity>
+                                    {PRODUCT_TYPE_OPTIONS.map(p => {
+                                        const active = productFilter === p;
+                                        return (
                                             <TouchableOpacity
-                                                style={[styles.statusOption, productFilter === 'ALL' && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
-                                                onPress={() => setProductFilter('ALL')}
+                                                key={p}
+                                                style={[styles.statusOption, active && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
+                                                onPress={() => setProductFilter(p)}
                                             >
-                                                <Text style={[styles.statusOptionText, productFilter === 'ALL' && { color: '#FFFFFF' }]}>All Types</Text>
+                                                <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{p}</Text>
                                             </TouchableOpacity>
-                                            {productTypes.map(p => {
-                                                const active = productFilter === p;
-                                                return (
-                                                    <TouchableOpacity
-                                                        key={p}
-                                                        style={[styles.statusOption, active && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' }]}
-                                                        onPress={() => setProductFilter(p)}
-                                                    >
-                                                        <Text style={[styles.statusOptionText, active && { color: '#FFFFFF' }]}>{p}</Text>
-                                                    </TouchableOpacity>
-                                                );
-                                            })}
-                                        </View>
-                                    </>
-                                )}
+                                        );
+                                    })}
+                                </View>
 
                                 <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
                                     <TouchableOpacity
@@ -1479,6 +1478,18 @@ const CollectionsScreen = ({ route }) => {
                                 <Text style={styles.modalSub}>
                                     {modal.record.customer_name} · Loan {modal.record.loan_id}
                                 </Text>
+                                {!!modal.record.account_status && (() => {
+                                    const isWriteOff = /write.?off/i.test(modal.record.account_status);
+                                    const isActive = /active/i.test(modal.record.account_status);
+                                    const c = isWriteOff ? colors.error : isActive ? colors.success : colors.textMuted;
+                                    return (
+                                        <View style={[styles.typeTag, { backgroundColor: c + '22', alignSelf: 'flex-start', marginTop: 4 }]}>
+                                            <Text style={[styles.typeTagText, { color: c }]}>
+                                                Account Status: {modal.record.account_status}
+                                            </Text>
+                                        </View>
+                                    );
+                                })()}
                                 <View style={styles.loanDetailsBox}>
                                     {[
                                         ['Product Type', modal.record.product_type],
