@@ -42,6 +42,16 @@ const toDateStr = (d) => {
 const punchColor = (type) => PUNCH_COLORS[type] ?? '#9CA3AF';
 const punchLabel = (type) => PUNCH_LABELS[type] ?? type;
 
+const formatINR = (v) => `₹${Number(v).toLocaleString('en-IN')}`;
+
+const VISIT_TYPE_LABELS = {
+    COLLECTION: 'Collection',
+    DISBURSEMENT: 'Disbursement',
+    HOME_VISIT: 'Home Visit',
+    OD_VISIT: 'OD Visit',
+};
+const visitTypeLabel = (t) => VISIT_TYPE_LABELS[t] ?? t;
+
 const RouteMapScreen = ({ navigation, route }) => {
     const mapRef = useRef(null);
     const employeeId = route?.params?.employeeId ?? null;
@@ -105,7 +115,13 @@ const RouteMapScreen = ({ navigation, route }) => {
                     longitude: c.longitude,
                     amount: c.collected_amount,
                     customer_name: c.customer_name,
-                    reason: c.remarks || c.status_display,
+                    customer_phone: c.customer_phone,
+                    reason: c.remarks,
+                    visit_type: c.visit_reason,
+                    status_display: c.status_display,
+                    distance_from_customer: c.distance_from_customer,
+                    distance_from_branch: c.distance_from_branch,
+                    geo_status: c.geo_status,
                 }));
 
                 setAllPunches(
@@ -350,12 +366,25 @@ const RouteMapScreen = ({ navigation, route }) => {
                                         {punchLabel(punch.punch_type)}
                                     </Text>
                                     <Text style={styles.calloutTime}>{formatTime(punch.punched_at)}</Text>
+                                    {punch.visit_type ? (
+                                        <Text style={styles.calloutDetail}>{visitTypeLabel(punch.visit_type)}</Text>
+                                    ) : null}
                                     {punch.customer_name ? (
                                         <Text style={styles.calloutDetail}>{punch.customer_name}</Text>
+                                    ) : null}
+                                    {punch.amount != null ? (
+                                        <Text style={styles.calloutDetail}>
+                                            {formatINR(punch.amount)}{punch.payment_method ? ` · ${punch.payment_method}` : ''}
+                                        </Text>
                                     ) : null}
                                     {punch.current_address ? (
                                         <Text style={styles.calloutAddr} numberOfLines={2}>
                                             {punch.current_address}
+                                        </Text>
+                                    ) : null}
+                                    {(punch.is_out_of_range || punch.is_duplicate_location) ? (
+                                        <Text style={styles.calloutWarning}>
+                                            {punch.is_out_of_range ? 'Out of range' : 'Duplicate location'}
                                         </Text>
                                     ) : null}
                                 </View>
@@ -473,13 +502,47 @@ const RouteMapScreen = ({ navigation, route }) => {
                                         {formatTime(punch.punched_at)}
                                     </Text>
                                 </View>
+                                {(punch.visit_type || punch.reason) ? (
+                                    <Text style={styles.punchMeta}>
+                                        {[punch.visit_type ? visitTypeLabel(punch.visit_type) : null, punch.reason]
+                                            .filter(Boolean).join(' · ')}
+                                    </Text>
+                                ) : null}
                                 {punch.customer_name ? (
-                                    <Text style={styles.punchCustomer}>{punch.customer_name}</Text>
+                                    <Text style={styles.punchCustomer}>
+                                        {punch.customer_name}{punch.customer_phone ? ` · ${punch.customer_phone}` : ''}
+                                    </Text>
+                                ) : null}
+                                {punch.amount != null ? (
+                                    <Text style={styles.punchAmount}>
+                                        {formatINR(punch.amount)}{punch.payment_method ? ` · ${punch.payment_method}` : ''}
+                                    </Text>
                                 ) : null}
                                 {punch.current_address ? (
                                     <Text style={styles.punchAddr} numberOfLines={1}>
                                         {punch.current_address}
                                     </Text>
+                                ) : null}
+                                {(punch.accuracy != null || punch.distance_from_customer != null) ? (
+                                    <Text style={styles.punchMeta}>
+                                        {[
+                                            punch.accuracy != null ? `±${Math.round(punch.accuracy)}m GPS` : null,
+                                            punch.distance_from_customer != null ? `${Math.round(punch.distance_from_customer)}m from customer` : null,
+                                        ].filter(Boolean).join(' · ')}
+                                    </Text>
+                                ) : null}
+                                {(punch.travel_type === 'WITH_EMPLOYEE' && punch.companion_name) ? (
+                                    <Text style={styles.punchMeta}>With {punch.companion_name}</Text>
+                                ) : null}
+                                {(punch.is_out_of_range || punch.is_duplicate_location) ? (
+                                    <View style={styles.warningBadge}>
+                                        <Icon name="alert-triangle" size={11} color={colors.danger} />
+                                        <Text style={styles.warningBadgeText}>
+                                            {punch.is_out_of_range
+                                                ? (punch.out_of_range_reason || 'Out of range')
+                                                : (punch.duplicate_location_reason || 'Duplicate location')}
+                                        </Text>
+                                    </View>
                                 ) : null}
                                 {(!punch.latitude || !punch.longitude ||
                                     parseFloat(punch.latitude) === 0) ? (
@@ -667,6 +730,12 @@ const styles = StyleSheet.create({
         fontSize: 11,
         color: colors.textMuted,
     },
+    calloutWarning: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: colors.danger,
+        marginTop: 2,
+    },
 
     // Punch list
     list: {
@@ -780,10 +849,37 @@ const styles = StyleSheet.create({
         color: colors.textDark,
         marginTop: 2,
     },
+    punchAmount: {
+        fontSize: typography.sizes.sm,
+        fontWeight: typography.weights.semibold,
+        color: colors.success,
+        marginTop: 2,
+    },
+    punchMeta: {
+        fontSize: typography.sizes.xs,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
     punchAddr: {
         fontSize: typography.sizes.xs,
         color: colors.textMuted,
         marginTop: 2,
+    },
+    warningBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: 4,
+        alignSelf: 'flex-start',
+        backgroundColor: colors.dangerLight,
+        borderRadius: 8,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    warningBadgeText: {
+        fontSize: typography.sizes.xs,
+        fontWeight: '700',
+        color: colors.danger,
     },
     noGps: {
         fontSize: typography.sizes.xs,
