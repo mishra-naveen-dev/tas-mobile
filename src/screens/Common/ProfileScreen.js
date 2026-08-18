@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
+import { useApiQuery } from '../../hooks/useApiQuery';
 import { colors, typography, spacing } from '../../theme/tokens';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 import { SkeletonAvatar, SkeletonText, SkeletonCard } from '../../components/SkeletonComponents';
@@ -91,29 +92,21 @@ const Section = ({ title, iconName, children }) => (
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 const ProfileScreen = ({ navigation }) => {
     const { user: authUser, logout } = useAuth();
-    const [profile, setProfile] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [error, setError] = useState(null);
     const [loggingOut, setLoggingOut] = useState(false);
 
-    const fetchProfile = async (isRefresh = false) => {
-        try {
-            if (isRefresh) setRefreshing(true);
-            else setLoading(true);
-            setError(null);
-            const res = await api.getUserProfile();
-            setProfile(res.data);
-        } catch (err) {
-            const { message } = parseApiError(err);
-            setError(message);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    };
+    // Cached instantly on repeat visits (react-query + AsyncStorage
+    // persister), with a background refetch to reconcile against the
+    // server — replaces the old hand-rolled loading/refreshing/error state.
+    const {
+        data: profile,
+        isLoading: loading,
+        isFetching,
+        error: queryError,
+        refetch,
+    } = useApiQuery(['userProfile'], () => api.getUserProfile());
 
-    useEffect(() => { fetchProfile(); }, []);
+    const refreshing = isFetching && !loading;
+    const error = queryError ? parseApiError(queryError).message : null;
 
     const handleLogout = () => {
         Alert.alert(
@@ -177,7 +170,7 @@ const ProfileScreen = ({ navigation }) => {
                 <View style={styles.centered}>
                     <Icon name="wifi-off" size={48} color={colors.danger} />
                     <Text style={styles.errorText}>{error}</Text>
-                    <TouchableOpacity style={styles.retryBtn} onPress={() => fetchProfile()}>
+                    <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()}>
                         <Icon name="refresh-cw" size={14} color="#fff" />
                         <Text style={styles.retryBtnText}>Try Again</Text>
                     </TouchableOpacity>
@@ -189,7 +182,7 @@ const ProfileScreen = ({ navigation }) => {
                     refreshControl={
                         <RefreshControl
                             refreshing={refreshing}
-                            onRefresh={() => fetchProfile(true)}
+                            onRefresh={() => refetch()}
                             colors={[colors.primary]}
                             tintColor={colors.primary}
                         />

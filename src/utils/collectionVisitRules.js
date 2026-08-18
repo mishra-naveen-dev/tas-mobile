@@ -6,6 +6,9 @@
 // mirrors the backend's own rules (apps/loans/views.py's
 // _audio_required_reason, CompleteVisitSerializer) so all three stay in sync.
 import { colors } from '../theme/tokens';
+import { isPhone } from '../common/helpers/validationHelpers';
+import { registerReplayer } from '../services/OfflineQueue';
+import api from '../api/api';
 
 export const STATUS_OPTIONS = [
   { value: 'PENDING', label: 'P2P', color: colors.textMuted },
@@ -21,10 +24,11 @@ export const VISIT_TYPE_OPTIONS = [
 ];
 
 export const DPD_BUCKET_OPTIONS = [
-  { value: '0-30', label: '0-30' },
-  { value: '31-60', label: '31-60' },
-  { value: '61-90', label: '61-90' },
-  { value: '91+', label: '91+' },
+  { value: '60', label: '1-60' },
+  { value: '90', label: '61-90' },
+  { value: '180', label: '91-180' },
+  { value: '360', label: '181-360' },
+  { value: '360+', label: '360+' },
 ];
 
 export const YES_NO_OPTIONS = [
@@ -131,6 +135,15 @@ export const buildCompleteVisitFormData = ({
   put('duplicate_location_reason', extra.duplicate_location_reason);
   put('duplicate_location_comment', extra.duplicate_location_comment);
 
+  // Backend defaults customer_phone_confirmed to true when omitted, so this
+  // only needs to be sent when the employee has actually answered the
+  // question — put() itself would already skip a null/'' value, but being
+  // explicit here keeps the two phone fields visually paired.
+  if (form.phone_correct === true || form.phone_correct === false) {
+    put('customer_phone_confirmed', form.phone_correct ? 'true' : 'false');
+    if (form.phone_correct === false) put('corrected_customer_phone', form.corrected_customer_phone);
+  }
+
   photos.forEach((p) => {
     fd.append('photos', { uri: p.uri, name: p.fileName, type: p.type });
     fd.append('photo_kinds', p.kind);
@@ -148,6 +161,32 @@ export const buildCompleteVisitFormData = ({
 
   return fd;
 };
+
+/**
+ * Wires the offline outbox's 'COLLECTION_VISIT' replayer — called once from
+ * App.jsx at startup, not from either screen, so it's registered regardless
+ * of which screen (if either) happens to be mounted when connectivity comes
+ * back and the queue drains.
+ *
+ * Deliberately does NOT call PunchContext's registerExternalPunchIn: that
+ * side effect ("I am punching in right now" — flips live punch state,
+ * starts live tracking) only makes sense for an in-the-moment submit, not a
+ * background sync that may complete minutes later after the user has
+ * already moved on. The visit itself still saves correctly either way.
+ */
+export function registerCollectionVisitOfflineReplayer() {
+  registerReplayer('COLLECTION_VISIT', async (payload) => {
+    const fd = buildCompleteVisitFormData({
+      ...payload,
+      form: {
+        ...payload.form,
+        promise_date: payload.form.promise_date ? new Date(payload.form.promise_date) : null,
+      },
+      visitStartTime: payload.visitStartTime ? new Date(payload.visitStartTime) : null,
+    });
+    await api.completeVisit(payload.collectionId, fd);
+  });
+}
 
 /**
  * Collection-status validation shared by both screens — returns an error
@@ -211,6 +250,26 @@ export const validateVisitType = (form, { audioNote } = {}) => {
     if (form.follow_up_required === null) return 'Please specify whether a follow-up is required.';
     if (form.follow_up_required === true && !form.promise_date) return 'Please select the next follow-up date.';
     if (isAudioRequiredFor(form) && !audioNote) return 'Please record a voice note for this Home Visit.';
+  }
+  return null;
+};
+
+/**
+ * "Is the customer phone number correct as recorded?" — must be answered
+ * before submit. Mirrors the backend's CompleteVisitSerializer.validate()
+ * exactly: a corrected number must be a valid 10-digit mobile, and (checked
+ * server-side, where the full user directory lives) never a TAS employee's
+ * own registered number — an employee can't substitute their own or a
+ * colleague's number for the customer's.
+ */
+export const validateCustomerPhone = (form) => {
+  if (form.phone_correct === null || form.phone_correct === undefined) {
+    return 'Please confirm whether the customer phone number is correct.';
+  }
+  if (form.phone_correct === false) {
+    if (!isPhone(form.corrected_customer_phone)) {
+      return "Enter a valid 10-digit customer phone number.";
+    }
   }
   return null;
 };

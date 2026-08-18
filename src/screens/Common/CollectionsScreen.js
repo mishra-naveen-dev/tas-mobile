@@ -77,10 +77,11 @@ const PRODUCT_TYPE_OPTIONS = ['IL', 'ILC', 'IBL', 'JLG'];
 
 // DPD (days past due) sub-buckets — only relevant when Type filter = OD
 const DPD_BUCKET_OPTIONS = [
-    { value: '0-30', label: '0-30', min: 0, max: 30 },
-    { value: '31-60', label: '31-60', min: 31, max: 60 },
-    { value: '61-90', label: '61-90', min: 61, max: 90 },
-    { value: '91+', label: '91+', min: 91, max: Infinity },
+    { value: '60', label: '1-60', min: 0, max: 60 },
+    { value: '90', label: '61-90', min: 61, max: 90 },
+    { value: '180', label: '91-180', min: 91, max: 180 },
+    { value: '360', label: '181-360', min: 181, max: 360 },
+    { value: '360+', label: '360+', min: 361, max: Infinity },
 ];
 const matchesDpdBucket = (days, bucketValue) => {
     if (days == null) return false;
@@ -640,6 +641,7 @@ const CollectionsScreen = ({ route }) => {
             return (
                 (r.customer_name || '').toLowerCase().includes(q) ||
                 (r.loan_id || '').toLowerCase().includes(q) ||
+                (r.center_id || '').toLowerCase().includes(q) ||
                 (r.address || '').toLowerCase().includes(q) ||
                 (r.area || '').toLowerCase().includes(q) ||
                 (r.pincode || '').toLowerCase().includes(q) ||
@@ -803,9 +805,9 @@ const CollectionsScreen = ({ route }) => {
                                 })()}
                                 {item.dpd_days != null && item.dpd_days > 0 && (() => {
                                     const d = item.dpd_days;
-                                    const c = d > 90 ? '#7f1d1d'
-                                            : d > 60 ? '#b91c1c'
-                                            : d > 30 ? '#d97706'
+                                    const c = d > 360 ? '#7f1d1d'
+                                            : d > 180 ? '#b91c1c'
+                                            : d > 90 ? '#d97706'
                                             : '#f59e0b';
                                     return (
                                         <View style={[styles.typeTag, { backgroundColor: c + '22' }]}>
@@ -1123,7 +1125,7 @@ const CollectionsScreen = ({ route }) => {
                                     <Icon name="search" size={15} color={colors.textMuted} />
                                     <TextInput
                                         style={styles.mapSearchInput}
-                                        placeholder="Search name, loan ID, address, area, date…"
+                                        placeholder="Search name, loan ID, center ID, address, area, date…"
                                         placeholderTextColor={colors.textMuted}
                                         value={mapSearch}
                                         onChangeText={setMapSearch}
@@ -1177,7 +1179,7 @@ const CollectionsScreen = ({ route }) => {
                         <Icon name="search" size={18} color={colors.textMuted} />
                         <TextInput
                             style={styles.searchInput}
-                            placeholder="Search name, loan id, phone, address, pincode…"
+                            placeholder="Search name, loan id, center id, phone, address, pincode…"
                             placeholderTextColor={colors.textMuted}
                             value={search}
                             onChangeText={setSearch}
@@ -1488,6 +1490,21 @@ const CollectionsScreen = ({ route }) => {
                                         </View>
                                     );
                                 })()}
+                                <View style={styles.loanDetailsBox}>
+                                    {[
+                                        ['Product Type', modal.record.product_type],
+                                        ['Outstanding Principal', modal.record.principal_arrear != null ? `₹${Number(modal.record.principal_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Interest Arrear', modal.record.interest_arrear != null ? `₹${Number(modal.record.interest_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Total Arrear', modal.record.total_arrear != null ? `₹${Number(modal.record.total_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Disbursement Date', modal.record.disbursement_date ? new Date(modal.record.disbursement_date).toLocaleDateString('en-IN') : null],
+                                        ['Region / Center', [modal.record.region_name, modal.record.center_id].filter(Boolean).join(' / ') || null],
+                                    ].filter(([, value]) => !!value).map(([label, value]) => (
+                                        <View key={label} style={styles.loanDetailRow}>
+                                            <Text style={styles.loanDetailLabel}>{label}</Text>
+                                            <Text style={styles.loanDetailValue}>{value}</Text>
+                                        </View>
+                                    ))}
+                                </View>
                             </>
                         )}
 
@@ -1892,6 +1909,15 @@ const styles = StyleSheet.create({
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     modalTitle: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     modalSub: { fontSize: typography.sizes.sm, color: colors.textMuted, marginTop: 4, marginBottom: spacing.sm },
+    loanDetailsBox: {
+        backgroundColor: colors.backgroundLight || '#F8FAFC',
+        borderRadius: borderRadius.md,
+        padding: spacing.sm,
+        marginBottom: spacing.sm,
+    },
+    loanDetailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
+    loanDetailLabel: { fontSize: typography.sizes.xs, color: colors.textMuted },
+    loanDetailValue: { fontSize: typography.sizes.xs, fontWeight: '600', color: colors.textDark },
     fieldLabel: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textMedium, marginTop: spacing.sm, marginBottom: spacing.xs },
     amountLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm, marginBottom: spacing.xs },
     emiHint: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.successLight || '#d1fae5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
