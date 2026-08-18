@@ -42,6 +42,7 @@ export const parseApiError = (error) => {
     let canRetry = false;
     let forField = null;
     let code = null;
+    let reference = null;
 
     // No response at all (network issue)
     if (!error.response) {
@@ -60,13 +61,17 @@ export const parseApiError = (error) => {
             type = ErrorType.NETWORK;
             canRetry = true;
         }
-        return { message, type, priority, canRetry, forField, code };
+        return { message, type, priority, canRetry, forField, code, reference };
     }
 
     const status = error.response?.status;
     const data = error.response?.data;
     // data.code can itself be an ErrorDetail (DRF) — always extract as string
     code = safeString(data?.code) || null;
+    // Backend attaches this to GPS-related rejections (the GPSCapture row id)
+    // so a user can quote it and support/dev can find the exact reading
+    // (lat/lng/accuracy/rejection reason/timestamp) without guessing.
+    reference = data?.reference != null ? safeString(data.reference) : null;
 
     // Handle status codes
     switch (status) {
@@ -194,26 +199,27 @@ export const parseApiError = (error) => {
             canRetry = true;
     }
 
-    return { message, type, priority, canRetry, forField, status, code };
+    return { message, type, priority, canRetry, forField, status, code, reference };
 };
 
 // Show error alert to user
 export const showError = (error, onRetry = null) => {
     const parsed = parseApiError(error);
-    
+    const text = parsed.reference ? `${parsed.message}\n\nRef: ${parsed.reference}` : parsed.message;
+
     if (onRetry && parsed.canRetry) {
         Alert.alert(
             'Error',
-            parsed.message,
+            text,
             [
                 { text: 'Cancel', style: 'cancel' },
                 { text: 'Retry', onPress: onRetry },
             ]
         );
     } else {
-        Alert.alert('Error', parsed.message);
+        Alert.alert('Error', text);
     }
-    
+
     return parsed;
 };
 
