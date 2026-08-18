@@ -570,6 +570,20 @@ api.getLastAutoClosure = () =>
 api.submitForgotPunchRequest = (data) =>
     api.post('/punch-verification/requests/', data);
 
+// In-app update check — compares this build's versionCode against the
+// backend's MobileRelease registry (populated by the CI release workflow).
+api.checkMobileRelease = (versionCode) =>
+    api.get('/organization/mobile-release/check/', {
+        params: { platform: 'android', version_code: versionCode },
+    });
+
+// Short-lived (15 min) presigned S3 download URL for a specific released
+// version — fetched only once the user taps "Update Now", never eagerly.
+api.getMobileReleaseDownloadUrl = (versionCode) =>
+    api.get('/organization/mobile-release/download/', {
+        params: { platform: 'android', version_code: versionCode },
+    });
+
 api.getUserProfile = () => {
     return api.get('/organization/users/me/');
 };

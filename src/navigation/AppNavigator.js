@@ -28,6 +28,7 @@ import AdminDevicesScreen from '../screens/Admin/AdminDevicesScreen';
 import SuperAdminDashboardScreen from '../screens/SuperAdmin/SuperAdminDashboardScreen';
 
 import { AuthContext } from '../context/AuthContext';
+import UpdatePrompt from '../components/UpdatePrompt';
 
 const Stack = createNativeStackNavigator();
 
@@ -77,8 +78,10 @@ const AppNavigator = () => {
     }
 
     return (
-        <NavigationContainer>
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <>
+            <UpdatePrompt />
+            <NavigationContainer>
+                <Stack.Navigator screenOptions={{ headerShown: false }}>
 
                 {isSuperAdmin() ? (
                     // Super Admin Navigation
@@ -118,8 +121,9 @@ const AppNavigator = () => {
                         <Stack.Screen name="Profile" component={ProfileScreen} />
                     </>
                 )}
-            </Stack.Navigator>
-        </NavigationContainer>
+                </Stack.Navigator>
+            </NavigationContainer>
+        </>
     );
 };
 
