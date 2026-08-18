@@ -15,6 +15,7 @@ import { useAuth } from '../../context/AuthContext';
 import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
 import GeocodingService from '../../services/GeocodingService';
 import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
+import { parseApiError } from '../../core/error/AppErrorHandler';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import { colors, typography, spacing } from '../../theme/tokens';
 import {
@@ -440,7 +441,9 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         setDupLocationModal({ visible: true, otherLoanId: respData.other_loan_id });
         return;
       }
-      const msg = respData?.error || respData?.detail || respData?.message || err?.message || 'Failed to save visit.';
+      console.error('[CollectionVisit] Save failed:', err?.response?.status, respData || err?.message);
+      const parsed = parseApiError(err);
+      const msg = parsed.reference ? `${parsed.message}\n\nRef: ${parsed.reference}` : parsed.message;
       Alert.alert('Error', msg);
     } finally {
       submittingRef.current = false;

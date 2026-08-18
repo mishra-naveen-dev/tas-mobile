@@ -14,6 +14,7 @@ import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
 import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
+import { parseApiError } from '../../core/error/AppErrorHandler';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
@@ -663,7 +664,9 @@ const EmployeePunchScreen = ({ navigation }) => {
         setDupLocationModal({ visible: true, otherLoanId: respData.other_loan_id });
         return;
       }
-      const msg = respData?.error || respData?.detail || respData?.message || err?.message || 'Failed to save visit.';
+      console.error('[EmployeePunch] Visit save failed:', err?.response?.status, respData || err?.message);
+      const parsed = parseApiError(err);
+      const msg = parsed.reference ? `${parsed.message}\n\nRef: ${parsed.reference}` : parsed.message;
       Alert.alert('Error', msg);
     } finally {
       setVisitSaving(false);

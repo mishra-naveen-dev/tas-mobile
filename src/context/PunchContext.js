@@ -128,10 +128,8 @@ export const PunchProvider = ({ children }) => {
       setPendingAutoClosure(null);
       return { success: true };
     } catch (err) {
-      const errorMsg = err?.response?.data?.error ||
-                      err?.response?.data?.detail ||
-                      err?.message || 'Failed to submit review request';
-      return { success: false, error: errorMsg };
+      const { message } = parseApiError(err);
+      return { success: false, error: message };
     }
   }, [pendingAutoClosure]);
 
@@ -337,14 +335,11 @@ export const PunchProvider = ({ children }) => {
         };
       }
 
-      const errorMsg = respData?.error ||
-                      respData?.detail ||
-                      respData?.message ||
-                      JSON.stringify(respData) ||
-                      err?.message || 'Failed to punch in';
+      const parsed = parseApiError(err);
+      const errorMsg = parsed.reference ? `${parsed.message}\n\nRef: ${parsed.reference}` : parsed.message;
       setPunchState(STATES.ERROR);
       setErrorMessage(errorMsg);
-      return { success: false, error: errorMsg };
+      return { success: false, error: errorMsg, code: parsed.code, reference: parsed.reference };
     }
   }, [fetchTodayPunches]);
 
@@ -468,10 +463,12 @@ export const PunchProvider = ({ children }) => {
 
       return { success: true };
     } catch (err) {
-      const errorMsg = err?.response?.data?.error || err?.response?.data?.detail || err?.message || 'Failed to punch out';
+      if (IS_DEV) console.error('[Punch] Punch out failed:', err?.response?.data || err.message);
+      const parsed = parseApiError(err);
+      const errorMsg = parsed.reference ? `${parsed.message}\n\nRef: ${parsed.reference}` : parsed.message;
       setPunchState(STATES.ERROR);
       setErrorMessage(errorMsg);
-      return { success: false, error: errorMsg };
+      return { success: false, error: errorMsg, code: parsed.code, reference: parsed.reference };
     }
   }, [capturedLocation, fetchTodayPunches]);
 
