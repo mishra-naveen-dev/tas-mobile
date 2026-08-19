@@ -91,8 +91,26 @@ export const PunchProvider = ({ children }) => {
         const active = lastPunch.punch_type === 'PUNCH_IN';
         setIsActive(active);
         if (IS_DEV) console.log('[Punch] Restored isActive:', active, 'from last punch type:', lastPunch.punch_type);
+
+        // trackingStartTime/LocationService's route-point distance are both
+        // pure in-memory session state — they reset to nothing whenever this
+        // JS runtime restarts (app reopen, background kill) even though the
+        // punch-in session itself is still open server-side. Without this,
+        // the Home Screen's Distance/working-time display silently drops to
+        // 0 for an employee who is still actively clocked in. Re-seed both
+        // from the server's own record of the active session so they resume
+        // from the truth instead of from zero.
+        if (active) {
+          trackingStartTime.current = new Date(lastPunch.punched_at).getTime();
+          LocationService.setBaseDistance(lastPunch.total_distance_day);
+        } else {
+          trackingStartTime.current = null;
+          LocationService.setBaseDistance(0);
+        }
       } else {
         setIsActive(false);
+        trackingStartTime.current = null;
+        LocationService.setBaseDistance(0);
       }
     } catch (err) {
       // 401 is already handled by the axios interceptor (session-expired flow)
