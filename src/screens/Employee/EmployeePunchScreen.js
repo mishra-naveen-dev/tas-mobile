@@ -125,7 +125,7 @@ const AutoClosureBanner = ({ pendingAutoClosure, onSubmit }) => {
   );
 };
 
-const GPSBadge = ({ isMock, isFetching }) => {
+const GPSBadge = ({ isMock, isFetching, isCached }) => {
   if (isFetching) {
     return (
       <View style={[styles.badge, styles.fetchBg]}>
@@ -139,6 +139,16 @@ const GPSBadge = ({ isMock, isFetching }) => {
       <View style={[styles.badge, styles.mockBg]}>
         <Icon name="smartphone" size={14} color={colors.warning} />
         <Text style={[styles.badgeText, { color: colors.warning }]}>Dev Mode</Text>
+      </View>
+    );
+  }
+  // No live GPS could be acquired right now — LocationService fell back to
+  // this device's last known-good fix instead of blocking the punch.
+  if (isCached) {
+    return (
+      <View style={[styles.badge, styles.mockBg]}>
+        <Icon name="clock" size={14} color={colors.warning} />
+        <Text style={[styles.badgeText, { color: colors.warning }]}>Using Last Known Location</Text>
       </View>
     );
   }
@@ -1150,7 +1160,7 @@ const EmployeePunchScreen = ({ navigation }) => {
           )}
         </View>
 
-        <GPSBadge isMock={isMockLocation} isFetching={isFetching} />
+        <GPSBadge isMock={isMockLocation} isFetching={isFetching} isCached={capturedLocation?.location_source === 'CACHED'} />
 
         <View style={styles.punchSection}>
           <View style={[styles.statusBadge, { backgroundColor: isActive ? colors.successLight : colors.surface }]}>

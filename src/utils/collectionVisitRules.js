@@ -97,6 +97,7 @@ export const buildCompleteVisitFormData = ({
   put('network_status', localLocation.network_status);
   put('device_timestamp', localLocation.device_timestamp);
   put('location_address', localLocation.address);
+  put('location_source', localLocation.location_source);
 
   put('reason', form.reason);
   put('customer_name', customerName);
