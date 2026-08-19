@@ -381,53 +381,71 @@ export const PunchProvider = ({ children }) => {
     setSuccess(false);
 
     try {
-      // Try to get a fresh GPS fix for punch out accuracy
-      let lat = capturedLocation?.latitude || 0;
-      let lng = capturedLocation?.longitude || 0;
-      let address = capturedLocation?.current_address || '';
-      let accuracy = capturedLocation?.accuracy ?? null;
-      let gpsExtra = {
-        altitude: capturedLocation?.altitude ?? null,
-        heading: capturedLocation?.heading ?? null,
-        battery_level: capturedLocation?.battery_level ?? null,
-        is_mock_location: capturedLocation?.is_mock_location ?? false,
-        mock_detection_method: capturedLocation?.mock_detection_method || '',
-        gps_provider: capturedLocation?.gps_provider || '',
-        network_status: capturedLocation?.network_status || '',
-        device_timestamp: capturedLocation?.device_timestamp || undefined,
-        // This is the punch-in-time fix carried forward, not a fresh read
-        // for this punch-out — always flagged CACHED regardless of what it
-        // was tagged as originally.
-        location_source: 'CACHED',
-      };
+      // Try to get a fresh GPS fix for punch out accuracy. Never fabricate
+      // (0, 0) as a fallback — a real production bug this replaced: when
+      // capturedLocation was null (e.g. the app restarted between punch-in
+      // and punch-out, resetting this in-memory state) the old `|| 0`
+      // default silently submitted exact null-island coordinates, which
+      // the backend correctly rejects as INVALID_COORD. The fallback chain
+      // is now: fresh GPS (captureFieldActivityLocation already retries
+      // twice and falls back to LocationService's own persisted
+      // last-known-good fix internally) → this session's punch-in reading,
+      // still real coordinates, never a fabricated default → a clear
+      // client-side error instead of ever submitting nothing.
+      let lat, lng, address, accuracy, gpsExtra;
 
-      try {
-        const currentLocation = await captureFieldActivityLocation();
-        if (!currentLocation.error) {
-          lat = currentLocation.latitude;
-          lng = currentLocation.longitude;
-          accuracy = currentLocation.accuracy ?? accuracy;
-          gpsExtra = {
-            altitude: currentLocation.altitude ?? null,
-            heading: currentLocation.heading ?? null,
-            battery_level: currentLocation.battery_level ?? null,
-            is_mock_location: currentLocation.is_mock_location ?? false,
-            mock_detection_method: currentLocation.mock_detection_method || '',
-            gps_provider: currentLocation.gps_provider || '',
-            network_status: currentLocation.network_status || '',
-            device_timestamp: currentLocation.device_timestamp || undefined,
-            location_source: currentLocation.location_source || 'LIVE',
-          };
-          try {
-            const geo = await reverseGeocodeWithTimeout(lat, lng);
-            address = geo?.fullAddress || geo?.shortAddress || address;
-          } catch (geoErr) {
-            if (IS_DEV) console.warn('[Punch] Reverse geocode failed on punch out:', geoErr.message);
-          }
-          if (!address) address = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      const currentLocation = await captureFieldActivityLocation();
+      if (!currentLocation.error) {
+        lat = currentLocation.latitude;
+        lng = currentLocation.longitude;
+        accuracy = currentLocation.accuracy ?? null;
+        address = capturedLocation?.current_address || '';
+        gpsExtra = {
+          altitude: currentLocation.altitude ?? null,
+          heading: currentLocation.heading ?? null,
+          battery_level: currentLocation.battery_level ?? null,
+          is_mock_location: currentLocation.is_mock_location ?? false,
+          mock_detection_method: currentLocation.mock_detection_method || '',
+          gps_provider: currentLocation.gps_provider || '',
+          network_status: currentLocation.network_status || '',
+          device_timestamp: currentLocation.device_timestamp || undefined,
+          location_source: currentLocation.location_source || 'LIVE',
+        };
+        try {
+          const geo = await reverseGeocodeWithTimeout(lat, lng);
+          address = geo?.fullAddress || geo?.shortAddress || address;
+        } catch (geoErr) {
+          if (IS_DEV) console.warn('[Punch] Reverse geocode failed on punch out:', geoErr.message);
         }
-      } catch (locErr) {
-        if (IS_DEV) console.warn('[Punch] GPS unavailable for punch out, using last known location');
+        if (!address) address = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      } else if (capturedLocation?.latitude != null && capturedLocation?.longitude != null) {
+        // captureFieldActivityLocation() already tried live GPS twice and
+        // its own persisted cache — this in-session punch-in reading is a
+        // last resort on top of that, still a real captured fix, not a
+        // fabricated one.
+        lat = capturedLocation.latitude;
+        lng = capturedLocation.longitude;
+        address = capturedLocation.current_address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        accuracy = capturedLocation.accuracy ?? null;
+        gpsExtra = {
+          altitude: capturedLocation.altitude ?? null,
+          heading: capturedLocation.heading ?? null,
+          battery_level: capturedLocation.battery_level ?? null,
+          is_mock_location: capturedLocation.is_mock_location ?? false,
+          mock_detection_method: capturedLocation.mock_detection_method || '',
+          gps_provider: capturedLocation.gps_provider || '',
+          network_status: capturedLocation.network_status || '',
+          device_timestamp: capturedLocation.device_timestamp || undefined,
+          location_source: 'CACHED',
+        };
+        if (IS_DEV) console.warn('[Punch] Live GPS unavailable for punch out, using this session\'s punch-in location');
+      } else {
+        // Nothing usable anywhere — a clear client-side error beats a
+        // confusing server-side "null-island" rejection.
+        const errorMsg = currentLocation.error || 'Could not get your location. Please try again.';
+        setPunchState(STATES.ERROR);
+        setErrorMessage(errorMsg);
+        return { success: false, error: errorMsg };
       }
 
       const payload = {
