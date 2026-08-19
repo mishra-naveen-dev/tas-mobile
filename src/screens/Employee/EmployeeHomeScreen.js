@@ -381,17 +381,20 @@ const MapPreview = React.memo(({ points, mapRef }) => {
     );
 });
 
-const StatCard = React.memo(({ icon, value, label, iconColor, bgColor, prefix = '', suffix = '' }) => (
-    <View style={styles.statCard}>
-        <View style={[styles.statIconContainer, { backgroundColor: bgColor }]}>
-            <Icon name={icon} size={20} color={iconColor} />
-        </View>
-        <Text style={styles.statValue}>
-            {prefix}{typeof value === 'number' ? value.toLocaleString() : value}{suffix}
-        </Text>
-        <Text style={styles.statLabel}>{label}</Text>
-    </View>
-));
+const StatCard = React.memo(({ icon, value, label, iconColor, bgColor, prefix = '', suffix = '', onPress }) => {
+    const Container = onPress ? TouchableOpacity : View;
+    return (
+        <Container style={styles.statCard} onPress={onPress} activeOpacity={onPress ? 0.7 : 1}>
+            <View style={[styles.statIconContainer, { backgroundColor: bgColor }]}>
+                <Icon name={icon} size={20} color={iconColor} />
+            </View>
+            <Text style={styles.statValue}>
+                {prefix}{typeof value === 'number' ? value.toLocaleString() : value}{suffix}
+            </Text>
+            <Text style={styles.statLabel}>{label}</Text>
+        </Container>
+    );
+});
 
 const ActivitySection = React.memo(({ section, sectionIndex }) => (
     <View key={`section-${section.title}-${sectionIndex}`}>
@@ -449,6 +452,14 @@ const EmployeeHomeScreen = ({ navigation }) => {
         () => api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }),
         { enabled: !!user?.id },
     );
+    // Total Visits — see CollectionUpdateViewSet.visit_summary(). Scoped to
+    // "today" by default, same as the rest of this screen; role-scoping to
+    // this employee's own activity happens server-side, never trusting a
+    // client-supplied employee id.
+    const visitSummaryQuery = useApiQuery(
+        ['homeVisitSummary', todayStr],
+        () => api.getVisitSummary({ date_from: todayStr, date_to: todayStr }),
+    );
     const {
         data: monthlyTarget,
         isLoading: monthlyTargetLoading,
@@ -462,6 +473,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const correctionSummary = useMemo(() => correctionQuery.data || {}, [correctionQuery.data]);
     const monthlyCollection = Number(monthlyPerfQuery.data?.total_collection_amount) || 0;
     const collectionStats = collectionStatsQuery.data || null;
+    const visitSummary = visitSummaryQuery.data || null;
 
     // Field activity (e.g. a collection outcome update) doesn't always
     // happen inside an explicit punch-tracked GPS session — shape each
@@ -528,6 +540,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
         monthlyPerfQuery.refetch();
         collectionStatsQuery.refetch();
         collectionUpdatesQuery.refetch();
+        visitSummaryQuery.refetch();
         refetchMonthlyTarget();
         refreshPunches();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -551,6 +564,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
         monthlyPerfQuery.refetch();
         collectionStatsQuery.refetch();
         collectionUpdatesQuery.refetch();
+        visitSummaryQuery.refetch();
         refetchMonthlyTarget();
         refreshPunches();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -630,9 +644,14 @@ const EmployeeHomeScreen = ({ navigation }) => {
                     ? (collectionStats.today?.amount ?? 0)
                     : (summary?.total_collection ?? 0),
             },
-            { id: 'disbursement', icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.danger, bgColor: colors.dangerLight, prefix: '₹' },
+            {
+                id: 'total_visits', icon: 'map-pin', label: 'Total Visits',
+                iconColor: colors.danger, bgColor: colors.dangerLight,
+                value: visitSummary?.total_visits || 0,
+                onPress: () => navigation.navigate('VisitActivitySummary'),
+            },
         ];
-    }, [summary, isActive, isTracking, liveDistance, collectionStats]);
+    }, [summary, isActive, isTracking, liveDistance, collectionStats, visitSummary, navigation]);
 
     const correctionCounts = useMemo(() => ({
         pending: correctionSummary?.pending || 0,

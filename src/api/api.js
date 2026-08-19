@@ -748,6 +748,14 @@ api.getMonthlyTarget = (month) =>
 api.getCollectionUpdates = (params = {}) =>
     api.get('/loans/collection-updates/', { params });
 
+// Total Visits aggregation (VISIT/COLLECTION P2P+NOT_PAID/OTHER counts) for
+// the Home Screen card and Visit Activity Summary screen — see
+// CollectionUpdateViewSet.visit_summary(). Role-scoped server-side (an
+// employee only ever sees their own activity); date_from/date_to map to the
+// summary screen's date-range picker.
+api.getVisitSummary = (params = {}) =>
+    api.get('/loans/collection-updates/visit_summary/', { params });
+
 // Unified Collection Visit: one punch + one collection-status update (+
 // optional photos) in a single transactional request. `formData` must be a
 // FormData instance (see CollectionVisitScreen) — the request interceptor

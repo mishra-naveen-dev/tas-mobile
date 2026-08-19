@@ -117,6 +117,10 @@ export const buildCompleteVisitFormData = ({
   put('promise_date', form.promise_date ? form.promise_date.toISOString().split('T')[0] : '');
   put('visit_reason', form.visit_reason);
   put('visit_dpd_bucket', form.visit_reason === 'OD_VISIT' ? form.visit_dpd_bucket : '');
+  // Top-level Total Visits bucket — form.reasonBucket is already computed
+  // client-side (see CollectionVisitScreen's selectReasonBucket) but was
+  // never transmitted before; see apps.loans.services.activity_classification.
+  put('activity_reason', form.reasonBucket);
 
   if (form.visit_reason === 'HOME_VISIT') {
     put('visit_purpose', form.visit_purpose);
