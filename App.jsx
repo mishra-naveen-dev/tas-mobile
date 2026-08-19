@@ -13,6 +13,8 @@ import SSEClient from './src/services/SSEClient';
 import ApplicationActivityService from './src/services/ApplicationActivityService';
 import { colors } from './src/theme/tokens';
 import SplashScreen from './src/components/SplashScreen';
+import UpdatePrompt from './src/components/UpdatePrompt';
+import { triggerUpdateRecheck } from './src/utils/updateGate';
 import { queryClient, asyncStoragePersister, wireReactQueryToAppEvents } from './src/queryClient';
 import { startAutoSync } from './src/services/OfflineQueue';
 import { registerCollectionVisitOfflineReplayer } from './src/utils/collectionVisitRules';
@@ -39,6 +41,15 @@ const AppContent = () => {
     // they open the Notifications list (server-persisted separately).
     useEffect(() => {
         const unsubscribe = SSEClient.onNotification((msg) => {
+            // A new release was just registered server-side — re-check
+            // right now instead of waiting for UpdatePrompt's own poll
+            // interval or the next foreground event, so an already-open
+            // session finds out immediately.
+            if (msg?.notification_type === 'APP_UPDATE_AVAILABLE') {
+                triggerUpdateRecheck();
+                return;
+            }
+
             if (msg?.notification_type === 'CUSTOMER_ASSIGNED') {
                 notify.info(msg.message || 'You have been assigned a new customer', {
                     duration: NotificationDuration.LONG,
@@ -101,6 +112,7 @@ const AppContent = () => {
         <NavigationContainer ref={navigationRef}>
             {auth.isAuthenticated ? (
                 <PunchProvider>
+                    <UpdatePrompt />
                     <RootNavigator />
                 </PunchProvider>
             ) : (

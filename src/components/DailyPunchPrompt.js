@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { usePunch } from '../context/PunchContext';
 import { colors, typography, spacing } from '../theme/tokens';
+import { onUpdateGateResolved } from '../utils/updateGate';
 
 const IS_DEV = __DEV__;
 
@@ -68,7 +69,9 @@ export default function DailyPunchPrompt() {
         }
     }, [punches, isActive, initialFetchDone]);
 
-    useEffect(() => { evaluate(); }, [evaluate]);
+    // Held back until the update-check flow resolves (see updateGate.js) —
+    // a mandatory update takes priority over "Start your day".
+    useEffect(() => onUpdateGateResolved(evaluate), [evaluate]);
 
     const handleClose = () => setVisible(false);
 
