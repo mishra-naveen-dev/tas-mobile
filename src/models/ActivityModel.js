@@ -30,6 +30,12 @@ export const createActivity = (data) => ({
     visitType: data.visit_type || null,
     distance: data.distance || null,
     distance_from_last: data.distance_from_last || 0,
+    // The full source punch/collection-update record, kept as-is (not
+    // normalized) — the activity detail view reads customer_phone/loan_id/
+    // latitude/longitude/travel_type/companion_name straight from here
+    // rather than growing the curated field list above for every screen
+    // that only needs the summary card fields.
+    raw: data,
 });
 
 export const mapApiResponseToActivities = (punchesData = [], allowanceData = []) => {

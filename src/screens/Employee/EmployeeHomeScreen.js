@@ -24,6 +24,7 @@ import { colors, typography, spacing, borderRadius, shadows } from '../../theme/
 import HeroHeader from '../../components/HeroHeader';
 import DailyPunchPrompt from '../../components/DailyPunchPrompt';
 import ActivityCard from '../../components/ActivityCard';
+import ActivityDetailModal from '../../components/ActivityDetailModal';
 import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
@@ -396,13 +397,14 @@ const StatCard = React.memo(({ icon, value, label, iconColor, bgColor, prefix = 
     );
 });
 
-const ActivitySection = React.memo(({ section, sectionIndex }) => (
+const ActivitySection = React.memo(({ section, sectionIndex, onActivityPress }) => (
     <View key={`section-${section.title}-${sectionIndex}`}>
         <SectionHeader title={section.title} count={section.data?.length || 0} />
         {(section.data || []).map((activity, idx) => (
-            <ActivityCard 
+            <ActivityCard
                 key={`activity-${section.title}-${activity.id || activity.punched_at || idx}`}
-                activity={activity} 
+                activity={activity}
+                onPress={() => onActivityPress(activity)}
             />
         ))}
     </View>
@@ -433,6 +435,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
 
     const [selectedFilter, setSelectedFilter] = useState('ALL');
     const [selectedMonth, setSelectedMonth] = useState(() => new Date());
+    const [selectedActivity, setSelectedActivity] = useState(null);
 
     const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -941,15 +944,22 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         </View>
                     ) : (
                         activities.map((section, sectionIndex) => (
-                            <ActivitySection 
+                            <ActivitySection
                                 key={`section-${section.title}-${sectionIndex}`}
                                 section={section}
                                 sectionIndex={sectionIndex}
+                                onActivityPress={setSelectedActivity}
                             />
                         ))
                     )}
                 </View>
             </ScrollView>
+
+            <ActivityDetailModal
+                activity={selectedActivity}
+                visible={!!selectedActivity}
+                onClose={() => setSelectedActivity(null)}
+            />
         </SafeAreaView>
     );
 };
