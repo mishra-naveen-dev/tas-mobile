@@ -188,6 +188,7 @@ export const PunchProvider = ({ children }) => {
         gps_provider: location.gps_provider,
         network_status: location.network_status,
         device_timestamp: location.device_timestamp,
+        location_source: location.location_source,
       });
       
       setIsMockLocation(location.isMock || false);
@@ -229,6 +230,7 @@ export const PunchProvider = ({ children }) => {
         gps_provider: locationData.gps_provider || '',
         network_status: locationData.network_status || '',
         device_timestamp: locationData.device_timestamp || undefined,
+        location_source: locationData.location_source || 'LIVE',
         customer_name: formData.customer_name || '',
         customer_phone: formData.customer_phone || '',
         reason: formData.reason || '',
@@ -393,6 +395,10 @@ export const PunchProvider = ({ children }) => {
         gps_provider: capturedLocation?.gps_provider || '',
         network_status: capturedLocation?.network_status || '',
         device_timestamp: capturedLocation?.device_timestamp || undefined,
+        // This is the punch-in-time fix carried forward, not a fresh read
+        // for this punch-out — always flagged CACHED regardless of what it
+        // was tagged as originally.
+        location_source: 'CACHED',
       };
 
       try {
@@ -410,6 +416,7 @@ export const PunchProvider = ({ children }) => {
             gps_provider: currentLocation.gps_provider || '',
             network_status: currentLocation.network_status || '',
             device_timestamp: currentLocation.device_timestamp || undefined,
+            location_source: currentLocation.location_source || 'LIVE',
           };
           try {
             const geo = await reverseGeocodeWithTimeout(lat, lng);

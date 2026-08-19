@@ -691,7 +691,13 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         </View>
 
         {/* GPS status */}
-        <View style={[styles.gpsBadge, fetchingLocation ? styles.gpsFetching : localLocation?.isMock ? styles.gpsMock : styles.gpsLocked]}>
+        <View style={[
+          styles.gpsBadge,
+          fetchingLocation ? styles.gpsFetching
+            : localLocation?.isMock ? styles.gpsMock
+            : localLocation?.location_source === 'CACHED' ? styles.gpsMock
+            : styles.gpsLocked,
+        ]}>
           {fetchingLocation ? (
             <>
               <ActivityIndicator size="small" color={colors.primary} />
@@ -701,6 +707,11 @@ const CollectionVisitScreen = ({ navigation, route }) => {
             <>
               <Icon name="smartphone" size={14} color={colors.warning} />
               <Text style={[styles.gpsBadgeText, { color: colors.warning }]}>Dev Mode</Text>
+            </>
+          ) : localLocation?.location_source === 'CACHED' ? (
+            <>
+              <Icon name="clock" size={14} color={colors.warning} />
+              <Text style={[styles.gpsBadgeText, { color: colors.warning }]}>Using Last Known Location</Text>
             </>
           ) : (
             <>

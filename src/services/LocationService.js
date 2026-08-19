@@ -20,6 +20,11 @@ const CONFIG = {
   maxAccuracy: 100,         // live-tracking stream only — drops noisy points from the route line
   sampleWindowMs: 8000,     // one-off capture (punch/visit): keep sampling for up to this long...
   goodEnoughAccuracyM: 25,  // ...or stop early the moment a reading this good comes in
+  // A cached fix older than this is refused as a fallback (see
+  // getCachedLocation) — stays well inside the server's own 24h hard
+  // reject (STALE_AGE_H in apps.livetracking.services.GPSValidator), with
+  // margin for however long the device stays offline after capturing it.
+  maxCacheAgeMs: 6 * 60 * 60 * 1000, // 6h
 };
 
 class LocationService {
@@ -164,8 +169,52 @@ class LocationService {
     const second = await this._sampleOnce();
     if (second.reading || second.error) return second.reading || second.error;
 
-    console.warn('[Location] GPS timeout on both attempts — no usable sample');
+    // Neither attempt produced a live fix or a hard error — genuinely no
+    // GPS available right now (deep indoors, underground, dead zone).
+    // Field staff routinely work in patchy-coverage areas and still need
+    // to record a visit — fall back to the last known-good fix on this
+    // device rather than blocking them outright. The fallback carries its
+    // own original capture time (not "now"), so the server's own
+    // freshness check evaluates it honestly rather than being told it's
+    // fresher than it really is.
+    console.warn('[Location] No live GPS after two attempts — trying last-known cached location');
+    const cached = await this.getCachedLocation();
+    if (cached) {
+      if (__DEV__) {
+        const ageMin = Math.round((Date.now() - cached.timestamp) / 60000);
+        console.log('[Location] Using cached location:', cached.accuracy, 'm,', ageMin, 'min old');
+      }
+      return cached;
+    }
+
+    console.warn('[Location] GPS timeout on both attempts and no cached fallback available');
     return this.createError('GPS request timed out. Please try again.', 'TIMEOUT');
+  }
+
+  // Last known-good GPS fix on this device, persisted to disk so it
+  // survives an app restart — the fallback getCurrentLocation() reaches
+  // for when live acquisition genuinely fails. Best-effort: a failed
+  // write/read here never blocks the live reading (or lack of one) that
+  // triggered it.
+  static async cacheLocation(reading) {
+    try {
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(reading));
+    } catch {
+      // Ignored — see comment above.
+    }
+  }
+
+  static async getCachedLocation() {
+    try {
+      const raw = await AsyncStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const cached = JSON.parse(raw);
+      const ageMs = Date.now() - (cached.timestamp || 0);
+      if (!(ageMs >= 0) || ageMs > CONFIG.maxCacheAgeMs) return null;
+      return { ...cached, locationSource: 'CACHED' };
+    } catch {
+      return null;
+    }
   }
 
   // One sampling window: keeps listening for up to CONFIG.sampleWindowMs and
@@ -185,6 +234,13 @@ class LocationService {
         resolved = true;
         clearTimeout(windowTimer);
         if (watchId != null) Geolocation.clearWatch(watchId);
+        if (reading) {
+          reading.locationSource = 'LIVE';
+          // Fire-and-forget — a fresh fix updates the fallback cache for
+          // next time a live one can't be had at all. Never cache the
+          // dev-mode fake location (isMock) as if it were a real fix.
+          if (!reading.isMock) this.cacheLocation(reading);
+        }
         resolve({ reading, error });
       };
 

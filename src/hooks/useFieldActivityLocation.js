@@ -1,5 +1,6 @@
 import DeviceInfo from 'react-native-device-info';
 import { Platform } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import LocationService from '../services/LocationService';
 
 /**
@@ -56,6 +57,14 @@ export async function captureFieldActivityLocation() {
     mockDetectionMethod = 'IOS_NOT_SUPPORTED';
   }
 
+  let networkStatus = 'UNKNOWN';
+  try {
+    const netState = await NetInfo.fetch();
+    networkStatus = netState.isConnected && netState.isInternetReachable !== false ? 'ONLINE' : 'OFFLINE';
+  } catch {
+    // Best-effort — never blocks GPS capture over a network-status read.
+  }
+
   return {
     ...location,
     altitude: location.altitude ?? null,
@@ -64,10 +73,12 @@ export async function captureFieldActivityLocation() {
     is_mock_location: isMockLocation,
     mock_detection_method: mockDetectionMethod,
     gps_provider: '',
-    // Real internet-status capture needs @react-native-community/netinfo,
-    // which isn't installed yet (would require a native rebuild) — ships
-    // as 'UNKNOWN' this milestone.
-    network_status: 'UNKNOWN',
+    network_status: networkStatus,
     device_timestamp: new Date(location.timestamp || Date.now()).toISOString(),
+    // 'LIVE' (fresh GPS fix) or 'CACHED' (LocationService fell back to the
+    // device's last known-good fix — see LocationService.getCachedLocation)
+    // — lets the backend/admin distinguish a live-verified point from a
+    // stand-in used because live acquisition genuinely failed.
+    location_source: location.locationSource || 'LIVE',
   };
 }
