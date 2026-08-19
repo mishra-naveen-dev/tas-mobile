@@ -4,6 +4,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import DeviceInfo from 'react-native-device-info';
 import api from '../api/api';
 import { colors, typography, spacing } from '../theme/tokens';
+import { markUpdateGateResolved, registerUpdateRecheck } from '../utils/updateGate';
 
 // A sideloaded (non-Play-Store) APK can never silently install an update —
 // Android always requires a human tap to confirm the install, no matter how
@@ -22,6 +23,9 @@ const UpdatePrompt = () => {
     // re-open the same prompt every cycle, but a *newer* release than the
     // one dismissed should still surface.
     const dismissedVersionRef = useRef(null);
+    // Drives launch sequencing (see updateGate.js): only a mandatory
+    // update on the very first check holds back "Start your day".
+    const mandatoryRef = useRef(false);
 
     const checkForUpdate = useCallback(async () => {
         try {
@@ -30,24 +34,42 @@ const UpdatePrompt = () => {
             const res = await api.checkMobileRelease(versionCode);
             const latest = res.data?.latest;
             if (res.data?.update_available && latest) {
+                mandatoryRef.current = !!latest.mandatory;
                 if (latest.version_code === dismissedVersionRef.current) return;
                 setDismissed(false);
                 setRelease(latest);
+            } else {
+                mandatoryRef.current = false;
             }
         } catch (e) {
+            mandatoryRef.current = false;
             if (__DEV__) console.warn('[UpdatePrompt] Check failed (non-fatal):', e.message);
         }
     }, []);
 
+    // Launch sequence: check for an update first; only a mandatory update
+    // keeps the gate closed (blocking the "Start your day" prompt behind
+    // it) — anything else lets the rest of the app proceed immediately
+    // once this first check resolves.
     useEffect(() => {
-        checkForUpdate();
+        let cancelled = false;
+        (async () => {
+            await checkForUpdate();
+            if (!cancelled && !mandatoryRef.current) markUpdateGateResolved();
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
+    useEffect(() => {
+        const unregisterRecheck = registerUpdateRecheck(checkForUpdate);
         const appStateSub = AppState.addEventListener('change', (nextState) => {
             if (nextState === 'active') checkForUpdate();
         });
         const interval = setInterval(checkForUpdate, RECHECK_INTERVAL_MS);
 
         return () => {
+            unregisterRecheck();
             appStateSub.remove();
             clearInterval(interval);
         };
