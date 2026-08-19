@@ -33,6 +33,14 @@ class LocationService {
   static listeners = new Set();
   static isTracking = false;
   static _bgRequested = false;
+  // Distance already covered today per the server's own running total
+  // (AttendancePunch.total_distance_day as of the active session's last
+  // punch-in) — routePoints alone can only ever reflect movement seen since
+  // this JS runtime last started, so without this baseline the Home
+  // Screen's Distance/working-time display silently resets to 0 any time
+  // the app restarts (background kill, reopen next day, etc.) mid-session.
+  // See PunchContext.fetchTodayPunches, which seeds this on restore.
+  static baseDistanceKm = 0;
 
   // Request foreground location permission and report a granular status so the
   // UI can react correctly:
@@ -490,8 +498,8 @@ class LocationService {
   }
 
   static getTotalDistance() {
-    if (this.routePoints.length < 2) return 0;
-    let total = 0;
+    let total = this.baseDistanceKm;
+    if (this.routePoints.length < 2) return total;
     for (let i = 1; i < this.routePoints.length; i++) {
       total += this.calcDistance(
         this.routePoints[i - 1].latitude, this.routePoints[i - 1].longitude,
@@ -501,12 +509,17 @@ class LocationService {
     return total;
   }
 
+  static setBaseDistance(km) {
+    this.baseDistanceKm = Number(km) || 0;
+  }
+
   static getRoutePoints() {
     return [...this.routePoints];
   }
 
   static clearRoute() {
     this.routePoints = [];
+    this.baseDistanceKm = 0;
   }
 
   static addListener(callback) {
