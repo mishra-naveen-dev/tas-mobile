@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "732169625701",
+    "project_id": "namra-tas-mobile-production",
+    "storage_bucket": "namra-tas-mobile-production.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:732169625701:android:e4a6e839672e46ccffe68c",
+        "android_client_info": {
+          "package_name": "com.tasmobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBAe4zelJlp18HB0bDdg6zFvRzbL8APRx8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
