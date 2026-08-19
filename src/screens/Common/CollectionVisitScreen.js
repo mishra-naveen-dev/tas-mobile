@@ -456,6 +456,13 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     await submitVisit();
   };
 
+  // Out-of-range and same-location-duplicate are independent backend checks
+  // — a single submission can hit both. Each confirm handler here must
+  // carry forward whatever reason the *other* dialog already collected in
+  // this session, not just its own — otherwise resolving one exception
+  // silently drops the other's already-confirmed reason on resubmit, the
+  // backend re-flags the dropped one, and the two dialogs bounce back and
+  // forth forever without ever actually saving.
   const handleConfirmOutOfRange = async () => {
     if (!outOfRangeReason) {
       Alert.alert('Required', 'Please select a reason.');
@@ -466,7 +473,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       return;
     }
     setOutOfRangeModal({ visible: false, distanceM: 0 });
-    await submitVisit({ out_of_range_reason: outOfRangeReason, out_of_range_comment: outOfRangeComment });
+    const extra = { out_of_range_reason: outOfRangeReason, out_of_range_comment: outOfRangeComment };
+    if (dupLocationReason) {
+      extra.duplicate_location_reason = dupLocationReason;
+      extra.duplicate_location_comment = dupLocationComment;
+    }
+    await submitVisit(extra);
   };
 
   const handleConfirmDupLocation = async () => {
@@ -479,7 +491,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       return;
     }
     setDupLocationModal({ visible: false, otherLoanId: '' });
-    await submitVisit({ duplicate_location_reason: dupLocationReason, duplicate_location_comment: dupLocationComment });
+    const extra = { duplicate_location_reason: dupLocationReason, duplicate_location_comment: dupLocationComment };
+    if (outOfRangeReason) {
+      extra.out_of_range_reason = outOfRangeReason;
+      extra.out_of_range_comment = outOfRangeComment;
+    }
+    await submitVisit(extra);
   };
 
   const plannedDate = record?.due_date ? new Date(record.due_date) : new Date();
