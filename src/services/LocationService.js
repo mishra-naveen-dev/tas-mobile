@@ -150,25 +150,42 @@ class LocationService {
     // keeps working when the app is in the background. Best-effort; never blocks.
     this.ensureBackgroundPermission();
 
-    // Multi-sample acquisition: a single GPS fix — especially the first one
-    // after a cold start, or indoors — is often much worse than the chip
-    // settles to a couple of seconds later (e.g. 157m → 92m → 61m → 48m as
-    // successive fixes come in). Keep sampling for a short window and keep
-    // the best (lowest accuracy value) reading seen, instead of taking
-    // whichever fix happens to arrive first. Never rejects on the final
-    // accuracy — the caller always gets a usable point; poor accuracy is
-    // just recorded as-is, not blocked.
+    // A cold GPS fix (first request after the chip's been idle — app just
+    // opened, screen was off, etc.) routinely takes longer than one sample
+    // window to produce even a single reading, while the chip stays "warm"
+    // for a while after. That's why hitting Retry right after a timeout
+    // reliably works — the second attempt gets a fix fast. Do that retry
+    // automatically, silently, before ever surfacing an error, instead of
+    // making the user do it by hand.
+    const first = await this._sampleOnce();
+    if (first.reading || first.error) return first.reading || first.error;
+
+    if (__DEV__) console.log('[Location] First attempt got no sample — retrying once automatically');
+    const second = await this._sampleOnce();
+    if (second.reading || second.error) return second.reading || second.error;
+
+    console.warn('[Location] GPS timeout on both attempts — no usable sample');
+    return this.createError('GPS request timed out. Please try again.', 'TIMEOUT');
+  }
+
+  // One sampling window: keeps listening for up to CONFIG.sampleWindowMs and
+  // returns the best (lowest accuracy value) reading seen, instead of
+  // whichever fix happens to arrive first — never rejects on the final
+  // accuracy, poor accuracy is just recorded as-is, not blocked. Resolves
+  // `{ reading: null, error: null }` on a plain timeout with zero samples,
+  // so the caller can retry before treating it as a real failure.
+  static _sampleOnce() {
     return new Promise((resolve) => {
       let resolved = false;
       let bestReading = null;
       let watchId = null;
 
-      const finish = (result) => {
+      const finish = (reading, error = null) => {
         if (resolved) return;
         resolved = true;
         clearTimeout(windowTimer);
         if (watchId != null) Geolocation.clearWatch(watchId);
-        resolve(result);
+        resolve({ reading, error });
       };
 
       const windowTimer = setTimeout(() => {
@@ -178,8 +195,10 @@ class LocationService {
         } else if (CONFIG.mockEnabled) {
           finish(this.getMockLocation());
         } else {
-          console.warn('[Location] GPS timeout — no usable sample');
-          finish(this.createError('GPS request timed out. Please try again.', 'TIMEOUT'));
+          // Plain timeout, zero samples — resolved with neither reading nor
+          // error so getCurrentLocation() knows to retry instead of failing.
+          if (__DEV__) console.log('[Location] Sample window elapsed with no reading');
+          finish(null);
         }
       }, CONFIG.sampleWindowMs);
 
@@ -236,7 +255,7 @@ class LocationService {
             const type = error.code === 1 ? 'PERMISSION_BLOCKED'
               : error.code === 2 ? 'LOCATION_OFF'
               : 'GPS_ERROR';
-            finish(this.createError(this.getErrorMessage(error.code), type));
+            finish(null, this.createError(this.getErrorMessage(error.code), type));
           }
         },
         {
