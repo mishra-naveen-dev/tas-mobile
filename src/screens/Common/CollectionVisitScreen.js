@@ -22,7 +22,7 @@ import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, HOME_VISIT_PHOTO_KINDS, isAudioRequiredFor,
   buildCompleteVisitFormData, validateCollectionStatus, validateVisitType,
-  validateCustomerPhone,
+  validateCustomerPhone, getPromiseDateRange,
 } from '../../utils/collectionVisitRules';
 
 // ── Reason is now a 3-way bucket. "Collection" and "Visit" are dedicated,
@@ -88,7 +88,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     reason: prefillCollection ? 'Collection' : '',
     payment_mode: '',
     upi_ref: '',
-    cheque_no: '',
     travel_with: 'ALONE',
     co_employee_id: '',
     co_employee_name: '',
@@ -113,7 +112,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
 
   const [photos, setPhotos] = useState([]); // [{ uri, fileName, type, kind }]
   const [upiScreenshot, setUpiScreenshot] = useState(null); // { uri, fileName, type }
-  const [chequePhoto, setChequePhoto] = useState(null); // { uri, fileName, type }
   const [audioNote, setAudioNote] = useState(null); // { uri, fileName, mimeType, durationSeconds }
 
   const [outOfRangeModal, setOutOfRangeModal] = useState({ visible: false, distanceM: 0 });
@@ -205,13 +203,11 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           updated.collected_amount = '';
           updated.payment_mode = '';
           updated.upi_ref = '';
-          updated.cheque_no = '';
         }
         updated.promise_date = null;
       }
       if (key === 'payment_mode') {
         updated.upi_ref = '';
-        updated.cheque_no = '';
       }
       if (key === 'visit_reason') {
         if (value !== 'OD_VISIT') updated.visit_dpd_bucket = '';
@@ -240,7 +236,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       status: bucket === 'VISIT' ? 'VISITED' : '',
       payment_mode: '',
       upi_ref: '',
-      cheque_no: '',
       collected_amount: '',
       promise_date: null,
       visit_reason: '',
@@ -255,7 +250,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     }));
     setPhotos([]);
     setUpiScreenshot(null);
-    setChequePhoto(null);
     setAudioNote(null);
     if (bucket === 'VISIT') visitStartTimeRef.current = new Date();
   };
@@ -287,9 +281,9 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Single-image pickers for UPI screenshot / cheque photo — same
-  // camera-or-gallery flow as addPhoto/pickPhoto, but holding exactly one
-  // image each rather than an accumulating array.
+  // Single-image picker for the UPI screenshot — same camera-or-gallery
+  // flow as addPhoto/pickPhoto, but holding exactly one image rather than
+  // an accumulating array.
   const addSingleImage = (label, setter) => {
     Alert.alert(label, 'Choose a source', [
       { text: 'Camera', onPress: () => pickSingleImage(setter, true) },
@@ -329,7 +323,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     }
 
     if (form.reasonBucket === 'COLLECTION' || form.reasonBucket === 'OTHER') {
-      const err = validateCollectionStatus(form, { photos, upiScreenshot, chequePhoto, audioNote });
+      const err = validateCollectionStatus(form, { photos, upiScreenshot, audioNote });
       if (err) {
         Alert.alert('Required', err);
         return false;
@@ -384,7 +378,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     customerAddress: record?.address || customerAddress,
     photos,
     upiScreenshot,
-    chequePhoto,
     audioNote,
     visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current : null,
     extra,
@@ -416,13 +409,13 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       if (isNetworkError(err)) {
         await enqueue('COLLECTION_VISIT', {
           collectionId,
+          loanId: record?.loan_id || loanId,
           form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
           localLocation,
           customerName: record?.customer_name || customerName,
           customerAddress: record?.address || customerAddress,
           photos,
           upiScreenshot,
-          chequePhoto,
           audioNote,
           visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
           extra,
@@ -504,10 +497,11 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     await submitVisit(extra);
   };
 
-  const plannedDate = record?.due_date ? new Date(record.due_date) : new Date();
-  plannedDate.setHours(0, 0, 0, 0);
-  const maxPromiseDate = new Date(plannedDate);
-  maxPromiseDate.setMonth(maxPromiseDate.getMonth() + 1);
+  // Anchored on the current Collection Date (today, when this visit is
+  // actually being recorded) — never on record.due_date/Demand Date, which
+  // is only the original overdue reference date and must not bound how far
+  // out a fresh PTP/follow-up/remaining-payment date can be set.
+  const { min: plannedDate, max: maxPromiseDate } = getPromiseDateRange();
 
   const promiseDateLabel = form.status === 'PARTIALLY_COLLECTED' ? 'Remaining Payment Date *'
     : form.status === 'NOT_PAID' ? 'Next Follow-up Date *'
@@ -623,12 +617,6 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           {renderSingleImagePicker('Screenshot', upiScreenshot, setUpiScreenshot)}
         </>
       )}
-      {form.payment_mode === 'CHEQUE' && (
-        <>
-          <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque Number" placeholderTextColor={colors.textMuted} />
-          {renderSingleImagePicker('Cheque Photo', chequePhoto, setChequePhoto)}
-        </>
-      )}
     </>
   );
 
@@ -690,7 +678,45 @@ const CollectionVisitScreen = ({ navigation, route }) => {
                     <Text style={styles.detailText}>Last Collected: {fmtDate(record.last_collection_date)}</Text>
                   </View>
                 )}
+                {!!record?.disbursement_date && (
+                  <View style={styles.detailItem}>
+                    <Icon name="calendar" size={12} color={colors.textMuted} />
+                    <Text style={styles.detailText}>Disbursed: {fmtDate(record.disbursement_date)}</Text>
+                  </View>
+                )}
+                {!!record?.father_name && (
+                  <View style={styles.detailItem}>
+                    <Icon name="user" size={12} color={colors.textMuted} />
+                    <Text style={styles.detailText}>Father: {record.father_name}</Text>
+                  </View>
+                )}
+                {!!record?.spouse_nominee_name && (
+                  <View style={styles.detailItem}>
+                    <Icon name="users" size={12} color={colors.textMuted} />
+                    <Text style={styles.detailText}>Spouse/Nominee: {record.spouse_nominee_name}</Text>
+                  </View>
+                )}
               </View>
+
+              {/* Loan-level money figures — each an independent value from the
+                  upload (never derived from another, see backend), so kept
+                  as its own labelled tile rather than folded into one number. */}
+              {(record?.outstanding_amount != null || record?.total_arrear != null || record?.disbursement_amount != null) && (
+                <View style={styles.moneyGrid}>
+                  {[
+                    ['Outstanding Amount', record?.outstanding_amount],
+                    ['Total Arrear', record?.total_arrear],
+                    ['Disbursement Amount', record?.disbursement_amount],
+                  ].filter(([, v]) => v != null).map(([label, value]) => (
+                    <View key={label} style={styles.moneyTile}>
+                      <Text style={styles.moneyTileLabel}>{label}</Text>
+                      <Text style={styles.moneyTileValue} numberOfLines={1}>
+                        ₹{Number(value).toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
             </>
           )}
         </View>
@@ -1097,6 +1123,14 @@ const styles = StyleSheet.create({
   detailGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: spacing.sm, gap: spacing.sm },
   detailItem: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.background, borderRadius: 8, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   detailText: { fontSize: typography.sizes.xs, color: colors.textMuted },
+  moneyGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: spacing.sm, gap: spacing.sm },
+  moneyTile: {
+    flexBasis: '47%', flexGrow: 1,
+    backgroundColor: colors.background, borderRadius: 8,
+    paddingHorizontal: spacing.sm, paddingVertical: 6,
+  },
+  moneyTileLabel: { fontSize: 10, color: colors.textMuted },
+  moneyTileValue: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.text, marginTop: 1 },
   gpsBadge: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm, paddingVertical: spacing.xs, paddingHorizontal: spacing.md, borderRadius: 8 },
   gpsFetching: { backgroundColor: colors.primaryLight },
   gpsMock: { backgroundColor: colors.warningLight },

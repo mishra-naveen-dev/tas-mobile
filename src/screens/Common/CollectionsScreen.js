@@ -438,6 +438,7 @@ const CollectionsScreen = ({ route }) => {
         return () => clearTimeout(t);
     }, [search]);
 
+
     // Status/Type/DPD/search are applied server-side (the backend already
     // supports all of them via CollectionRecordFilter) so filtering works
     // across the FULL assigned set, not just whatever page happens to be
@@ -446,13 +447,11 @@ const CollectionsScreen = ({ route }) => {
         const params = {};
         if (activeFilter !== 'ALL') {
             params.status = activeFilter;
-        } else {
-            // Default (All) view is the working list — once a customer is marked
-            // Collected/Partially Collected they move to the Done screen instead
-            // of lingering here. Selecting the Collected/Partial chip explicitly
-            // still shows them (handled by the branch above).
-            params.is_done = false;
         }
+        // No is_done filter on the default (All) view — a Collected/Partially
+        // Collected record still shows here as well as on the separate
+        // Collection Done screen, so an employee doesn't lose sight of a
+        // customer they just finished with.
         if (typeFilter !== 'ALL') params.collection_type = typeFilter;
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
         if (productFilter !== 'ALL') params.product_type = productFilter;
@@ -940,6 +939,30 @@ const CollectionsScreen = ({ route }) => {
                         <Icon name="clock" size={15} color={colors.textMuted} />
                         <Text style={styles.rowText}>Last collection: {fmtDate(item.last_collection_date)}</Text>
                     </View>
+
+                    {/* Supplementary loan facts, grouped two-per-row so the card
+                        doesn't grow into a long single-column list — family
+                        details together, origination together, current
+                        balances together. Blank until a sheet actually
+                        supplies these columns, so most cards show nothing here. */}
+                    {(item.father_name || item.spouse_nominee_name || item.disbursement_date
+                        || item.disbursement_amount != null || item.total_arrear != null || item.outstanding_amount != null) && (
+                        <View style={styles.extraFactsBox}>
+                            {[
+                                ['Father', item.father_name],
+                                ['Spouse / Nominee', item.spouse_nominee_name],
+                                ['Disb. Date', item.disbursement_date ? fmtDate(item.disbursement_date) : null],
+                                ['Disb. Amount', item.disbursement_amount != null ? fmtAmount(item.disbursement_amount) : null],
+                                ['Total Arrear', item.total_arrear != null ? fmtAmount(item.total_arrear) : null],
+                                ['Out. Amount', item.outstanding_amount != null ? fmtAmount(item.outstanding_amount) : null],
+                            ].filter(([, v]) => !!v).map(([label, value]) => (
+                                <View key={label} style={styles.extraFactCell}>
+                                    <Text style={styles.extraFactLabel}>{label}</Text>
+                                    <Text style={styles.extraFactValue} numberOfLines={1}>{value}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    )}
 
                     <View style={styles.actionRow}>
                         {!!item.customer_phone && (
@@ -1498,6 +1521,9 @@ const CollectionsScreen = ({ route }) => {
                                         ['Total Arrear', modal.record.total_arrear != null ? `₹${Number(modal.record.total_arrear).toLocaleString('en-IN')}` : null],
                                         ['Disbursement Date', modal.record.disbursement_date ? new Date(modal.record.disbursement_date).toLocaleDateString('en-IN') : null],
                                         ['Region / Center', [modal.record.region_name, modal.record.center_id].filter(Boolean).join(' / ') || null],
+                                        // branch_name/branch_id already come straight from
+                                        // CollectionRecordSerializer — no extra request needed.
+                                        ['Branch', [modal.record.branch_name, modal.record.branch_id].filter(Boolean).join(' / ') || null],
                                     ].filter(([, value]) => !!value).map(([label, value]) => (
                                         <View key={label} style={styles.loanDetailRow}>
                                             <Text style={styles.loanDetailLabel}>{label}</Text>
@@ -1888,6 +1914,14 @@ const styles = StyleSheet.create({
     row: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xs },
     rowText: { flex: 1, fontSize: typography.sizes.sm, color: colors.textMedium, marginLeft: spacing.xs },
     bold: { fontWeight: typography.weights.bold, color: colors.textDark },
+    extraFactsBox: {
+        flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs,
+        backgroundColor: colors.background, borderRadius: borderRadius.md,
+        padding: spacing.sm, marginBottom: spacing.xs,
+    },
+    extraFactCell: { flexBasis: '47%', flexGrow: 1 },
+    extraFactLabel: { fontSize: 10, color: colors.textMuted },
+    extraFactValue: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.textDark, marginTop: 1 },
     actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.sm },
     iconBtn: {
         width: 40, height: 40, borderRadius: borderRadius.md,

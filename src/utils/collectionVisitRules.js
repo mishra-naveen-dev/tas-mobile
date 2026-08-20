@@ -39,7 +39,6 @@ export const YES_NO_OPTIONS = [
 export const PAYMENT_MODES = [
   { value: 'CASH', label: 'Cash' },
   { value: 'UPI', label: 'UPI' },
-  { value: 'CHEQUE', label: 'Cheque' },
 ];
 
 export const PHOTO_KINDS = [
@@ -68,6 +67,22 @@ export const isAudioRequiredFor = (form) => (
   || form.visit_reason === 'HOME_VISIT'
 );
 
+// The PTP/expected-payment-date range for P2P, Not Paid, and Partial
+// Payment (remaining amount) all anchor on the *current* Collection Date —
+// the day the employee is actually recording this visit — never on the
+// record's old due_date/Demand Date. A loan overdue since an old Demand
+// Date must still let the customer promise a fresh near-term date, not one
+// implicitly bounded by how overdue it already is.
+// One shared function so CollectionVisitScreen and EmployeePunchScreen
+// can't drift apart on this the way they previously did on due_date.
+export const getPromiseDateRange = (collectionDate = new Date()) => {
+  const min = new Date(collectionDate);
+  min.setHours(0, 0, 0, 0);
+  const max = new Date(min);
+  max.setMonth(max.getMonth() + 1);
+  return { min, max, default: min };
+};
+
 /**
  * Builds the exact multipart FormData payload `api.completeVisit` expects —
  * shared so both screens submit an identical shape. `ctx` carries the pieces
@@ -77,7 +92,7 @@ export const isAudioRequiredFor = (form) => (
  */
 export const buildCompleteVisitFormData = ({
   form, localLocation, customerName, customerAddress,
-  photos = [], upiScreenshot, chequePhoto, audioNote,
+  photos = [], upiScreenshot, audioNote,
   visitStartTime, extra = {}, clientTransactionId,
 }) => {
   const fd = new FormData();
@@ -104,7 +119,6 @@ export const buildCompleteVisitFormData = ({
   put('customer_address', customerAddress);
   put('payment_method', form.payment_mode);
   put('upi_ref', form.upi_ref);
-  put('cheque_no', form.cheque_no);
   put('travel_type', form.travel_with);
   put('co_employee_id', form.co_employee_id);
   put('companion_name', form.co_employee_name);
@@ -157,9 +171,6 @@ export const buildCompleteVisitFormData = ({
   if (upiScreenshot) {
     fd.append('upi_screenshot', { uri: upiScreenshot.uri, name: upiScreenshot.fileName, type: upiScreenshot.type });
   }
-  if (chequePhoto) {
-    fd.append('cheque_photo', { uri: chequePhoto.uri, name: chequePhoto.fileName, type: chequePhoto.type });
-  }
   if (audioNote) {
     fd.append('audio', { uri: audioNote.uri, name: audioNote.fileName, type: audioNote.mimeType });
     fd.append('audio_duration_seconds', String(audioNote.durationSeconds));
@@ -199,7 +210,7 @@ export function registerCollectionVisitOfflineReplayer() {
  * message string, or null if valid. Mirrors CollectionVisitScreen's own
  * validate() COLLECTION-bucket rules exactly.
  */
-export const validateCollectionStatus = (form, { photos = [], upiScreenshot, chequePhoto, audioNote } = {}) => {
+export const validateCollectionStatus = (form, { photos = [], upiScreenshot, audioNote } = {}) => {
   if (!form.status) return 'Please select a Collection Status.';
   if (form.status === 'PENDING' && !form.promise_date) {
     return 'Please select the date the customer promised to pay.';
@@ -216,10 +227,6 @@ export const validateCollectionStatus = (form, { photos = [], upiScreenshot, che
     if (form.payment_mode === 'UPI') {
       if (!form.upi_ref?.trim()) return 'Please enter the UPI reference number.';
       if (!upiScreenshot) return 'Please add the UPI screenshot.';
-    }
-    if (form.payment_mode === 'CHEQUE') {
-      if (!form.cheque_no?.trim()) return 'Please enter the cheque number.';
-      if (!chequePhoto) return 'Please add the cheque photo.';
     }
   }
   if (form.status === 'PARTIALLY_COLLECTED') {

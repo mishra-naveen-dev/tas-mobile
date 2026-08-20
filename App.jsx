@@ -16,11 +16,20 @@ import SplashScreen from './src/components/SplashScreen';
 import UpdatePrompt from './src/components/UpdatePrompt';
 import { triggerUpdateRecheck } from './src/utils/updateGate';
 import { queryClient, asyncStoragePersister, wireReactQueryToAppEvents } from './src/queryClient';
-import { startAutoSync } from './src/services/OfflineQueue';
+import { startAutoSync, onSyncComplete } from './src/services/OfflineQueue';
 import { registerCollectionVisitOfflineReplayer } from './src/utils/collectionVisitRules';
+import { registerCollectionCorrectionOfflineReplayer } from './src/screens/Common/CollectionCorrectionFormScreen';
+import { registerPunchCorrectionOfflineReplayer } from './src/screens/Common/PunchCorrectionScreen';
 
 wireReactQueryToAppEvents();
+// All four OfflineQueue replayers registered explicitly here, in one place,
+// rather than relying on module-import side effects (RootNavigator's static
+// screen imports happen to run these today, but that's incidental to how
+// React Navigation is currently wired — anyone lazy-loading these screens
+// later would silently reintroduce the gap this makes impossible).
 registerCollectionVisitOfflineReplayer();
+registerCollectionCorrectionOfflineReplayer();
+registerPunchCorrectionOfflineReplayer();
 startAutoSync();
 
 const AppContent = () => {
@@ -84,6 +93,34 @@ const AppContent = () => {
             }
         });
         return unsubscribe;
+    }, [notify]);
+
+    // Offline-queue drain feedback — fires once per drain PASS (never once
+    // per item, however many were queued), naming the loan for a single
+    // record so a field officer doing several visits back-to-back can tell
+    // which confirmation is for which customer; a bulk drain gets one
+    // summary instead of a flood. Backend-confirmed only — this only ever
+    // fires from OfflineQueue's onSyncComplete, which itself only runs
+    // after each item's replay() has actually resolved against the server.
+    useEffect(() => {
+        return onSyncComplete(({ succeeded, failed }) => {
+            if (succeeded.length === 1) {
+                const loanId = succeeded[0].payload?.loanId || succeeded[0].payload?.loan_id;
+                notify.success(loanId ? `Loan ${loanId} activity has been synced successfully.` : 'Your saved activity has been synced successfully.');
+            } else if (succeeded.length > 1) {
+                notify.success(`Your ${succeeded.length} activity records have been synced successfully.`);
+            }
+            if (failed.length) {
+                notify.warning(
+                    failed.length === 1
+                        ? 'An activity record could not be synced. Please review it.'
+                        : 'Some activity records could not be synced. Please review them.',
+                    {
+                        onPress: () => navigationRef.current?.navigate('EmployeeTabs', { screen: 'EmployeeHome' }),
+                    },
+                );
+            }
+        });
     }, [notify]);
 
     // App open/close (foreground/background) session tracking for Device

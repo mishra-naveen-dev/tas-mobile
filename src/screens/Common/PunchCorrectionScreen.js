@@ -21,9 +21,20 @@ import { enqueue, registerReplayer, isNetworkError } from '../../services/Offlin
 
 // payload is already plain/JSON-safe (correction_date is a string, not a
 // Date) by the time it's built below, so it can be queued and replayed as-is.
-registerReplayer('CORRECTION_REQUEST', async (payload) => {
-  await api.createCorrectionRequest(payload);
-});
+//
+// Registering this at module load only guarantees the replayer exists once
+// this screen has been opened at least once this session. If the app is
+// killed with a CORRECTION_REQUEST item still queued and relaunched
+// straight into a drain attempt without the user ever revisiting this
+// screen, OfflineQueue.processQueue() would find no replayer for it and
+// leave it (and everything queued behind it) stuck. App.jsx now calls this
+// explicitly at startup instead, exactly like
+// registerCollectionVisitOfflineReplayer().
+export function registerPunchCorrectionOfflineReplayer() {
+  registerReplayer('CORRECTION_REQUEST', async (payload) => {
+    await api.createCorrectionRequest(payload);
+  });
+}
 
 const CORRECTION_TYPES = [
     { value: 'ADD', label: 'Add Punch', color: colors.success, icon: 'plus-circle' },
@@ -49,7 +60,6 @@ const VISIT_TYPES = [
 const PAYMENT_METHODS = [
     { value: 'CASH', label: 'Cash' },
     { value: 'UPI', label: 'UPI' },
-    { value: 'CHEQUE', label: 'Cheque' },
 ];
 
 const PunchCorrectionScreen = ({ navigation, route }) => {

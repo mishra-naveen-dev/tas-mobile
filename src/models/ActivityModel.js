@@ -13,6 +13,7 @@ export const ACTIVITY_TYPES = {
 export const ACTIVITY_STATUS = {
     SUCCESS: 'success',
     PENDING: 'pending',
+    SYNCING: 'syncing',
     FAILED: 'failed',
 };
 
@@ -37,6 +38,50 @@ export const createActivity = (data) => ({
     // that only needs the summary card fields.
     raw: data,
 });
+
+// Shapes a raw OfflineQueue item into the same createActivity() structure
+// server-confirmed activities use, so the "Pending Sync" section of the
+// Activity screen can reuse ActivityCard/ActivitySection unchanged rather
+// than needing a second, parallel rendering path. id is prefixed with
+// `queue-` so it can never collide with a server-sourced activity id (a
+// record only ever lives in one of the two sources at a time — the queue
+// until it syncs, the server feed afterwards — so there's no de-dup logic
+// to write here, just a stable, non-colliding key).
+const QUEUE_STATUS_TO_ACTIVITY_STATUS = {
+    PENDING: ACTIVITY_STATUS.PENDING,
+    SYNCING: ACTIVITY_STATUS.SYNCING,
+    FAILED_RETRYABLE: ACTIVITY_STATUS.PENDING,
+    FAILED_PERMANENT: ACTIVITY_STATUS.FAILED,
+};
+
+export const activityFromQueueItem = (item) => {
+    const payload = item.payload || {};
+    const form = payload.form || {};
+
+    let type = ACTIVITY_TYPES.OTHER;
+    if (item.kind === 'PUNCH_IN') {
+        type = ACTIVITY_TYPES.PUNCH_IN;
+    } else if (item.kind === 'COLLECTION_VISIT') {
+        type = form.reasonBucket === 'VISIT' ? ACTIVITY_TYPES.VISIT : ACTIVITY_TYPES.COLLECTION;
+    }
+
+    return createActivity({
+        id: `queue-${item.id}`,
+        type,
+        timestamp: new Date(item.queuedAt).toISOString(),
+        location: payload.customerAddress || payload.address || null,
+        amount: form.collected_amount || payload.amount || null,
+        client_name: payload.customerName || payload.customer_name || null,
+        notes: item.status === 'FAILED_PERMANENT' ? (item.lastError || 'Sync failed — tap to retry') : null,
+        status: QUEUE_STATUS_TO_ACTIVITY_STATUS[item.status] || ACTIVITY_STATUS.PENDING,
+        // Carried through on `raw` (see createActivity's doc comment) so
+        // ActivityCard can show the loan id and wire a retry action without
+        // this model needing its own dedicated fields for them.
+        loanId: payload.loanId || payload.loan_id || null,
+        queueId: item.id,
+        queueStatus: item.status,
+    });
+};
 
 export const mapApiResponseToActivities = (punchesData = [], allowanceData = []) => {
     const activities = [];
@@ -90,5 +135,6 @@ export default {
     ACTIVITY_TYPES,
     ACTIVITY_STATUS,
     createActivity,
+    activityFromQueueItem,
     mapApiResponseToActivities,
 };

@@ -28,8 +28,9 @@ import ActivityDetailModal from '../../components/ActivityDetailModal';
 import ActivityFilterBar from '../../components/ActivityFilterBar';
 import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
-import { mapApiResponseToActivities } from '../../models/ActivityModel';
+import { mapApiResponseToActivities, activityFromQueueItem } from '../../models/ActivityModel';
 import { SkeletonStatsGrid, SkeletonListItem } from '../../components/SkeletonComponents';
+import { subscribe as subscribeOfflineQueue, retryItem as retryOfflineQueueItem } from '../../services/OfflineQueue';
 
 const ZOHO_CHART_URL = 'https://analytics.zoho.in/open-view/334082000154073362';
 
@@ -397,7 +398,7 @@ const StatCard = React.memo(({ icon, value, label, iconColor, bgColor, prefix = 
     );
 });
 
-const ActivitySection = React.memo(({ section, sectionIndex, onActivityPress }) => (
+const ActivitySection = React.memo(({ section, sectionIndex, onActivityPress, onRetry }) => (
     <View key={`section-${section.title}-${sectionIndex}`}>
         <SectionHeader title={section.title} count={section.data?.length || 0} />
         {(section.data || []).map((activity, idx) => (
@@ -405,6 +406,7 @@ const ActivitySection = React.memo(({ section, sectionIndex, onActivityPress }) 
                 key={`activity-${section.title}-${activity.id || activity.punched_at || idx}`}
                 activity={activity}
                 onPress={() => onActivityPress(activity)}
+                onRetry={onRetry}
             />
         ))}
     </View>
@@ -437,6 +439,9 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const [selectedMonth, setSelectedMonth] = useState(() => new Date());
     const [selectedActivity, setSelectedActivity] = useState(null);
 
+    const [queuedItems, setQueuedItems] = useState([]);
+    const prevQueueLengthRef = useRef(0);
+
     const todayStr = new Date().toISOString().slice(0, 10);
 
     // Six independent queries — react-query fires them in parallel the same
@@ -455,6 +460,34 @@ const EmployeeHomeScreen = ({ navigation }) => {
         () => api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }),
         { enabled: !!user?.id },
     );
+
+    // Live mirror of the offline outbox — this IS the "Pending Sync" section
+    // below, straight from the same queue OfflineBanner already reads, so a
+    // queued visit/punch appears here the instant it's saved locally, not
+    // once it happens to sync and a server refetch happens to pick it up.
+    useEffect(() => subscribeOfflineQueue((items) => {
+        // An item just left the queue (synced) — refetch the server-backed
+        // activity sources immediately instead of waiting for the next
+        // screen focus, so the just-synced record shows up in Previous
+        // Activity right away rather than sitting invisible in the gap.
+        if (items.length < prevQueueLengthRef.current) {
+            todayPunchesApiQuery.refetch();
+            collectionUpdatesQuery.refetch();
+        }
+        prevQueueLengthRef.current = items.length;
+        setQueuedItems(items);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), []);
+
+    const pendingSyncActivities = useMemo(
+        () => queuedItems.map(activityFromQueueItem),
+        [queuedItems],
+    );
+
+    const handleRetryQueueItem = useCallback((queueId) => {
+        if (queueId) retryOfflineQueueItem(queueId);
+    }, []);
+
     // Total Visits — see CollectionUpdateViewSet.visit_summary(). Scoped to
     // "today" by default, same as the rest of this screen; role-scoping to
     // this employee's own activity happens server-side, never trusting a
@@ -922,10 +955,19 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         </Text>
                     </View>
 
-                    <ActivityFilterBar 
-                        selectedFilter={selectedFilter} 
-                        onFilterChange={handleFilterChange} 
+                    <ActivityFilterBar
+                        selectedFilter={selectedFilter}
+                        onFilterChange={handleFilterChange}
                     />
+
+                    {pendingSyncActivities.length > 0 && (
+                        <ActivitySection
+                            section={{ title: 'Pending Sync', data: pendingSyncActivities }}
+                            sectionIndex={-1}
+                            onActivityPress={setSelectedActivity}
+                            onRetry={handleRetryQueueItem}
+                        />
+                    )}
 
                     {isLoading ? (
                         <View>
