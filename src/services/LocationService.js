@@ -25,6 +25,20 @@ const CONFIG = {
   // reject (STALE_AGE_H in apps.livetracking.services.GPSValidator), with
   // margin for however long the device stays offline after capturing it.
   maxCacheAgeMs: 6 * 60 * 60 * 1000, // 6h
+  // A cached fix at least this fresh AND at least this accurate is trusted
+  // immediately, skipping live sampling altogether — the common case for
+  // consecutive field visits at the same physical spot (e.g. a JLG group
+  // meeting), where redoing a full ~16s live GPS acquisition for every
+  // single customer visited is both pointless (the device hasn't moved
+  // yet) and the direct cause of employees hitting "waiting for GPS"/
+  // timeout errors on back-to-back visits. Deliberately short — long
+  // enough to cover "walked straight from one door to the next," short
+  // enough that it can't plausibly paper over a real walk to a genuinely
+  // different nearby address and blur two customers' geofence evidence
+  // together. maxAgeMs is unrelated to (and much stricter than)
+  // maxCacheAgeMs above, which exists for a different purpose entirely
+  // (last-resort fallback once live acquisition has genuinely failed).
+  freshCacheFastPath: { maxAgeMs: 30 * 1000, maxAccuracyM: 25 },
 };
 
 class LocationService {
@@ -143,6 +157,22 @@ class LocationService {
 
   static async getCurrentLocation() {
     if (__DEV__) console.log('[Location] Fetching current location...');
+
+    // Fast path: a fix this fresh AND this accurate means the device almost
+    // certainly hasn't moved since it was captured moments ago — trust it
+    // instead of making the employee sit through another full live GPS
+    // acquisition for what's very likely the same physical spot. The tight
+    // accuracy+age bounds keep this from silently reusing stale/coarse
+    // coordinates for a visit at a genuinely different nearby address.
+    const recent = await this.getCachedLocation();
+    if (
+      recent &&
+      (Date.now() - recent.timestamp) <= CONFIG.freshCacheFastPath.maxAgeMs &&
+      recent.accuracy <= CONFIG.freshCacheFastPath.maxAccuracyM
+    ) {
+      if (__DEV__) console.log('[Location] Using fresh cached fix, skipping live sampling:', recent.accuracy, 'm');
+      return recent;
+    }
 
     const status = await this.requestForegroundStatus();
     if (status !== 'granted') {
