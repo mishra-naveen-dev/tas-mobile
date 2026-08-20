@@ -638,9 +638,10 @@ const EmployeePunchScreen = ({ navigation }) => {
       });
       const res = await api.completeVisit(collectionId, fd);
       await registerExternalPunchIn(res.data, localLocation);
+      const savedLoanId = resolvedRecord?.loan_id || form.loan_id;
       resetPunchForm();
       resetForm();
-      Alert.alert('Success', 'Visit recorded successfully!');
+      Alert.alert('Success', savedLoanId ? `Visit recorded successfully!\n\nLoan ID: ${savedLoanId}` : 'Visit recorded successfully!');
     } catch (err) {
       if (isNetworkError(err)) {
         await enqueue('COLLECTION_VISIT', {
@@ -657,11 +658,13 @@ const EmployeePunchScreen = ({ navigation }) => {
           extra,
           clientTransactionId,
         });
+        const queuedLoanId = resolvedRecord?.loan_id || form.loan_id;
         resetPunchForm();
         resetForm();
         Alert.alert(
           'Saved — will sync automatically',
-          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online.",
+          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online."
+            + (queuedLoanId ? `\n\nLoan ID: ${queuedLoanId}` : ''),
         );
         return;
       }
