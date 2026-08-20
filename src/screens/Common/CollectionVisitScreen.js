@@ -406,9 +406,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       const fd = buildFormData(extra, clientTransactionId);
       const res = await api.completeVisit(collectionId, fd);
       await registerExternalPunchIn(res.data, localLocation);
-      Alert.alert('Success', 'Visit recorded successfully.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      const savedLoanId = record?.loan_id || loanId;
+      Alert.alert(
+        'Success',
+        savedLoanId ? `Visit recorded successfully.\n\nLoan ID: ${savedLoanId}` : 'Visit recorded successfully.',
+        [{ text: 'OK', onPress: () => navigation.goBack() }],
+      );
     } catch (err) {
       if (isNetworkError(err)) {
         await enqueue('COLLECTION_VISIT', {
@@ -425,9 +428,11 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           extra,
           clientTransactionId,
         });
+        const queuedLoanId = record?.loan_id || loanId;
         Alert.alert(
           'Saved — will sync automatically',
-          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online.",
+          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online."
+            + (queuedLoanId ? `\n\nLoan ID: ${queuedLoanId}` : ''),
           [{ text: 'OK', onPress: () => navigation.goBack() }],
         );
         return;
