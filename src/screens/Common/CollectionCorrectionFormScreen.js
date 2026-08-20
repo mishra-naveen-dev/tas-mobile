@@ -17,24 +17,36 @@ import api from '../../api/api';
 import LocationService from '../../services/LocationService';
 import { enqueue, registerReplayer, isNetworkError } from '../../services/OfflineQueue';
 
-registerReplayer('COLLECTION_CORRECTION', async (payload) => {
-    const fd = new FormData();
-    fd.append('collection_record', payload.collectionRecordId);
-    fd.append('requested_amount', payload.amount);
-    fd.append('reason', payload.reason);
-    if (payload.remarks) fd.append('remarks', payload.remarks);
-    if (payload.latitude) fd.append('latitude', String(payload.latitude));
-    if (payload.longitude) fd.append('longitude', String(payload.longitude));
-    if (payload.document) {
-        fd.append('supporting_document', {
-            uri: payload.document.uri,
-            type: payload.document.type || 'image/jpeg',
-            name: payload.document.fileName || 'correction_document.jpg',
-        });
-    }
-    await api.createCollectionCorrection(fd);
-});
 import { colors, typography, spacing } from '../../theme/tokens';
+
+// Registering this at module load (as before) only guarantees the
+// replayer exists once this screen has been opened at least once this
+// session. If the app is killed with a COLLECTION_CORRECTION item still
+// queued and relaunched straight into a drain attempt without the user
+// ever revisiting this screen, OfflineQueue.processQueue() would find no
+// replayer for it and leave it (and everything queued behind it) stuck.
+// App.jsx now calls this explicitly at startup instead, exactly like
+// registerCollectionVisitOfflineReplayer(), so the replayer is always
+// registered regardless of navigation history.
+export function registerCollectionCorrectionOfflineReplayer() {
+    registerReplayer('COLLECTION_CORRECTION', async (payload) => {
+        const fd = new FormData();
+        fd.append('collection_record', payload.collectionRecordId);
+        fd.append('requested_amount', payload.amount);
+        fd.append('reason', payload.reason);
+        if (payload.remarks) fd.append('remarks', payload.remarks);
+        if (payload.latitude) fd.append('latitude', String(payload.latitude));
+        if (payload.longitude) fd.append('longitude', String(payload.longitude));
+        if (payload.document) {
+            fd.append('supporting_document', {
+                uri: payload.document.uri,
+                type: payload.document.type || 'image/jpeg',
+                name: payload.document.fileName || 'correction_document.jpg',
+            });
+        }
+        await api.createCollectionCorrection(fd);
+    });
+}
 
 const REASON_MIN_LENGTH = 10;
 

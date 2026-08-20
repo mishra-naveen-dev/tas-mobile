@@ -19,6 +19,7 @@ import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
   validateCollectionStatus, validateVisitType, validateCustomerPhone,
+  getPromiseDateRange,
 } from '../../utils/collectionVisitRules';
 
 const { width } = Dimensions.get('window');
@@ -180,7 +181,6 @@ const EmployeePunchScreen = ({ navigation }) => {
     amount: '',
     payment_mode: '',
     upi_ref: '',
-    cheque_no: '',
     customer_name: '',
     customer_phone: '',
     phone_correct: null,
@@ -214,13 +214,12 @@ const EmployeePunchScreen = ({ navigation }) => {
   // state can lag a fast second tap by a frame or two; this ref can't.
   const submittingRef = useRef(false);
 
-  // Collection-status evidence (Cash photo(s) / UPI screenshot / cheque
-  // photo) — required by the same shared validateCollectionStatus rule
-  // CollectionVisitScreen enforces, so this screen needs the same capture
-  // UI, not just the same validation.
+  // Collection-status evidence (Cash photo(s) / UPI screenshot) — required
+  // by the same shared validateCollectionStatus rule CollectionVisitScreen
+  // enforces, so this screen needs the same capture UI, not just the same
+  // validation.
   const [photos, setPhotos] = useState([]); // [{ uri, fileName, type, kind, capturedAt }]
   const [upiScreenshot, setUpiScreenshot] = useState(null); // { uri, fileName, type }
-  const [chequePhoto, setChequePhoto] = useState(null); // { uri, fileName, type }
 
   // Out-of-range geofence confirmation (shown when the backend reports the
   // punch is more than 200m from the customer's stored geo-tag).
@@ -460,7 +459,7 @@ const EmployeePunchScreen = ({ navigation }) => {
         return false;
       }
       if (form.reason === 'Collection') {
-        const err = validateCollectionStatus(form, { photos, upiScreenshot, chequePhoto, audioNote });
+        const err = validateCollectionStatus(form, { photos, upiScreenshot, audioNote });
         if (err) {
           Alert.alert('Required', err);
           return false;
@@ -517,7 +516,7 @@ const EmployeePunchScreen = ({ navigation }) => {
         }
 
         // Payment-evidence requirement — mirrors validateCollectionStatus's
-        // CASH/UPI/CHEQUE evidence rules, but without a `status` field (this
+        // CASH/UPI evidence rules, but without a `status` field (this
         // flow has none) so it can't reuse that helper directly.
         if (form.visit_type === 'COLLECTION') {
           if (form.payment_mode === 'CASH') {
@@ -534,16 +533,6 @@ const EmployeePunchScreen = ({ navigation }) => {
             }
             if (!upiScreenshot) {
               Alert.alert('Required', 'Please add the UPI screenshot.');
-              return false;
-            }
-          }
-          if (form.payment_mode === 'CHEQUE') {
-            if (!form.cheque_no?.trim()) {
-              Alert.alert('Required', 'Please enter the cheque number.');
-              return false;
-            }
-            if (!chequePhoto) {
-              Alert.alert('Required', 'Please add the cheque photo.');
               return false;
             }
           }
@@ -572,7 +561,6 @@ const EmployeePunchScreen = ({ navigation }) => {
     amount: '',
     payment_mode: '',
     upi_ref: '',
-    cheque_no: '',
     customer_name: '',
     customer_phone: '',
     phone_correct: null,
@@ -603,7 +591,6 @@ const EmployeePunchScreen = ({ navigation }) => {
     setAudioNote(null);
     setPhotos([]);
     setUpiScreenshot(null);
-    setChequePhoto(null);
     setCollectionId(null);
     setResolvedRecord(null);
     setLoanLookupError('');
@@ -630,7 +617,6 @@ const EmployeePunchScreen = ({ navigation }) => {
         customerAddress: resolvedRecord?.address,
         photos,
         upiScreenshot,
-        chequePhoto,
         audioNote,
         visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current : null,
         extra,
@@ -646,13 +632,13 @@ const EmployeePunchScreen = ({ navigation }) => {
       if (isNetworkError(err)) {
         await enqueue('COLLECTION_VISIT', {
           collectionId,
+          loanId: resolvedRecord?.loan_id || form.loan_id,
           form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
           localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
           customerName: resolvedRecord?.customer_name || form.customer_name,
           customerAddress: resolvedRecord?.address,
           photos,
           upiScreenshot,
-          chequePhoto,
           audioNote,
           visitStartTime: form.visit_reason === 'HOME_VISIT' ? visitStartTimeRef.current.toISOString() : null,
           extra,
@@ -799,7 +785,6 @@ const EmployeePunchScreen = ({ navigation }) => {
     setAudioNote(null);
     setPhotos([]);
     setUpiScreenshot(null);
-    setChequePhoto(null);
     setCollectionId(null);
     setResolvedRecord(null);
     setLoanLookupError('');
@@ -811,7 +796,6 @@ const EmployeePunchScreen = ({ navigation }) => {
       setAudioNote(null);
       setPhotos([]);
       setUpiScreenshot(null);
-      setChequePhoto(null);
       setCollectionId(null);
       setResolvedRecord(null);
       setLoanLookupError('');
@@ -823,7 +807,6 @@ const EmployeePunchScreen = ({ navigation }) => {
         updated.amount = '';
         updated.payment_mode = '';
         updated.upi_ref = '';
-        updated.cheque_no = '';
         updated.status = '';
         updated.collected_amount = '';
         updated.remarks = '';
@@ -843,11 +826,9 @@ const EmployeePunchScreen = ({ navigation }) => {
         updated.amount = '';
         updated.payment_mode = '';
         updated.upi_ref = '';
-        updated.cheque_no = '';
       }
       if (key === 'payment_mode') {
         updated.upi_ref = '';
-        updated.cheque_no = '';
       }
       if (key === 'status') {
         if (value === 'COLLECTED') {
@@ -858,7 +839,6 @@ const EmployeePunchScreen = ({ navigation }) => {
           updated.collected_amount = '';
           updated.payment_mode = '';
           updated.upi_ref = '';
-          updated.cheque_no = '';
         }
         updated.promise_date = null;
       }
@@ -928,13 +908,13 @@ const EmployeePunchScreen = ({ navigation }) => {
     </>
   );
 
-  // Anchors to the resolved record's due date, exactly like
-  // CollectionVisitScreen — falls back to today when no record/due_date is
-  // known yet (e.g. before a Loan ID resolves).
-  const plannedDate = resolvedRecord?.due_date ? new Date(resolvedRecord.due_date) : new Date();
-  plannedDate.setHours(0, 0, 0, 0);
-  const maxPromiseDate = new Date(plannedDate);
-  maxPromiseDate.setMonth(maxPromiseDate.getMonth() + 1);
+  // Anchored on the current Collection Date (today, when this visit is
+  // actually being recorded) — never on resolvedRecord.due_date/Demand
+  // Date, which is only the original overdue reference date and must not
+  // bound how far out a fresh PTP/follow-up/remaining-payment date can be
+  // set. Shared with CollectionVisitScreen via getPromiseDateRange so the
+  // two screens can't drift apart on this again.
+  const { min: plannedDate, max: maxPromiseDate } = getPromiseDateRange();
 
   const promiseDateLabel = form.status === 'PARTIALLY_COLLECTED' ? 'Remaining Payment Date *'
     : form.status === 'NOT_PAID' ? 'Next Follow-up Date *'
@@ -1032,12 +1012,6 @@ const EmployeePunchScreen = ({ navigation }) => {
         <>
           <TextInput style={styles.input} value={form.upi_ref} onChangeText={(t) => updateForm('upi_ref', t)} placeholder="UPI Reference Number" placeholderTextColor={colors.textMuted} />
           {renderSingleImagePicker('Screenshot', upiScreenshot, setUpiScreenshot)}
-        </>
-      )}
-      {form.payment_mode === 'CHEQUE' && (
-        <>
-          <TextInput style={styles.input} value={form.cheque_no} onChangeText={(t) => updateForm('cheque_no', t)} placeholder="Cheque Number" placeholderTextColor={colors.textMuted} />
-          {renderSingleImagePicker('Cheque Photo', chequePhoto, setChequePhoto)}
         </>
       )}
     </>

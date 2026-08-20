@@ -1,10 +1,22 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import Icon from 'react-native-vector-icons/Feather';
 import ActivityIcon from './ActivityIcon';
 import { colors, typography, spacing, borderRadius, shadows } from '../theme/tokens';
 import ActivityPresenter from '../presenters/ActivityPresenter';
+import { ACTIVITY_STATUS } from '../models/ActivityModel';
 
-const ActivityCard = ({ activity, onPress, showTime = true }) => {
+const SYNC_STATUS_META = {
+    [ACTIVITY_STATUS.SYNCING]: { icon: null, label: 'Syncing…', color: colors.primary },
+    [ACTIVITY_STATUS.PENDING]: { icon: 'clock', label: 'Waiting to sync', color: colors.warning },
+    [ACTIVITY_STATUS.FAILED]: { icon: 'alert-circle', label: 'Sync failed', color: colors.danger },
+};
+
+// Offline-queued activities (Pending Sync) reuse this exact card — only the
+// right-edge block and accent color change based on sync status, so the
+// list reads as one consistent system rather than a separate UI for
+// "still on this device" vs. "confirmed by the server".
+const ActivityCard = ({ activity, onPress, onRetry, showTime = true }) => {
     const config = useMemo(() => 
         ActivityPresenter.getActivityConfig(activity.type),
         [activity.type]
@@ -32,15 +44,16 @@ const ActivityCard = ({ activity, onPress, showTime = true }) => {
 
     const isCollection = activity.type === 'COLLECTION';
     const isDebit = activity.type === 'DISBURSEMENT';
+    const syncMeta = SYNC_STATUS_META[activity.status];
 
     return (
-        <TouchableOpacity 
-            style={styles.container} 
+        <TouchableOpacity
+            style={styles.container}
             onPress={onPress}
             activeOpacity={0.7}
         >
             <ActivityIcon type={activity.type} size="md" />
-            
+
             <View style={styles.content}>
                 <View style={styles.leftContent}>
                     <Text style={styles.title} numberOfLines={1}>{title}</Text>
@@ -50,7 +63,25 @@ const ActivityCard = ({ activity, onPress, showTime = true }) => {
                 </View>
 
                 <View style={styles.rightContent}>
-                    {amount ? (
+                    {syncMeta ? (
+                        activity.status === ACTIVITY_STATUS.FAILED ? (
+                            <TouchableOpacity
+                                style={styles.retryBtn}
+                                onPress={() => onRetry?.(activity.raw?.queueId)}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                                <Icon name={syncMeta.icon} size={13} color={syncMeta.color} />
+                                <Text style={[styles.syncLabel, { color: syncMeta.color }]}>Retry</Text>
+                            </TouchableOpacity>
+                        ) : (
+                            <View style={styles.syncRow}>
+                                {activity.status === ACTIVITY_STATUS.SYNCING
+                                    ? <ActivityIndicator size="small" color={syncMeta.color} />
+                                    : <Icon name={syncMeta.icon} size={13} color={syncMeta.color} />}
+                                <Text style={[styles.syncLabel, { color: syncMeta.color }]}>{syncMeta.label}</Text>
+                            </View>
+                        )
+                    ) : amount ? (
                         <View style={styles.amountContainer}>
                             <Text style={[
                                 styles.amount,
@@ -67,7 +98,7 @@ const ActivityCard = ({ activity, onPress, showTime = true }) => {
                 </View>
             </View>
 
-            <View style={[styles.statusIndicator, { backgroundColor: config.color }]} />
+            <View style={[styles.statusIndicator, { backgroundColor: syncMeta?.color || config.color }]} />
         </TouchableOpacity>
     );
 };
@@ -131,6 +162,20 @@ const styles = StyleSheet.create({
         height: 32,
         borderRadius: 2,
         marginLeft: spacing.xs,
+    },
+    syncRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    retryBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    syncLabel: {
+        fontSize: typography.sizes.xs,
+        fontWeight: typography.weights.semibold,
     },
 });
 
