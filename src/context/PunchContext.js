@@ -94,15 +94,32 @@ export const PunchProvider = ({ children }) => {
 
         // trackingStartTime/LocationService's route-point distance are both
         // pure in-memory session state — they reset to nothing whenever this
-        // JS runtime restarts (app reopen, background kill) even though the
-        // punch-in session itself is still open server-side. Without this,
-        // the Home Screen's Distance/working-time display silently drops to
-        // 0 for an employee who is still actively clocked in. Re-seed both
-        // from the server's own record of the active session so they resume
-        // from the truth instead of from zero.
+        // JS runtime restarts (app reopen, background kill, or an app
+        // update — Android kills the process to install the new APK) even
+        // though the punch-in session itself is still open server-side.
+        // Without this, the Home Screen's Distance/working-time display
+        // silently drops to 0 for an employee who is still actively clocked
+        // in. Re-seed both from the server's own record of the active
+        // session so they resume from the truth instead of from zero.
         if (active) {
           trackingStartTime.current = new Date(lastPunch.punched_at).getTime();
+          // lastPunch.total_distance_day is a snapshot taken AT punch-in
+          // time, not updated again until the next punch — using it alone
+          // means every km walked since punch-in (the entire point of a
+          // restore-after-restart) is missing until the next punch event.
+          // apps.livetracking's LiveSession.total_distance is the real,
+          // continuously-updated distance for the session in progress, so
+          // prefer it when available and only fall back to the punch
+          // snapshot if there's no active live session to read from yet.
           LocationService.setBaseDistance(lastPunch.total_distance_day);
+          try {
+            const liveRes = await api.getActiveLiveSession();
+            if (liveRes.data?.active && liveRes.data.session?.total_distance != null) {
+              LocationService.setBaseDistance(liveRes.data.session.total_distance);
+            }
+          } catch (e) {
+            if (IS_DEV) console.warn('[Punch] getActiveLiveSession restore error:', e.message);
+          }
         } else {
           trackingStartTime.current = null;
           LocationService.setBaseDistance(0);
