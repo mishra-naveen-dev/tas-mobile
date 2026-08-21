@@ -958,7 +958,7 @@ const CollectionsScreen = ({ route }) => {
                                 ['Spouse / Nominee', item.spouse_nominee_name],
                                 ['Disb. Date', item.disbursement_date ? fmtDate(item.disbursement_date) : null],
                                 ['Disb. Amount', item.disbursement_amount != null ? fmtAmount(item.disbursement_amount) : null],
-                                ['Total Arrear', item.total_arrear != null ? fmtAmount(item.total_arrear) : null],
+                                ['Outstanding Amount', item.total_arrear != null ? fmtAmount(item.total_arrear) : null],
                                 ['Out. Amount', item.outstanding_amount != null ? fmtAmount(item.outstanding_amount) : null],
                             ].filter(([, v]) => !!v).map(([label, value]) => (
                                 <View key={label} style={styles.extraFactCell}>
