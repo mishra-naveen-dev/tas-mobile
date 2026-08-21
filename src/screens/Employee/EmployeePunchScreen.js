@@ -729,7 +729,14 @@ const EmployeePunchScreen = ({ navigation }) => {
   const handleSubmit = async () => {
     if (!validateForm()) return;
     if (!localLocation) {
-      Alert.alert('Error', 'Location not captured');
+      Alert.alert(
+        'Location Needed',
+        'Your location hasn’t been captured yet.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Retry', onPress: fetchLocation },
+        ],
+      );
       return;
     }
     await submitPunch();

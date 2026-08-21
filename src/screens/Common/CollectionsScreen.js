@@ -663,6 +663,11 @@ const CollectionsScreen = ({ route }) => {
             customerAddress: [record.address, record.area, record.pincode].filter(Boolean).join(', '),
             amountDue: record.amount_due,
             initialStatus: record.status,
+            // Full record already fetched here — pass it through so
+            // CollectionVisitScreen has customer_phone/father_name/spouse
+            // name/disbursement/arrear details on screen immediately and
+            // can still show them if the network refresh fails offline.
+            initialRecord: record,
         });
     }, [navigation]);
 

@@ -69,12 +69,17 @@ const fmtConfirmTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-
 const COLLECTION_STATUS_VALUES = ['PENDING', 'COLLECTED', 'PARTIALLY_COLLECTED', 'NOT_PAID'];
 
 const CollectionVisitScreen = ({ navigation, route }) => {
-  const { collectionId, loanId, customerName, customerAddress, amountDue, initialStatus } = route.params || {};
+  const { collectionId, loanId, customerName, customerAddress, amountDue, initialStatus, initialRecord } = route.params || {};
   const { registerExternalPunchIn } = usePunch();
   const { user } = useAuth();
 
-  const [record, setRecord] = useState(null);
-  const [loadingRecord, setLoadingRecord] = useState(true);
+  // The list screen already fetched this record before navigating here —
+  // seed from it so the customer's full details (phone, father/spouse
+  // name, disbursement, arrear) are on screen instantly, and stay
+  // available as a fallback if the background refresh below fails
+  // because the device is offline.
+  const [record, setRecord] = useState(initialRecord || null);
+  const [loadingRecord, setLoadingRecord] = useState(!initialRecord);
 
   const [localLocation, setLocalLocation] = useState(null);
   const [fetchingLocation, setFetchingLocation] = useState(true);
@@ -103,7 +108,11 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     collected_amount: '',
     remarks: '',
     promise_date: null,
-    phone_correct: null,
+    // No phone on file at all — nothing to "confirm," go straight to
+    // asking for one (same corrected_customer_phone validation path).
+    // Checked against the seeded initialRecord too, not just the later
+    // network refresh, so this gate is correct even offline.
+    phone_correct: initialRecord && !initialRecord.customer_phone ? false : null,
     corrected_customer_phone: '',
     visit_reason: '',
     visit_dpd_bucket: '',
@@ -146,13 +155,19 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           }
         }
       } catch (e) {
-        if (!cancelled) Alert.alert('Error', 'Could not load customer details.');
+        // Offline (or any other fetch failure) with an already-seeded
+        // record from the list screen — keep showing that instead of
+        // blocking the screen with an error over a refresh that simply
+        // couldn't happen right now.
+        if (!cancelled && !initialRecord) {
+          Alert.alert('Error', 'Could not load customer details.');
+        }
       } finally {
         if (!cancelled) setLoadingRecord(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [collectionId]);
+  }, [collectionId, initialRecord]);
 
   const fetchLocation = useCallback(async () => {
     setFetchingLocation(true);
@@ -370,7 +385,21 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       }
     }
     if (!localLocation) {
-      Alert.alert('Location Needed', 'Waiting for GPS — please try again in a moment.');
+      // Reachable when the earlier fetchLocation() error alert was
+      // dismissed (Cancel) rather than retried — fetchingLocation still
+      // flips back to false in that case (see fetchLocation's finally),
+      // which re-enables Save with no location ever actually captured.
+      // Give this alert the same Retry action the original error alert
+      // has, instead of a dead end that just says "try again" with no way
+      // to actually do that from here.
+      Alert.alert(
+        'Location Needed',
+        'Your location hasn’t been captured yet.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Retry', onPress: fetchLocation },
+        ],
+      );
       return false;
     }
 
