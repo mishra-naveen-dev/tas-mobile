@@ -204,6 +204,39 @@ describe('OfflineQueue', () => {
     expect(queue).toHaveLength(0); // succeeded and left the queue
   });
 
+  test('syncNow() clears a pending backoff wait and retries immediately, instead of waiting out the scheduled delay', async () => {
+    // The exact reported bug: a field employee comes back online, but a
+    // previously-failed item is still waiting out its exponential backoff
+    // (up to 30 minutes) — from their perspective "I'm online but nothing
+    // is syncing." syncNow() (wired to the reconnect triggers in
+    // startAutoSync, and to a manual "tap to sync" banner action) must
+    // clear that wait and retry immediately.
+    const Q = loadFreshQueue();
+    let shouldFail = true;
+    const attempts = [];
+    Q.registerReplayer('COLLECTION_VISIT', async () => {
+      attempts.push(Date.now());
+      if (shouldFail) throw new Error('Network Error'); // no .response -> retryable
+    });
+    await Q.enqueue('COLLECTION_VISIT', { collectionId: 1 });
+    await Q.processQueue(); // first attempt fails, schedules a future retry
+
+    const queued = await Q.getQueue();
+    expect(queued[0].status).toBe('FAILED_RETRYABLE');
+    expect(queued[0].nextRetryAt).toBeGreaterThan(Date.now());
+
+    // A plain processQueue() call right now (simulating some unrelated
+    // trigger) must NOT retry yet — it's still within the backoff window.
+    await Q.processQueue();
+    expect(attempts).toHaveLength(1);
+
+    // But syncNow() (the reconnect path) clears the wait and retries now.
+    shouldFail = false;
+    await Q.syncNow();
+    expect(attempts).toHaveLength(2);
+    expect(await Q.getQueue()).toHaveLength(0); // succeeded and left the queue
+  });
+
   test('discardItem() removes a dead-lettered item without ever retrying it', async () => {
     const Q = loadFreshQueue();
     Q.registerReplayer('COLLECTION_VISIT', async () => { throw httpError(400); });
