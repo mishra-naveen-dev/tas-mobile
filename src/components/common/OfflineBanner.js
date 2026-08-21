@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import { serverStatus } from '../../utils/serverStatus';
 import { subscribe as subscribeOfflineQueue, syncNow } from '../../services/OfflineQueue';
@@ -17,6 +18,14 @@ function ago(ts) {
 export default function OfflineBanner() {
     const [status, setStatus] = useState({ online: serverStatus._online, cachedAt: serverStatus._cachedAt });
     const [pendingCount, setPendingCount] = useState(0);
+    const insets = useSafeAreaInsets();
+    // Rendered above the whole navigator (RootNavigator), outside any
+    // screen's own SafeAreaView, so without this it draws flush at y=0 and
+    // its text sits directly under the system status bar's clock/battery
+    // icons instead of below them. The colored background still extends
+    // up to the very top edge (edge-to-edge look); only the text/icon row
+    // is pushed down by the status bar's height.
+    const topInsetStyle = { paddingTop: insets.top + 7 };
 
     useEffect(() => serverStatus.subscribe(setStatus), []);
     useEffect(() => subscribeOfflineQueue((items) => setPendingCount(items.length)), []);
@@ -29,7 +38,7 @@ export default function OfflineBanner() {
         if (pendingCount === 0) return null;
         return (
             <TouchableOpacity
-                style={[styles.banner, styles.syncingBanner]}
+                style={[styles.banner, styles.syncingBanner, topInsetStyle]}
                 onPress={() => syncNow()}
                 activeOpacity={0.8}
             >
@@ -45,7 +54,7 @@ export default function OfflineBanner() {
     }
 
     return (
-        <View style={styles.banner}>
+        <View style={[styles.banner, topInsetStyle]}>
             <Icon name="wifi-off" size={13} color="#fff" />
             <Text style={styles.text}>
                 {'Offline — showing cached data'}
