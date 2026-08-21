@@ -104,11 +104,19 @@ const AppContent = () => {
     // after each item's replay() has actually resolved against the server.
     useEffect(() => {
         return onSyncComplete(({ succeeded, failed }) => {
+            // Seconds-precision, same as every other submission-confirmation
+            // message in the app — lets back-to-back synced items (e.g. a
+            // whole day's queue draining at once on reconnect) still be told
+            // apart by when each one actually landed.
+            const syncedAt = new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
             if (succeeded.length === 1) {
                 const loanId = succeeded[0].payload?.loanId || succeeded[0].payload?.loan_id;
-                notify.success(loanId ? `Loan ${loanId} activity has been synced successfully.` : 'Your saved activity has been synced successfully.');
+                notify.success(
+                    (loanId ? `Loan ${loanId} activity has been synced successfully.` : 'Your saved activity has been synced successfully.')
+                        + `\n${syncedAt}`,
+                );
             } else if (succeeded.length > 1) {
-                notify.success(`Your ${succeeded.length} activity records have been synced successfully.`);
+                notify.success(`Your ${succeeded.length} activity records have been synced successfully.\n${syncedAt}`);
             }
             if (failed.length) {
                 notify.warning(

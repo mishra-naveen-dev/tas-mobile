@@ -19,7 +19,7 @@ import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
   PAYMENT_MODES, PHOTO_KINDS, isAudioRequiredFor, buildCompleteVisitFormData,
   validateCollectionStatus, validateVisitType, validateCustomerPhone,
-  getPromiseDateRange,
+  getPromiseDateRange, buildVisitSuccessMessage, buildVisitOutcomeNoun,
 } from '../../utils/collectionVisitRules';
 
 const { width } = Dimensions.get('window');
@@ -59,6 +59,11 @@ const TRAVEL_WITH = [
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+// Seconds included specifically for the submission-confirmation alerts —
+// several visits back-to-back at one location (e.g. a JLG group meeting)
+// can easily land in the same minute, and each confirmation needs its own
+// distinct, identifiable timestamp.
+const fmtConfirmTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
 const Banner = ({ message, type, onDismiss }) => {
   const y = useRef(new Animated.Value(-100)).current;
@@ -625,13 +630,12 @@ const EmployeePunchScreen = ({ navigation }) => {
       const res = await api.completeVisit(collectionId, fd);
       await registerExternalPunchIn(res.data, localLocation);
       const savedLoanId = resolvedRecord?.loan_id || form.loan_id;
+      const successMessage = buildVisitSuccessMessage(form)
+        + (savedLoanId ? `\nLoan ID: ${savedLoanId}` : '')
+        + `\n${fmtConfirmTime(new Date())}`;
       resetPunchForm();
       resetForm();
-      Alert.alert(
-        'Success',
-        `Visit recorded successfully!\n\n${fmtDateTime(new Date())}`
-          + (savedLoanId ? `\nLoan ID: ${savedLoanId}` : ''),
-      );
+      Alert.alert('Success', successMessage);
     } catch (err) {
       if (isNetworkError(err)) {
         await enqueue('COLLECTION_VISIT', {
@@ -649,14 +653,12 @@ const EmployeePunchScreen = ({ navigation }) => {
           clientTransactionId,
         });
         const queuedLoanId = resolvedRecord?.loan_id || form.loan_id;
+        const queuedMessage = `No internet connection right now. Your ${buildVisitOutcomeNoun(form)} has been saved on this device and will upload automatically once you're back online.`
+          + (queuedLoanId ? `\nLoan ID: ${queuedLoanId}` : '')
+          + `\n${fmtConfirmTime(new Date())}`;
         resetPunchForm();
         resetForm();
-        Alert.alert(
-          'Saved — will sync automatically',
-          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online."
-            + `\n\n${fmtDateTime(new Date())}`
-            + (queuedLoanId ? `\nLoan ID: ${queuedLoanId}` : ''),
-        );
+        Alert.alert('Saved — will sync automatically', queuedMessage);
         return;
       }
       const respData = err?.response?.data;
@@ -698,14 +700,14 @@ const EmployeePunchScreen = ({ navigation }) => {
         // it open for another entry.
         resetPunchForm();
         resetForm();
-        Alert.alert('Success', `Punch recorded!\n\n${fmtDateTime(new Date())}`);
+        Alert.alert('Success', `Punch recorded!\n\n${fmtConfirmTime(new Date())}`);
         return;
       }
 
       if (result.queuedOffline) {
         resetPunchForm();
         resetForm();
-        Alert.alert('Saved — will sync automatically', `${result.error}\n\n${fmtDateTime(new Date())}`);
+        Alert.alert('Saved — will sync automatically', `${result.error}\n\n${fmtConfirmTime(new Date())}`);
         return;
       }
 

@@ -50,7 +50,7 @@ export function registerCollectionCorrectionOfflineReplayer() {
 
 const REASON_MIN_LENGTH = 10;
 
-const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
 // Handles both create (route.params.record = the CollectionRecord being
 // corrected) and edit (route.params.editMode + correctionId + existingData
