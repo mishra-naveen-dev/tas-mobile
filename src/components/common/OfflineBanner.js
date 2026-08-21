@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { serverStatus } from '../../utils/serverStatus';
-import { subscribe as subscribeOfflineQueue } from '../../services/OfflineQueue';
+import { subscribe as subscribeOfflineQueue, syncNow } from '../../services/OfflineQueue';
 
 function ago(ts) {
     if (!ts) return '';
@@ -28,14 +28,19 @@ export default function OfflineBanner() {
         // between "offline" and "synced" with no feedback in between.
         if (pendingCount === 0) return null;
         return (
-            <View style={[styles.banner, styles.syncingBanner]}>
+            <TouchableOpacity
+                style={[styles.banner, styles.syncingBanner]}
+                onPress={() => syncNow()}
+                activeOpacity={0.8}
+            >
                 <Icon name="upload-cloud" size={13} color="#fff" />
                 <Text style={styles.text}>
                     {pendingCount === 1
                         ? 'Syncing 1 saved item…'
                         : `Syncing ${pendingCount} saved items…`}
+                    {' '}· Tap to sync now
                 </Text>
-            </View>
+            </TouchableOpacity>
         );
     }
 

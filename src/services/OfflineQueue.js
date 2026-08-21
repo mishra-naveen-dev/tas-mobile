@@ -340,6 +340,40 @@ export async function discardItem(id) {
   notify();
 }
 
+/** A backoff schedule was chosen under the assumption we might still be
+ * offline or the connection might still be bad — that assumption no longer
+ * holds the moment a DEFINITIVE reconnect signal fires. Without this, an
+ * item that failed once (even from a brief blip) could sit waiting out a
+ * backoff window as long as 30 minutes even though the device is now
+ * genuinely back online and the very next attempt would likely succeed —
+ * from the field employee's perspective this looks exactly like "I'm
+ * online but my data just isn't syncing." Only clears the *timer*, not the
+ * item's attempts/history, and never touches FAILED_PERMANENT items —
+ * those still only leave that state via retryItem()/discardItem(). */
+async function resetPendingBackoff() {
+  await hydrate();
+  let changed = false;
+  for (const item of queue) {
+    if (item.status === QUEUE_STATUS.FAILED_RETRYABLE && item.nextRetryAt > Date.now()) {
+      item.nextRetryAt = 0;
+      changed = true;
+    }
+  }
+  if (changed) {
+    await persist();
+    notify();
+  }
+}
+
+/** Manual "sync now" — clears any pending backoff and immediately attempts
+ * a drain, regardless of trigger. Exposed so the UI (OfflineBanner, the
+ * Pending Sync section) always has a way to force an attempt rather than
+ * making the user wait out a timer with no visible way to act. */
+export async function syncNow() {
+  await resetPendingBackoff();
+  return processQueue();
+}
+
 let autoSyncStarted = false;
 
 /** Wire every automatic drain trigger — call once from the app root.
@@ -356,13 +390,15 @@ export function startAutoSync() {
   // to), so it doesn't fire a doomed sync attempt against a captive portal
   // or a radio that's "connected" but not truly reachable the way raw
   // NetInfo state can be.
-  serverStatus.subscribe(({ online }) => { if (online) processQueue(); });
+  serverStatus.subscribe(({ online }) => {
+    if (online) { resetPendingBackoff().then(processQueue); }
+  });
 
   // Secondary trigger: device radio state — cheaper/faster than a round
   // trip, still useful as an earlier signal.
   NetInfo.addEventListener((state) => {
     if (state.isConnected && state.isInternetReachable !== false) {
-      processQueue();
+      resetPendingBackoff().then(processQueue);
     }
   });
 

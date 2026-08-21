@@ -102,8 +102,8 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
 
-        versionCode 36
-        versionName "1.35"
+        versionCode 37
+        versionName "1.36"
 
         manifestPlaceholders = [MAPS_API_KEY: dotenvProps.getProperty("GOOGLE_MAPS_API_KEY", "")]
     }
