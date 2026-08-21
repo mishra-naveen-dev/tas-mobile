@@ -364,7 +364,21 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       }
     }
     if (!localLocation) {
-      Alert.alert('Location Needed', 'Waiting for GPS — please try again in a moment.');
+      // Reachable when the earlier fetchLocation() error alert was
+      // dismissed (Cancel) rather than retried — fetchingLocation still
+      // flips back to false in that case (see fetchLocation's finally),
+      // which re-enables Save with no location ever actually captured.
+      // Give this alert the same Retry action the original error alert
+      // has, instead of a dead end that just says "try again" with no way
+      // to actually do that from here.
+      Alert.alert(
+        'Location Needed',
+        'Your location hasn’t been captured yet.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Retry', onPress: fetchLocation },
+        ],
+      );
       return false;
     }
 
