@@ -1,86 +1,107 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import { serverStatus } from '../../utils/serverStatus';
-import { subscribe as subscribeOfflineQueue, syncNow } from '../../services/OfflineQueue';
+import { subscribe as subscribeOfflineQueue, syncNow, QUEUE_STATUS } from '../../services/OfflineQueue';
 
-function ago(ts) {
-    if (!ts) return '';
-    const ms = Date.now() - ts;
-    const mins = Math.floor(ms / 60000);
-    if (mins < 1) return ' · just now';
-    if (mins < 60) return ` · ${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    return hrs < 24 ? ` · ${hrs}h ago` : ` · ${Math.floor(hrs / 24)}d ago`;
-}
-
+/**
+ * Compact sync/connectivity status chip — rendered as a position:absolute
+ * overlay (see RootNavigator.js) rather than a layout element that pushes
+ * screen content down. That's deliberate, not just a style choice: every
+ * screen already reserves its own top inset via its own
+ * `<SafeAreaView edges={['top']}>` (see ScreenHeader/HeroHeader usage), so
+ * a sibling banner that ALSO adds `insets.top` padding while occupying
+ * real layout height double-counts the status bar height the moment it's
+ * visible — that was the cause of the "big blank gap under the status bar"
+ * bug. An absolute overlay never participates in that layout at all, so
+ * this component can appear and disappear freely without ever affecting
+ * any screen's header position.
+ *
+ * Only ever shows for the two states that need the user's live attention:
+ * a replay actually in flight right now (SYNCING), or no connectivity at
+ * all. It does NOT show for "items merely queued/waiting on a backoff
+ * timer" (automatic retry keeps working silently in the background — see
+ * OfflineQueue.processQueue) and it does NOT show dead-lettered
+ * (FAILED_PERMANENT) items — those already have a permanent, better home:
+ * the "Pending Sync" section on Home (ActivityCard's per-item Retry
+ * affordance) plus the one-shot toast App.jsx's onSyncComplete fires via
+ * NotificationProvider. Duplicating that here as a second, ever-present
+ * banner was the other half of the bug report.
+ */
 export default function OfflineBanner() {
     const [status, setStatus] = useState({ online: serverStatus._online, cachedAt: serverStatus._cachedAt });
-    const [pendingCount, setPendingCount] = useState(0);
+    const [queueItems, setQueueItems] = useState([]);
     const insets = useSafeAreaInsets();
-    // Rendered above the whole navigator (RootNavigator), outside any
-    // screen's own SafeAreaView, so without this it draws flush at y=0 and
-    // its text sits directly under the system status bar's clock/battery
-    // icons instead of below them. The colored background still extends
-    // up to the very top edge (edge-to-edge look); only the text/icon row
-    // is pushed down by the status bar's height.
-    const topInsetStyle = { paddingTop: insets.top + 7 };
 
     useEffect(() => serverStatus.subscribe(setStatus), []);
-    useEffect(() => subscribeOfflineQueue((items) => setPendingCount(items.length)), []);
+    useEffect(() => subscribeOfflineQueue(setQueueItems), []);
 
-    if (status.online) {
-        // Still show a (green) banner while items are mid-sync/waiting to
-        // retry, even though connectivity itself is back — otherwise a
-        // queued visit/punch/correction silently disappears from view
-        // between "offline" and "synced" with no feedback in between.
-        if (pendingCount === 0) return null;
-        return (
+    const isSyncing = queueItems.some((item) => item.status === QUEUE_STATUS.SYNCING);
+
+    // Nothing worth interrupting the user for — online and nothing actively
+    // syncing right now. Render nothing at all, not just a hidden/zero-height
+    // view, so the space is fully reclaimed.
+    if (status.online && !isSyncing) return null;
+
+    const offline = !status.online;
+    const queuedCount = queueItems.length;
+
+    return (
+        <View style={[styles.overlay, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
             <TouchableOpacity
-                style={[styles.banner, styles.syncingBanner, topInsetStyle]}
+                style={[styles.pill, offline ? styles.offlinePill : styles.syncingPill]}
                 onPress={() => syncNow()}
                 activeOpacity={0.8}
             >
-                <Icon name="upload-cloud" size={13} color="#fff" />
-                <Text style={styles.text}>
-                    {pendingCount === 1
-                        ? 'Syncing 1 saved item…'
-                        : `Syncing ${pendingCount} saved items…`}
-                    {' '}· Tap to sync now
+                {offline ? (
+                    <Icon name="wifi-off" size={12} color="#fff" />
+                ) : (
+                    <ActivityIndicator size="small" color="#fff" />
+                )}
+                <Text style={styles.pillText} numberOfLines={1}>
+                    {offline
+                        ? (queuedCount > 0 ? `Offline · ${queuedCount} queued` : 'Offline')
+                        : 'Syncing…'}
                 </Text>
             </TouchableOpacity>
-        );
-    }
-
-    return (
-        <View style={[styles.banner, topInsetStyle]}>
-            <Icon name="wifi-off" size={13} color="#fff" />
-            <Text style={styles.text}>
-                {'Offline — showing cached data'}
-                {ago(status.cachedAt)}
-                {pendingCount > 0 && (pendingCount === 1 ? ' · 1 item queued to sync' : ` · ${pendingCount} items queued to sync`)}
-            </Text>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    banner: {
-        backgroundColor: '#92400E',
+    overlay: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        paddingRight: 12,
+        zIndex: 30,
+        elevation: 30,
+    },
+    pill: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 7,
-        gap: 7,
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        maxWidth: 200,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 4,
     },
-    syncingBanner: {
+    offlinePill: {
+        backgroundColor: '#92400E',
+    },
+    syncingPill: {
         backgroundColor: '#166534',
     },
-    text: {
-        color: '#FEF3C7',
-        fontSize: 12,
-        fontWeight: '600',
+    pillText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '700',
         flexShrink: 1,
     },
 });

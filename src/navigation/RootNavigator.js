@@ -285,8 +285,13 @@ const RootNavigator = () => {
 
     return (
         <View style={{ flex: 1 }}>
-            <OfflineBanner />
             {content}
+            {/* Rendered after `content`, not before — OfflineBanner is a
+                position:absolute overlay (see its own comment for why), and
+                on Android, sibling views stack by render order regardless of
+                absolute positioning, so this ordering is what actually puts
+                it on top instead of behind the navigator's screens. */}
+            <OfflineBanner />
         </View>
     );
 };
