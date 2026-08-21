@@ -402,7 +402,8 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       const savedLoanId = record?.loan_id || loanId;
       Alert.alert(
         'Success',
-        savedLoanId ? `Visit recorded successfully.\n\nLoan ID: ${savedLoanId}` : 'Visit recorded successfully.',
+        `Visit recorded successfully.\n\n${fmtDateTime(new Date())}`
+          + (savedLoanId ? `\nLoan ID: ${savedLoanId}` : ''),
         [{ text: 'OK', onPress: () => navigation.goBack() }],
       );
     } catch (err) {
@@ -425,7 +426,8 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         Alert.alert(
           'Saved — will sync automatically',
           "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online."
-            + (queuedLoanId ? `\n\nLoan ID: ${queuedLoanId}` : ''),
+            + `\n\n${fmtDateTime(new Date())}`
+            + (queuedLoanId ? `\nLoan ID: ${queuedLoanId}` : ''),
           [{ text: 'OK', onPress: () => navigation.goBack() }],
         );
         return;

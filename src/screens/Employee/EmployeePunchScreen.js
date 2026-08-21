@@ -627,7 +627,11 @@ const EmployeePunchScreen = ({ navigation }) => {
       const savedLoanId = resolvedRecord?.loan_id || form.loan_id;
       resetPunchForm();
       resetForm();
-      Alert.alert('Success', savedLoanId ? `Visit recorded successfully!\n\nLoan ID: ${savedLoanId}` : 'Visit recorded successfully!');
+      Alert.alert(
+        'Success',
+        `Visit recorded successfully!\n\n${fmtDateTime(new Date())}`
+          + (savedLoanId ? `\nLoan ID: ${savedLoanId}` : ''),
+      );
     } catch (err) {
       if (isNetworkError(err)) {
         await enqueue('COLLECTION_VISIT', {
@@ -650,7 +654,8 @@ const EmployeePunchScreen = ({ navigation }) => {
         Alert.alert(
           'Saved — will sync automatically',
           "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online."
-            + (queuedLoanId ? `\n\nLoan ID: ${queuedLoanId}` : ''),
+            + `\n\n${fmtDateTime(new Date())}`
+            + (queuedLoanId ? `\nLoan ID: ${queuedLoanId}` : ''),
         );
         return;
       }
@@ -693,14 +698,14 @@ const EmployeePunchScreen = ({ navigation }) => {
         // it open for another entry.
         resetPunchForm();
         resetForm();
-        Alert.alert('Success', 'Punch recorded!');
+        Alert.alert('Success', `Punch recorded!\n\n${fmtDateTime(new Date())}`);
         return;
       }
 
       if (result.queuedOffline) {
         resetPunchForm();
         resetForm();
-        Alert.alert('Saved — will sync automatically', result.error);
+        Alert.alert('Saved — will sync automatically', `${result.error}\n\n${fmtDateTime(new Date())}`);
         return;
       }
 
