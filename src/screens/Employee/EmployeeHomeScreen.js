@@ -147,7 +147,7 @@ const MonthlyCollectionCard = ({
                     <View style={homeStyles.mcStatRow}>
                         <View style={[homeStyles.mcDot, { backgroundColor: trackColor, borderColor: ringColor }]} />
                         <View>
-                            <Text style={homeStyles.mcStatLabel}>Target</Text>
+                            <Text style={homeStyles.mcStatLabel}>Total Due Amount Schedule</Text>
                             <Text style={homeStyles.mcStatVal}>{fmtFull(target)}</Text>
                         </View>
                     </View>
@@ -155,7 +155,7 @@ const MonthlyCollectionCard = ({
                     <View style={homeStyles.mcStatRow}>
                         <View style={[homeStyles.mcDot, { backgroundColor: ringColor }]} />
                         <View>
-                            <Text style={homeStyles.mcStatLabel}>Collected</Text>
+                            <Text style={homeStyles.mcStatLabel}>MTD Collected</Text>
                             <Text style={[homeStyles.mcStatVal, { color: ringColor }]}>{fmtFull(collected)}</Text>
                         </View>
                     </View>
@@ -163,7 +163,7 @@ const MonthlyCollectionCard = ({
                     <View style={homeStyles.mcStatRow}>
                         <View style={[homeStyles.mcDot, { backgroundColor: colors.textLight }]} />
                         <View>
-                            <Text style={homeStyles.mcStatLabel}>{excessAmt > 0 ? 'Excess' : 'Remaining'}</Text>
+                            <Text style={homeStyles.mcStatLabel}>{excessAmt > 0 ? 'Excess' : 'Remaining Amount'}</Text>
                             <Text style={homeStyles.mcStatVal}>{fmtFull(excessAmt > 0 ? excessAmt : remainingAmt)}</Text>
                         </View>
                     </View>
