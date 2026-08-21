@@ -23,6 +23,7 @@ import {
   PAYMENT_MODES, PHOTO_KINDS, HOME_VISIT_PHOTO_KINDS, isAudioRequiredFor,
   buildCompleteVisitFormData, validateCollectionStatus, validateVisitType,
   validateCustomerPhone, getPromiseDateRange,
+  buildVisitSuccessMessage, buildVisitOutcomeNoun,
 } from '../../utils/collectionVisitRules';
 
 // ── Reason is now a 3-way bucket. "Collection" and "Visit" are dedicated,
@@ -59,6 +60,11 @@ const REASON_MEDIA_REQUIREMENTS = {
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+// Seconds included specifically for the submission-confirmation alerts —
+// several visits back-to-back at one location (e.g. a JLG group meeting)
+// can easily land in the same minute, and each confirmation needs its own
+// distinct, identifiable timestamp.
+const fmtConfirmTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
 const COLLECTION_STATUS_VALUES = ['PENDING', 'COLLECTED', 'PARTIALLY_COLLECTED', 'NOT_PAID'];
 
@@ -402,7 +408,9 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       const savedLoanId = record?.loan_id || loanId;
       Alert.alert(
         'Success',
-        savedLoanId ? `Visit recorded successfully.\n\nLoan ID: ${savedLoanId}` : 'Visit recorded successfully.',
+        buildVisitSuccessMessage(form)
+          + (savedLoanId ? `\nLoan ID: ${savedLoanId}` : '')
+          + `\n${fmtConfirmTime(new Date())}`,
         [{ text: 'OK', onPress: () => navigation.goBack() }],
       );
     } catch (err) {
@@ -424,8 +432,9 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         const queuedLoanId = record?.loan_id || loanId;
         Alert.alert(
           'Saved — will sync automatically',
-          "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online."
-            + (queuedLoanId ? `\n\nLoan ID: ${queuedLoanId}` : ''),
+          `No internet connection right now. Your ${buildVisitOutcomeNoun(form)} has been saved on this device and will upload automatically once you're back online.`
+            + (queuedLoanId ? `\nLoan ID: ${queuedLoanId}` : '')
+            + `\n${fmtConfirmTime(new Date())}`,
           [{ text: 'OK', onPress: () => navigation.goBack() }],
         );
         return;

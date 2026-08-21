@@ -23,6 +23,35 @@ export const VISIT_TYPE_OPTIONS = [
   { value: 'OTHER', label: 'Other' },
 ];
 
+// Reason-aware confirmation text for the Collection Visit success dialog —
+// e.g. "Collection has been done successfully.", "Visit has been done in
+// Home Visit successfully.", "Visit has been done in eKYC successfully."
+// Shared so CollectionVisitScreen and EmployeePunchScreen's inline visit
+// flow can't drift apart on this wording.
+export function buildVisitSuccessMessage(form) {
+  if (form.reasonBucket === 'COLLECTION') {
+    return 'Collection has been done successfully.';
+  }
+  if (form.reasonBucket === 'VISIT') {
+    const label = VISIT_TYPE_OPTIONS.find((o) => o.value === form.visit_reason)?.label || form.visit_reason || 'Visit';
+    return `Visit has been done in ${label} successfully.`;
+  }
+  // OTHER — form.reason holds the free-text/preset value chosen.
+  const label = form.reason || 'Other';
+  return `Visit has been done in ${label} successfully.`;
+}
+
+// Short noun phrase for the same reason, used in the offline-queued
+// message's "Your ___ has been saved..." sentence — e.g. "collection",
+// "Home Visit", "eKYC".
+export function buildVisitOutcomeNoun(form) {
+  if (form.reasonBucket === 'COLLECTION') return 'collection';
+  if (form.reasonBucket === 'VISIT') {
+    return VISIT_TYPE_OPTIONS.find((o) => o.value === form.visit_reason)?.label || 'visit';
+  }
+  return form.reason || 'visit';
+}
+
 export const DPD_BUCKET_OPTIONS = [
   { value: '60', label: '1-60' },
   { value: '90', label: '61-90' },

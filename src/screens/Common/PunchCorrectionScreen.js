@@ -36,6 +36,8 @@ export function registerPunchCorrectionOfflineReplayer() {
   });
 }
 
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+
 const CORRECTION_TYPES = [
     { value: 'ADD', label: 'Add Punch', color: colors.success, icon: 'plus-circle' },
     { value: 'EDIT', label: 'Edit Punch', color: colors.warning, icon: 'edit' },
@@ -339,12 +341,12 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
 
             if (editMode && correctionId) {
                 await api.updateCorrectionRequest(correctionId, payload);
-                Alert.alert('Success', 'Correction request updated successfully!', [
+                Alert.alert('Success', `Correction request updated successfully!\n\n${fmtDateTime(new Date())}`, [
                     { text: 'OK', onPress: () => navigation.goBack() }
                 ]);
             } else {
                 await api.createCorrectionRequest(payload);
-                Alert.alert('Success', 'Correction request submitted successfully!', [
+                Alert.alert('Success', `Correction request submitted successfully!\n\n${fmtDateTime(new Date())}`, [
                     { text: 'OK', onPress: () => navigation.goBack() }
                 ]);
             }
@@ -353,7 +355,8 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
                 await enqueue('CORRECTION_REQUEST', payload);
                 Alert.alert(
                     'Saved — will sync automatically',
-                    "No internet connection right now. Your correction request has been saved on this device and will upload automatically once you're back online.",
+                    "No internet connection right now. Your correction request has been saved on this device and will upload automatically once you're back online."
+                        + `\n\n${fmtDateTime(new Date())}`,
                     [{ text: 'OK', onPress: () => navigation.goBack() }],
                 );
                 return;

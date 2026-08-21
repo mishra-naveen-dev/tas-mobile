@@ -50,6 +50,8 @@ export function registerCollectionCorrectionOfflineReplayer() {
 
 const REASON_MIN_LENGTH = 10;
 
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+
 // Handles both create (route.params.record = the CollectionRecord being
 // corrected) and edit (route.params.editMode + correctionId + existingData
 // = the CollectionCorrectionRequest, only reachable while it's
@@ -135,12 +137,12 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
 
             if (editMode) {
                 await api.editCollectionCorrection(correctionId, fd);
-                Alert.alert('Success', 'Correction request updated and resubmitted for approval.', [
+                Alert.alert('Success', `Correction request updated and resubmitted for approval.\n\n${fmtDateTime(new Date())}`, [
                     { text: 'OK', onPress: () => navigation.goBack() },
                 ]);
             } else {
                 await api.createCollectionCorrection(fd);
-                Alert.alert('Success', 'Correction request submitted for approval.', [
+                Alert.alert('Success', `Correction request submitted for approval.\n\n${fmtDateTime(new Date())}`, [
                     { text: 'OK', onPress: () => navigation.goBack() },
                 ]);
             }
@@ -157,7 +159,8 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
                 });
                 Alert.alert(
                     'Saved — will sync automatically',
-                    "No internet connection right now. Your correction request has been saved on this device and will upload automatically once you're back online.",
+                    "No internet connection right now. Your correction request has been saved on this device and will upload automatically once you're back online."
+                        + `\n\n${fmtDateTime(new Date())}`,
                     [{ text: 'OK', onPress: () => navigation.goBack() }],
                 );
                 return;
