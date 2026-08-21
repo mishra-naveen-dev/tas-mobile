@@ -17,10 +17,12 @@ export const STATUS_OPTIONS = [
   { value: 'NOT_PAID', label: 'Not Paid', color: colors.danger },
 ];
 
+// 'Other' removed for now (Reason: Visit -> Visit Type) — planned for a
+// future release, not dropped from the backend/business logic, just not
+// offered as a pickable option here yet.
 export const VISIT_TYPE_OPTIONS = [
   { value: 'HOME_VISIT', label: 'Home Visit' },
   { value: 'OD_VISIT', label: 'OD Visit' },
-  { value: 'OTHER', label: 'Other' },
 ];
 
 // Reason-aware confirmation text for the Collection Visit success dialog —
