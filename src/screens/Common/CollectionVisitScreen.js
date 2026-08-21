@@ -59,6 +59,11 @@ const REASON_MEDIA_REQUIREMENTS = {
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+// Seconds included specifically for the submission-confirmation alerts —
+// several visits back-to-back at one location (e.g. a JLG group meeting)
+// can easily land in the same minute, and each confirmation needs its own
+// distinct, identifiable timestamp.
+const fmtConfirmTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
 const COLLECTION_STATUS_VALUES = ['PENDING', 'COLLECTED', 'PARTIALLY_COLLECTED', 'NOT_PAID'];
 
@@ -402,7 +407,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
       const savedLoanId = record?.loan_id || loanId;
       Alert.alert(
         'Success',
-        `Visit recorded successfully.\n\n${fmtDateTime(new Date())}`
+        `Visit recorded successfully.\n\n${fmtConfirmTime(new Date())}`
           + (savedLoanId ? `\nLoan ID: ${savedLoanId}` : ''),
         [{ text: 'OK', onPress: () => navigation.goBack() }],
       );
@@ -426,7 +431,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         Alert.alert(
           'Saved — will sync automatically',
           "No internet connection right now. Your visit has been saved on this device and will upload automatically once you're back online."
-            + `\n\n${fmtDateTime(new Date())}`
+            + `\n\n${fmtConfirmTime(new Date())}`
             + (queuedLoanId ? `\nLoan ID: ${queuedLoanId}` : ''),
           [{ text: 'OK', onPress: () => navigation.goBack() }],
         );

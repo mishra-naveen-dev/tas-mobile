@@ -36,7 +36,7 @@ export function registerPunchCorrectionOfflineReplayer() {
   });
 }
 
-const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
 const CORRECTION_TYPES = [
     { value: 'ADD', label: 'Add Punch', color: colors.success, icon: 'plus-circle' },
