@@ -31,14 +31,26 @@ const CONFIG = {
   // meeting), where redoing a full ~16s live GPS acquisition for every
   // single customer visited is both pointless (the device hasn't moved
   // yet) and the direct cause of employees hitting "waiting for GPS"/
-  // timeout errors on back-to-back visits. Deliberately short — long
-  // enough to cover "walked straight from one door to the next," short
-  // enough that it can't plausibly paper over a real walk to a genuinely
-  // different nearby address and blur two customers' geofence evidence
-  // together. maxAgeMs is unrelated to (and much stricter than)
-  // maxCacheAgeMs above, which exists for a different purpose entirely
-  // (last-resort fallback once live acquisition has genuinely failed).
-  freshCacheFastPath: { maxAgeMs: 30 * 1000, maxAccuracyM: 25 },
+  // timeout errors on back-to-back visits.
+  //
+  // Was 30s, which in practice almost never fired: a real visit (status,
+  // payment mode, photos, audio, remarks, plus the GPS wait itself) takes
+  // well over 30s to fill in, so by the time the NEXT visit's screen opens
+  // and checks the cache, the previous fix has almost always already aged
+  // out — meaning every single visit in a multi-stop sequence, not just
+  // the first, was doing a full live re-acquisition, and reports of
+  // "waiting for GPS" specifically piling up by the 4th/5th visit in one
+  // spot are the direct symptom. Widened to a few minutes — long enough to
+  // actually cover a typical visit's fill-in time (the case this exists
+  // for), still short enough that it can't plausibly paper over a real
+  // walk to a genuinely different nearby address and blur two customers'
+  // geofence evidence together (a few minutes of walking covers a much
+  // smaller radius than the accuracy/geofence tolerances already in play
+  // elsewhere in this app). maxAgeMs is unrelated to (and much stricter
+  // than) maxCacheAgeMs above, which exists for a different purpose
+  // entirely (last-resort fallback once live acquisition has genuinely
+  // failed).
+  freshCacheFastPath: { maxAgeMs: 3 * 60 * 1000, maxAccuracyM: 25 },
 };
 
 class LocationService {
