@@ -997,6 +997,13 @@ const CollectionVisitScreen = ({ navigation, route }) => {
               </>
             )}
 
+            {form.visit_reason === 'OD_VISIT' && (
+              <>
+                <Text style={styles.label}>Voice Note</Text>
+                <VoiceNoteRecorder value={audioNote} onChange={setAudioNote} required={isAudioRequiredFor(form)} />
+              </>
+            )}
+
             {form.visit_reason === 'HOME_VISIT' && (
               <>
                 {renderYesNo('Follow-up Required', 'follow_up_required')}
