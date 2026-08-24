@@ -106,6 +106,27 @@ android {
         versionName "1.38"
 
         manifestPlaceholders = [MAPS_API_KEY: dotenvProps.getProperty("GOOGLE_MAPS_API_KEY", "")]
+
+        // CI-only: route the native (Nitro Modules, Nitro Sound, RN's own C++)
+        // compile through ccache so translation units unchanged since the last
+        // run are pulled from cache instead of recompiled — the CMake build
+        // otherwise starts cold on every run because a fresh Actions checkout
+        // has no .cxx/ incremental state. Opt-in via -PenableCcache (only
+        // passed by the release workflow, which also installs ccache) so
+        // local builds without ccache on PATH are unaffected.
+        //
+        // Build-time CMake arguments belong on defaultConfig's
+        // externalNativeBuild.cmake (ExternalNativeCmakeOptions) — the
+        // top-level android.externalNativeBuild.cmake block below is a
+        // different class (CmakeOptions, path/buildStagingDirectory only)
+        // and has no "arguments" property at all.
+        if (project.hasProperty("enableCcache")) {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+                }
+            }
+        }
     }
     // The app's CMake build pulls in every autolinked codegen library (e.g.
     // react_codegen_safeareacontext) via add_subdirectory() into node_modules,
@@ -121,20 +142,6 @@ android {
         externalNativeBuild {
             cmake {
                 buildStagingDirectory "C:/rnbuild/tasmobile"
-            }
-        }
-    }
-    // CI-only: route the native (Nitro Modules, Nitro Sound, RN's own C++)
-    // compile through ccache so translation units unchanged since the last
-    // run are pulled from cache instead of recompiled — the CMake build
-    // otherwise starts cold on every run because a fresh Actions checkout
-    // has no .cxx/ incremental state. Opt-in via -PenableCcache (only passed
-    // by the release workflow, which also installs ccache) so local builds
-    // without ccache on PATH are unaffected.
-    if (project.hasProperty("enableCcache")) {
-        externalNativeBuild {
-            cmake {
-                arguments.addAll("-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
             }
         }
     }
