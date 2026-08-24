@@ -226,18 +226,6 @@ const EmployeePunchScreen = ({ navigation }) => {
   const [photos, setPhotos] = useState([]); // [{ uri, fileName, type, kind, capturedAt }]
   const [upiScreenshot, setUpiScreenshot] = useState(null); // { uri, fileName, type }
 
-  // Out-of-range geofence confirmation (shown when the backend reports the
-  // punch is more than 200m from the customer's stored geo-tag).
-  const [outOfRangeModal, setOutOfRangeModal] = useState({ visible: false, distanceM: 0 });
-  const [outOfRangeReason, setOutOfRangeReason] = useState('');
-  const [outOfRangeComment, setOutOfRangeComment] = useState('');
-
-  // Same-location confirmation (shown when this punch lands within ~20m of
-  // another customer already punched today).
-  const [dupLocationModal, setDupLocationModal] = useState({ visible: false, otherLoanId: '' });
-  const [dupLocationReason, setDupLocationReason] = useState('');
-  const [dupLocationComment, setDupLocationComment] = useState('');
-
   // Loan ID autocomplete from the employee's uploaded collection records.
   const [loanSuggestions, setLoanSuggestions] = useState([]);
   const [showLoanSuggestions, setShowLoanSuggestions] = useState(false);
@@ -600,12 +588,6 @@ const EmployeePunchScreen = ({ navigation }) => {
     setResolvedRecord(null);
     setLoanLookupError('');
     setLocalLocation(null);
-    setOutOfRangeModal({ visible: false, distanceM: 0 });
-    setOutOfRangeReason('');
-    setOutOfRangeComment('');
-    setDupLocationModal({ visible: false, otherLoanId: '' });
-    setDupLocationReason('');
-    setDupLocationComment('');
   };
 
   const submitCompleteVisit = async (extra = {}) => {
@@ -662,14 +644,6 @@ const EmployeePunchScreen = ({ navigation }) => {
         return;
       }
       const respData = err?.response?.data;
-      if (respData?.error === 'location_out_of_range') {
-        setOutOfRangeModal({ visible: true, distanceM: respData.distance_m });
-        return;
-      }
-      if (respData?.error === 'same_location_duplicate') {
-        setDupLocationModal({ visible: true, otherLoanId: respData.other_loan_id });
-        return;
-      }
       console.error('[EmployeePunch] Visit save failed:', err?.response?.status, respData || err?.message);
       const parsed = parseApiError(err);
       const msg = parsed.reference ? `${parsed.message}\n\nRef: ${parsed.reference}` : parsed.message;
@@ -711,14 +685,6 @@ const EmployeePunchScreen = ({ navigation }) => {
         return;
       }
 
-      if (result.locationOutOfRange) {
-        setOutOfRangeModal({ visible: true, distanceM: result.distanceM });
-        return;
-      }
-      if (result.sameLocationDuplicate) {
-        setDupLocationModal({ visible: true, otherLoanId: result.otherLoanId });
-        return;
-      }
       // Any other failure already surfaces via the error Banner (errorMessage
       // state set in PunchContext) — nothing else to do here.
     } finally {
@@ -742,59 +708,10 @@ const EmployeePunchScreen = ({ navigation }) => {
     await submitPunch();
   };
 
-  // Out-of-range and same-location-duplicate are independent backend checks
-  // — a single submission can hit both. Each confirm handler here must
-  // carry forward whatever reason the *other* dialog already collected in
-  // this session, not just its own — otherwise resolving one exception
-  // silently drops the other's already-confirmed reason on resubmit, the
-  // backend re-flags the dropped one, and the two dialogs bounce back and
-  // forth forever without ever actually saving.
-  const handleConfirmOutOfRange = async () => {
-    if (!outOfRangeReason) {
-      Alert.alert('Required', 'Please select a reason.');
-      return;
-    }
-    if (outOfRangeReason === 'OTHER' && !outOfRangeComment.trim()) {
-      Alert.alert('Required', 'Please add a comment for "Other".');
-      return;
-    }
-    setOutOfRangeModal({ visible: false, distanceM: 0 });
-    const extra = { out_of_range_reason: outOfRangeReason, out_of_range_comment: outOfRangeComment };
-    if (dupLocationReason) {
-      extra.duplicate_location_reason = dupLocationReason;
-      extra.duplicate_location_comment = dupLocationComment;
-    }
-    await submitPunch(extra);
-  };
-
-  const handleConfirmDupLocation = async () => {
-    if (!dupLocationReason) {
-      Alert.alert('Required', 'Please select a reason.');
-      return;
-    }
-    if (dupLocationReason === 'OTHER' && !dupLocationComment.trim()) {
-      Alert.alert('Required', 'Please add a comment for "Other".');
-      return;
-    }
-    setDupLocationModal({ visible: false, otherLoanId: '' });
-    const extra = { duplicate_location_reason: dupLocationReason, duplicate_location_comment: dupLocationComment };
-    if (outOfRangeReason) {
-      extra.out_of_range_reason = outOfRangeReason;
-      extra.out_of_range_comment = outOfRangeComment;
-    }
-    await submitPunch(extra);
-  };
-
   const closeModal = () => {
     setModalVisible(false);
     setLocalLocation(null);
     setReasonDropdownOpen(false);
-    setOutOfRangeModal({ visible: false, distanceM: 0 });
-    setOutOfRangeReason('');
-    setOutOfRangeComment('');
-    setDupLocationModal({ visible: false, otherLoanId: '' });
-    setDupLocationReason('');
-    setDupLocationComment('');
     setForm(blankForm);
     setAudioNote(null);
     setPhotos([]);
@@ -1642,160 +1559,12 @@ const EmployeePunchScreen = ({ navigation }) => {
         </View>
       </Modal>
 
-      {/* Out-of-range geofence confirmation — shown when the punch is more
-          than 200m from the customer's stored location. */}
-      <Modal visible={outOfRangeModal.visible} transparent animationType="fade" onRequestClose={() => setOutOfRangeModal({ visible: false, distanceM: 0 })}>
-        <View style={styles.oorOverlay}>
-          <View style={styles.oorCard}>
-            <View style={styles.oorHeader}>
-              <Icon name="alert-triangle" size={22} color={colors.warning} />
-              <Text style={styles.oorTitle}>Location Out of Range</Text>
-            </View>
-            <Text style={styles.oorMessage}>
-              Your location is out of range by {Math.round(outOfRangeModal.distanceM || 0)}m from the customer location.
-              You can still punch by selecting a reason below — it will be sent for supervisor review.
-            </Text>
-
-            <Text style={styles.label}>Reason *</Text>
-            {[
-              { value: 'FORGOT', label: 'Forgot to punch at customer location' },
-              { value: 'WRONG_LOCATION', label: 'At customer location — existing customer location is wrong' },
-              {
-                value: 'JLG',
-                label: form.reason === 'Collection'
-                  ? 'JLG Customer — Group Collection Location'
-                  : 'JLG Customer — Group Meeting Location',
-              },
-              { value: 'OTHER', label: 'Others' },
-            ].map((r) => (
-              <TouchableOpacity
-                key={r.value}
-                style={styles.oorReasonRow}
-                onPress={() => setOutOfRangeReason(r.value)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.oorRadio, outOfRangeReason === r.value && styles.oorRadioActive]}>
-                  {outOfRangeReason === r.value && <View style={styles.oorRadioDot} />}
-                </View>
-                <Text style={styles.oorReasonText}>{r.label}</Text>
-              </TouchableOpacity>
-            ))}
-
-            {outOfRangeReason === 'OTHER' && (
-              <TextInput
-                style={[styles.input, { height: 70, textAlignVertical: 'top', marginTop: spacing.xs }]}
-                value={outOfRangeComment}
-                onChangeText={setOutOfRangeComment}
-                placeholder="Please describe the reason..."
-                placeholderTextColor={colors.textMuted}
-                multiline
-              />
-            )}
-
-            <View style={[styles.modalFooter, { paddingHorizontal: 0 }]}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setOutOfRangeModal({ visible: false, distanceM: 0 })}
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.submitBtn, isSubmitting && styles.disabled]}
-                onPress={handleConfirmOutOfRange}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.submitText}>Confirm & Punch</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Same-location confirmation — shown when this punch lands within
-          ~20m of another customer already punched today. */}
-      <Modal visible={dupLocationModal.visible} transparent animationType="fade" onRequestClose={() => setDupLocationModal({ visible: false, otherLoanId: '' })}>
-        <View style={styles.oorOverlay}>
-          <View style={styles.oorCard}>
-            <View style={styles.oorHeader}>
-              <Icon name="users" size={22} color={colors.warning} />
-              <Text style={styles.oorTitle}>Same Location as Another Customer</Text>
-            </View>
-            <Text style={styles.oorMessage}>
-              Another customer (Loan {dupLocationModal.otherLoanId}) was already punched from this exact
-              location today. You can still punch by selecting a reason below — it will be sent for
-              supervisor review.
-            </Text>
-
-            <Text style={styles.label}>Reason *</Text>
-            {[
-              { value: 'GROUP_MEETING', label: 'Group / joint meeting — multiple customers at this location' },
-              { value: 'SHARED_BUILDING', label: 'Shared building or complex — customer is also here' },
-              {
-                value: 'JLG',
-                label: form.reason === 'Collection'
-                  ? 'JLG Customer — Group Collection Location'
-                  : 'JLG Customer — Group Meeting Location',
-              },
-              { value: 'OTHER', label: 'Others' },
-            ].map((r) => (
-              <TouchableOpacity
-                key={r.value}
-                style={styles.oorReasonRow}
-                onPress={() => setDupLocationReason(r.value)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.oorRadio, dupLocationReason === r.value && styles.oorRadioActive]}>
-                  {dupLocationReason === r.value && <View style={styles.oorRadioDot} />}
-                </View>
-                <Text style={styles.oorReasonText}>{r.label}</Text>
-              </TouchableOpacity>
-            ))}
-
-            {dupLocationReason === 'OTHER' && (
-              <TextInput
-                style={[styles.input, { height: 70, textAlignVertical: 'top', marginTop: spacing.xs }]}
-                value={dupLocationComment}
-                onChangeText={setDupLocationComment}
-                placeholder="Please describe the reason..."
-                placeholderTextColor={colors.textMuted}
-                multiline
-              />
-            )}
-
-            <View style={[styles.modalFooter, { paddingHorizontal: 0 }]}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setDupLocationModal({ visible: false, otherLoanId: '' })}
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.submitBtn, isSubmitting && styles.disabled]}
-                onPress={handleConfirmDupLocation}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.submitText}>Confirm & Punch</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  oorOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  oorCard: { width: '100%', maxWidth: 420, backgroundColor: colors.surface, borderRadius: 16, padding: spacing.lg },
-  oorHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: spacing.sm },
-  oorTitle: { fontSize: typography.sizes.md, fontWeight: '700', color: colors.text },
-  oorMessage: { fontSize: typography.sizes.sm, color: colors.textMuted, marginBottom: spacing.md, lineHeight: 20 },
-  oorReasonRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 10 },
-  oorRadio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
-  oorRadioActive: { borderColor: colors.primary },
-  oorRadioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary },
-  oorReasonText: { flex: 1, fontSize: typography.sizes.sm, color: colors.text },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: spacing.md, backgroundColor: colors.surface, elevation: 2 },
   backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
   forgotPunchBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
