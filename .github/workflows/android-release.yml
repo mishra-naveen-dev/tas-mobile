@@ -101,6 +101,54 @@ jobs:
 
 
       # --------------------------------------------------------
+      # 4b. Cache Android NDK / build-tools / platform / cmake
+      # --------------------------------------------------------
+      #
+      # android-actions/setup-android only installs the base cmdline-tools —
+      # the actual pinned NDK (27.1.12297006, ~1GB) and build-tools/platform
+      # used by this project are fetched by AGP's own SDK auto-download the
+      # first time Gradle needs them, which on a fresh runner means every
+      # single build re-downloads them from Google. Caching these specific
+      # package directories (keyed on android/build.gradle, where the
+      # versions are pinned) lets a matching run restore them instead.
+      # --------------------------------------------------------
+
+      - name: Cache Android NDK, build-tools, platform, cmake
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_SDK_ROOT }}/ndk
+            ${{ env.ANDROID_SDK_ROOT }}/build-tools
+            ${{ env.ANDROID_SDK_ROOT }}/platforms
+            ${{ env.ANDROID_SDK_ROOT }}/cmake
+          key: android-sdk-${{ runner.os }}-${{ hashFiles('android/build.gradle') }}
+
+
+      # --------------------------------------------------------
+      # 4c. ccache for native (CMake/NDK) compilation
+      # --------------------------------------------------------
+      #
+      # The app's native modules (Nitro Modules, Nitro Sound, RN's own C++)
+      # compile via CMake for every ABI. Gradle's own build cache (see
+      # org.gradle.caching in gradle.properties) doesn't help here — CMake's
+      # incremental state lives in project-local .cxx/ dirs that don't exist
+      # on a fresh checkout, so native code fully rebuilds from source every
+      # run regardless. ccache caches at the compiler-object level instead,
+      # keyed on source content, so unchanged translation units across runs
+      # (and across ABIs, since most native sources are ABI-independent)
+      # are pulled from cache. Wired into the actual build via
+      # -PenableCcache below, which app/build.gradle reads to set
+      # CMAKE_C/CXX_COMPILER_LAUNCHER=ccache.
+      # --------------------------------------------------------
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ccache-${{ runner.os }}
+          max-size: 1G
+
+
+      # --------------------------------------------------------
       # 5. Verify build environment
       # --------------------------------------------------------
 
@@ -261,6 +309,18 @@ jobs:
       # --------------------------------------------------------
       # 8. Build signed release APK
       # --------------------------------------------------------
+      #
+      # -PreactNativeArchitectures restricts the native build to the two
+      # ABIs real phones actually ship (armeabi-v7a, arm64-v8a) instead of
+      # gradle.properties' local-dev default of all four — x86/x86_64 are
+      # emulator-only, so building them into the production release APK
+      # only pays CMake compile cost for devices that will never install
+      # it. Passed as a CLI override (not a gradle.properties change) so
+      # local `npm run android` against an x86_64 emulator is unaffected.
+      #
+      # -PenableCcache turns on the ccache compiler launcher configured in
+      # app/build.gradle, using the cache restored by the ccache step above.
+      # --------------------------------------------------------
 
       - name: Build signed release APK
 
@@ -273,7 +333,9 @@ jobs:
           ./gradlew assembleRelease \
             --no-daemon \
             --build-cache \
-            --parallel
+            --parallel \
+            -PreactNativeArchitectures=armeabi-v7a,arm64-v8a \
+            -PenableCcache
 
 
       # --------------------------------------------------------
