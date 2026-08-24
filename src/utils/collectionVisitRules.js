@@ -181,11 +181,6 @@ export const buildCompleteVisitFormData = ({
     }
   }
 
-  put('out_of_range_reason', extra.out_of_range_reason);
-  put('out_of_range_comment', extra.out_of_range_comment);
-  put('duplicate_location_reason', extra.duplicate_location_reason);
-  put('duplicate_location_comment', extra.duplicate_location_comment);
-
   // Backend defaults customer_phone_confirmed to true when omitted, so this
   // only needs to be sent when the employee has actually answered the
   // question — put() itself would already skip a null/'' value, but being
