@@ -281,19 +281,6 @@ export const PunchProvider = ({ children }) => {
         companion_phone: formData.co_employee_phone || '',
         vehicle_number: formData.vehicle_number || '',
       };
-      // Only sent on resubmission after the operator confirms an out-of-range
-      // punch with a reason (see the location_out_of_range handling below).
-      if (formData.out_of_range_reason) {
-        payload.out_of_range_reason = formData.out_of_range_reason;
-        payload.out_of_range_comment = formData.out_of_range_comment || '';
-      }
-      // Only sent on resubmission after the operator confirms punching from
-      // the same spot as another customer today (see same_location_duplicate
-      // handling below).
-      if (formData.duplicate_location_reason) {
-        payload.duplicate_location_reason = formData.duplicate_location_reason;
-        payload.duplicate_location_comment = formData.duplicate_location_comment || '';
-      }
 
       if (IS_DEV) console.log('[Punch] Submitting punch:', JSON.stringify(payload, null, 2));
 
@@ -338,29 +325,6 @@ export const PunchProvider = ({ children }) => {
       return { success: true, data: res.data };
     } catch (err) {
       if (IS_DEV) console.error('[Punch] Error:', err?.response?.data || err.message);
-      const respData = err?.response?.data;
-
-      // Distinct from a hard failure — the operator can still punch after
-      // picking a reason, so don't drop into the generic error state.
-      if (respData?.error === 'location_out_of_range') {
-        setPunchState(STATES.FORM_OPEN);
-        return {
-          success: false,
-          locationOutOfRange: true,
-          distanceM: respData.distance_m,
-          error: respData.message,
-        };
-      }
-      if (respData?.error === 'same_location_duplicate') {
-        setPunchState(STATES.FORM_OPEN);
-        return {
-          success: false,
-          sameLocationDuplicate: true,
-          otherLoanId: respData.other_loan_id,
-          error: respData.message,
-        };
-      }
-
       if (isNetworkError(err)) {
         await enqueue('PUNCH_IN', payload);
         setPunchState(STATES.IDLE);
