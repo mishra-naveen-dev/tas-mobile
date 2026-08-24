@@ -134,7 +134,7 @@ android {
     if (project.hasProperty("enableCcache")) {
         externalNativeBuild {
             cmake {
-                arguments "-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+                arguments.addAll("-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
             }
         }
     }
