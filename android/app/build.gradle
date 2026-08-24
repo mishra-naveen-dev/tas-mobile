@@ -124,6 +124,20 @@ android {
             }
         }
     }
+    // CI-only: route the native (Nitro Modules, Nitro Sound, RN's own C++)
+    // compile through ccache so translation units unchanged since the last
+    // run are pulled from cache instead of recompiled — the CMake build
+    // otherwise starts cold on every run because a fresh Actions checkout
+    // has no .cxx/ incremental state. Opt-in via -PenableCcache (only passed
+    // by the release workflow, which also installs ccache) so local builds
+    // without ccache on PATH are unaffected.
+    if (project.hasProperty("enableCcache")) {
+        externalNativeBuild {
+            cmake {
+                arguments "-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            }
+        }
+    }
     signingConfigs {
     debug {
         storeFile file('debug.keystore')
