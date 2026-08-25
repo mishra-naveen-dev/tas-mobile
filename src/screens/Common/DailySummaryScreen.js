@@ -173,6 +173,10 @@ const DailySummaryScreen = ({ navigation }) => {
     const [punches,    setPunches]    = useState([]);
     const [liveRoute,  setLiveRoute]  = useState(null); // { distance, points, sessions }
     const [duration,   setDuration]   = useState(null); // "Xh Ym" from session or API
+    // P2P-aware "visits" count for collection activity today — from the same
+    // CollectionUpdate-backed visit_summary() endpoint the Home Screen / My
+    // Performance already use, not a raw punch count (see stats useMemo below).
+    const [collectionVisits, setCollectionVisits] = useState(0);
     const [loading,    setLoading]    = useState(false);
     const [error,      setError]      = useState(null);
     const [fetched,    setFetched]    = useState(false);
@@ -189,10 +193,11 @@ const DailySummaryScreen = ({ navigation }) => {
             const punchParams = { date_from: dateStr, date_to: dateStr };
             if (adminMode) { /* keep unscoped — server returns all */ }
 
-            const [punchRes, liveRes, summaryRes] = await Promise.allSettled([
+            const [punchRes, liveRes, summaryRes, visitRes] = await Promise.allSettled([
                 api.getPunchHistory(punchParams),
                 api.getLiveDailyRoute(liveParams),
                 api.getDailySummary({ date: dateStr }),
+                api.getVisitSummary({ date_from: dateStr, date_to: dateStr }),
             ]);
 
             // ── Punch records ──────────────────────────────────────────────────
@@ -219,6 +224,12 @@ const DailySummaryScreen = ({ navigation }) => {
             if (summaryRes.status === 'fulfilled') {
                 setDuration(summaryRes.value?.data?.duration || null);
             }
+
+            // ── P2P-aware collection visits (VISIT rule's COLLECTION bucket:
+            // P2P/NOT_PAID outcomes count, COLLECTED/PARTIALLY_COLLECTED don't) ──
+            setCollectionVisits(visitRes.status === 'fulfilled'
+                ? (visitRes.value?.data?.buckets?.COLLECTION?.count ?? 0)
+                : 0);
         } catch {
             setError('Failed to load data. Pull down to retry.');
         } finally {
@@ -233,14 +244,19 @@ const DailySummaryScreen = ({ navigation }) => {
     const stats = useMemo(() => {
         const punchIns  = punches.filter(p => p.punch_type === 'PUNCH_IN');
         const punchOuts = punches.filter(p => p.punch_type === 'PUNCH_OUT');
-        const colls     = punches.filter(p => p.punch_type === 'COLLECTION');
-        const disbs     = punches.filter(p => p.punch_type === 'DISBURSEMENT');
+        // AttendancePunch.punch_type is only ever PUNCH_IN/PUNCH_OUT — the
+        // COLLECTION/DISBURSEMENT classification lives on visit_type (see
+        // apps.attendance.views.daily_summary, which sums the same way).
+        // Filtering on punch_type here always returned an empty set, so the
+        // "Collected"/"Disbursed" tiles below silently showed ₹0 regardless
+        // of real activity.
+        const colls     = punches.filter(p => p.visit_type === 'COLLECTION');
+        const disbs     = punches.filter(p => p.visit_type === 'DISBURSEMENT');
         return {
             punchInCount:  punchIns.length,
             punchOutCount: punchOuts.length,
             collection:    colls.reduce((s, p) => s + parseFloat(p.amount || 0), 0),
             disbursement:  disbs.reduce((s, p) => s + parseFloat(p.amount || 0), 0),
-            collectionCount: colls.length,
             disbursementCount: disbs.length,
             firstPunch:    punches[0]?.punched_at,
             lastPunch:     punches[punches.length - 1]?.punched_at,
@@ -395,7 +411,7 @@ const DailySummaryScreen = ({ navigation }) => {
                                     icon="dollar-sign"
                                     label="Collected"
                                     value={stats.collection > 0 ? `₹${Math.round(stats.collection).toLocaleString('en-IN')}` : '₹0'}
-                                    sub={stats.collectionCount > 0 ? `${stats.collectionCount} visits` : null}
+                                    sub={collectionVisits > 0 ? `${collectionVisits} visits` : null}
                                     color={colors.punchBlue}
                                     bg={colors.punchBlueLight}
                                 />
