@@ -1,5 +1,7 @@
 // Activity Model - Data structure for TAS activities
 
+import { QUEUE_STATUS } from '../services/OfflineQueue';
+
 export const ACTIVITY_TYPES = {
     PUNCH_IN: 'PUNCH_IN',
     PUNCH_OUT: 'PUNCH_OUT',
@@ -48,10 +50,14 @@ export const createActivity = (data) => ({
 // until it syncs, the server feed afterwards — so there's no de-dup logic
 // to write here, just a stable, non-colliding key).
 const QUEUE_STATUS_TO_ACTIVITY_STATUS = {
-    PENDING: ACTIVITY_STATUS.PENDING,
-    SYNCING: ACTIVITY_STATUS.SYNCING,
-    FAILED_RETRYABLE: ACTIVITY_STATUS.PENDING,
-    FAILED_PERMANENT: ACTIVITY_STATUS.FAILED,
+    [QUEUE_STATUS.PENDING]: ACTIVITY_STATUS.PENDING,
+    [QUEUE_STATUS.SYNCING]: ACTIVITY_STATUS.SYNCING,
+    // SYNCED falls through to SUCCESS — ActivityCard has no SYNC_STATUS_META
+    // entry for it, so it renders exactly like a normal confirmed activity
+    // during its brief window before pruneSynced() removes it from the queue.
+    [QUEUE_STATUS.SYNCED]: ACTIVITY_STATUS.SUCCESS,
+    [QUEUE_STATUS.RETRY_PENDING]: ACTIVITY_STATUS.PENDING,
+    [QUEUE_STATUS.FAILED]: ACTIVITY_STATUS.FAILED,
 };
 
 export const activityFromQueueItem = (item) => {
@@ -72,7 +78,7 @@ export const activityFromQueueItem = (item) => {
         location: payload.customerAddress || payload.address || null,
         amount: form.collected_amount || payload.amount || null,
         client_name: payload.customerName || payload.customer_name || null,
-        notes: item.status === 'FAILED_PERMANENT' ? (item.lastError || 'Sync failed — tap to retry') : null,
+        notes: item.status === QUEUE_STATUS.FAILED ? (item.lastError || 'Sync failed — tap to retry') : null,
         status: QUEUE_STATUS_TO_ACTIVITY_STATUS[item.status] || ACTIVITY_STATUS.PENDING,
         // Carried through on `raw` (see createActivity's doc comment) so
         // ActivityCard can show the loan id and wire a retry action without

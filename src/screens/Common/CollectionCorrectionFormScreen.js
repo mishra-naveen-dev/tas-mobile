@@ -15,7 +15,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
-import { enqueue, registerReplayer, isNetworkError } from '../../services/OfflineQueue';
+import { enqueue, registerReplayer, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
 
 import { colors, typography, spacing } from '../../theme/tokens';
 
@@ -31,10 +31,11 @@ import { colors, typography, spacing } from '../../theme/tokens';
 export function registerCollectionCorrectionOfflineReplayer() {
     registerReplayer('COLLECTION_CORRECTION', async (payload) => {
         const fd = new FormData();
-        fd.append('collection_record', payload.collectionRecordId);
+        if (!payload.editMode) fd.append('collection_record', payload.collectionRecordId);
         fd.append('requested_amount', payload.amount);
         fd.append('reason', payload.reason);
         if (payload.remarks) fd.append('remarks', payload.remarks);
+        if (payload.editMode) fd.append('edit_reason', payload.editReason || '');
         if (payload.latitude) fd.append('latitude', String(payload.latitude));
         if (payload.longitude) fd.append('longitude', String(payload.longitude));
         if (payload.document) {
@@ -44,7 +45,13 @@ export function registerCollectionCorrectionOfflineReplayer() {
                 name: payload.document.fileName || 'correction_document.jpg',
             });
         }
-        await api.createCollectionCorrection(fd);
+        fd.append('client_transaction_id', payload.clientTransactionId);
+        fd.append('event_at', payload.eventAt);
+        if (payload.editMode) {
+            await api.editCollectionCorrection(payload.correctionId, fd);
+        } else {
+            await api.createCollectionCorrection(fd);
+        }
     });
 }
 
@@ -109,6 +116,12 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
         // Declared outside the outer try block so the catch handler can
         // still queue it for offline sync on a network failure.
         let coords = {};
+        // Generated once per submit attempt (create or edit), before any
+        // network attempt, and reused unchanged for both the live try and
+        // the offline-queued replay — guards approval_engine.submit() from
+        // ever running twice for the same logical submission.
+        const clientTransactionId = generateTransactionId();
+        const eventAt = new Date().toISOString();
         try {
             try {
                 const loc = await LocationService.getCurrentLocation();
@@ -134,6 +147,8 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
                     name: document.fileName || 'correction_document.jpg',
                 });
             }
+            fd.append('client_transaction_id', clientTransactionId);
+            fd.append('event_at', eventAt);
 
             if (editMode) {
                 await api.editCollectionCorrection(correctionId, fd);
@@ -147,15 +162,20 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
                 ]);
             }
         } catch (err) {
-            if (!editMode && isNetworkError(err)) {
+            if (isNetworkError(err)) {
                 await enqueue('COLLECTION_CORRECTION', {
-                    collectionRecordId: record.id,
+                    editMode,
+                    correctionId: editMode ? correctionId : undefined,
+                    editReason: editMode ? editReason.trim() : undefined,
+                    collectionRecordId: editMode ? undefined : record.id,
                     amount,
                     reason: reason.trim(),
                     remarks: remarks.trim(),
                     latitude: coords.latitude || null,
                     longitude: coords.longitude || null,
                     document,
+                    clientTransactionId,
+                    eventAt,
                 });
                 Alert.alert(
                     'Saved — will sync automatically',

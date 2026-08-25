@@ -32,20 +32,30 @@ import { serverStatus } from '../utils/serverStatus';
 const STORAGE_KEY = '@tas_offline_queue';
 
 // ── Status values ──────────────────────────────────────────────────────────
-// PENDING           — queued, not yet attempted (or reset via retryItem()).
-// SYNCING           — a replay is in flight right now.
-// FAILED_RETRYABLE  — a transient failure (network/5xx/429/401/403); will be
-//                      retried automatically once nextRetryAt passes.
-// FAILED_PERMANENT  — a non-retryable failure (4xx business/validation) or
-//                      MAX_ATTEMPTS exhausted; stays visible, never silently
-//                      dropped — only leaves the queue via retryItem() (user
-//                      asks to try again) or discardItem() (user dismisses).
+// PENDING       — queued, not yet attempted (or reset via retryItem(), or a
+//                  backoff wait that has elapsed).
+// SYNCING       — a replay is in flight right now.
+// SYNCED        — replay just succeeded. Terminal, briefly visible (so the
+//                  UI has a moment to show "synced") before pruneSynced()
+//                  removes it — see processQueue().
+// RETRY_PENDING — a transient failure (network/5xx/429/401/403); will be
+//                  retried automatically once nextRetryAt passes.
+// FAILED        — a non-retryable failure (4xx business/validation) or
+//                  MAX_ATTEMPTS exhausted; stays visible, never silently
+//                  dropped — only leaves the queue via retryItem() (user
+//                  asks to try again) or discardItem() (user dismisses).
 export const QUEUE_STATUS = {
   PENDING: 'PENDING',
   SYNCING: 'SYNCING',
-  FAILED_RETRYABLE: 'FAILED_RETRYABLE',
-  FAILED_PERMANENT: 'FAILED_PERMANENT',
+  SYNCED: 'SYNCED',
+  RETRY_PENDING: 'RETRY_PENDING',
+  FAILED: 'FAILED',
 };
+
+// How long a SYNCED item stays visible in the queue before pruneSynced()
+// removes it — long enough for one render tick in any subscribed UI (e.g.
+// the "Pending Sync" section), short enough to never look like clutter.
+const SYNCED_PRUNE_DELAY_MS = 5 * 1000;
 
 const MAX_ATTEMPTS = 8;
 const BASE_BACKOFF_MS = 5 * 1000;
@@ -82,7 +92,7 @@ async function hydrate() {
     const parsed = raw ? JSON.parse(raw) : [];
     // Migrate items queued by a pre-upgrade build (no status field yet) so
     // an app update mid-flight, with items already on disk, never breaks.
-    queue = parsed.map((item) => (item.status ? item : {
+    const migrated = parsed.map((item) => (item.status ? item : {
       ...item,
       status: QUEUE_STATUS.PENDING,
       idempotencyKey: item.idempotencyKey ?? item.payload?.client_transaction_id ?? item.payload?.clientTransactionId ?? null,
@@ -90,6 +100,30 @@ async function hydrate() {
       errorClass: null,
       partitionKey: item.partitionKey ?? computePartitionKey(item.kind, item.payload),
     }));
+    // Cold-start reconciliation. Two cases can be left on disk if the app
+    // process was killed mid-drain:
+    //  - SYNCING: the outcome is genuinely unknown — the request may have
+    //    reached the server and been processed, or never gone out at all.
+    //    Resetting it to PENDING and letting it re-attempt is safe ONLY
+    //    because every queue kind now carries a client_transaction_id: if
+    //    the earlier attempt actually succeeded server-side, the resumed
+    //    replay is recognized as a duplicate by that endpoint's create-time
+    //    idempotency short-circuit (or its IntegrityError race fallback)
+    //    and the existing record is returned instead of a new one created.
+    //    This is a correctness invariant, not just a convenience — any new
+    //    queue `kind` added in the future MUST also send a
+    //    client_transaction_id, or this reconciliation becomes unsafe for it.
+    //  - SYNCED: it already succeeded and was simply waiting out
+    //    SYNCED_PRUNE_DELAY_MS when the process died (persistNow() on the
+    //    SYNCING->SYNCED transition is forced/synchronous, so this is the
+    //    only way a SYNCED item ends up on disk) — nothing to reconcile,
+    //    just drop it now instead of waiting for a prune sweep that may
+    //    never come if nothing else ever calls processQueue() again.
+    queue = migrated
+      .filter((item) => item.status !== QUEUE_STATUS.SYNCED)
+      .map((item) => (item.status === QUEUE_STATUS.SYNCING
+        ? { ...item, status: QUEUE_STATUS.PENDING, nextRetryAt: 0 }
+        : item));
   } catch {
     queue = [];
   }
@@ -154,7 +188,10 @@ export function registerReplayer(kind, fn) {
 // generic punch correction) — those still serialize relative to each other,
 // which is the safe default when there's no finer-grained key to use.
 function computePartitionKey(kind, payload) {
-  const candidates = [payload?.collectionId, payload?.loanId, payload?.loan_id, payload?.collectionRecordId];
+  const candidates = [
+    payload?.collectionId, payload?.loanId, payload?.loan_id, payload?.collectionRecordId,
+    payload?.correctionId,
+  ];
   const recordId = candidates.find((v) => v !== undefined && v !== null && v !== '') ?? 'default';
   return `${kind}:${recordId}`;
 }
@@ -238,7 +275,9 @@ function pickNext(blockedPartitions) {
   const now = Date.now();
   let best = null;
   for (const item of queue) {
-    if (item.status === QUEUE_STATUS.FAILED_PERMANENT) continue;
+    // FAILED is terminal until a user acts (retryItem/discardItem); SYNCED
+    // is terminal awaiting pruneSynced() — neither is ever re-driven here.
+    if (item.status === QUEUE_STATUS.FAILED || item.status === QUEUE_STATUS.SYNCED) continue;
     if (blockedPartitions.has(item.partitionKey)) continue;
     if (item.nextRetryAt && item.nextRetryAt > now) continue;
     if (!best
@@ -250,16 +289,35 @@ function pickNext(blockedPartitions) {
   return best;
 }
 
+// Removes SYNCED items that have sat long enough for any subscribed UI to
+// have rendered their "just synced" state at least once. Called at the
+// start of every processQueue() pass, and once more via setTimeout after a
+// pass that produced new SYNCED items, so one doesn't linger indefinitely
+// if nothing else happens to trigger the next processQueue() call.
+function pruneSynced() {
+  const now = Date.now();
+  const before = queue.length;
+  queue = queue.filter((item) => (
+    item.status !== QUEUE_STATUS.SYNCED || now - item.syncedAt < SYNCED_PRUNE_DELAY_MS
+  ));
+  if (queue.length !== before) {
+    persist();
+    notify();
+  }
+}
+
 /** Drain the queue. Picks the highest-priority eligible item across
  * distinct records (partitions) rather than strict FIFO, so a broken item
  * for one loan never blocks an unrelated loan or a punch — but never
  * replays two items for the *same* record out of order. A retryable
- * failure schedules a backed-off retry and blocks only that record's
- * partition for the rest of this pass; a permanent failure (or exhausted
- * retries) is dead-lettered as FAILED_PERMANENT — kept, visible, never
+ * failure schedules a backed-off retry (RETRY_PENDING) and blocks only that
+ * record's partition for the rest of this pass; a permanent failure (or
+ * exhausted retries) is dead-lettered as FAILED — kept, visible, never
  * silently dropped — and also blocks its partition until the user retries
- * or discards it. Fires onSyncComplete() once at the end with everything
- * that resolved this pass. */
+ * or discards it. A success transitions to SYNCED (not an immediate
+ * splice) so any subscribed UI gets a chance to render "just synced" before
+ * pruneSynced() removes it. Fires onSyncComplete() once at the end with
+ * everything that resolved this pass. */
 export async function processQueue() {
   if (processing) return;
   processing = true;
@@ -267,6 +325,7 @@ export async function processQueue() {
   const failed = [];
   try {
     await hydrate();
+    pruneSynced();
     const blockedPartitions = new Set();
     // Bounded by queue size — each iteration either removes an item or
     // blocks a partition, so this can't loop forever.
@@ -282,24 +341,32 @@ export async function processQueue() {
         continue;
       }
       item.status = QUEUE_STATUS.SYNCING;
+      // Forced synchronous write (not the debounced persist()) — this and
+      // the SYNCED transition below are the two points where an app kill
+      // inside the debounce window would otherwise leave a stale status on
+      // disk. A kill before this write lands still resolves correctly on
+      // relaunch (hydrate()'s SYNCING reconciliation, or simply staying
+      // PENDING), so this is defense-in-depth on top of that, not the only
+      // thing making a kill mid-sync safe.
+      await persistNow();
       notify();
       try {
         await replay(item.payload);
-        const idx = queue.indexOf(item);
-        if (idx !== -1) queue.splice(idx, 1);
+        item.status = QUEUE_STATUS.SYNCED;
+        item.syncedAt = Date.now();
         succeeded.push(item);
-        await persist();
+        await persistNow();
         notify();
       } catch (err) {
         item.attempts += 1;
         item.lastError = err?.response?.data?.error || err?.message || 'Sync failed';
         item.errorClass = classifyError(err);
         if (item.errorClass === 'permanent' || item.attempts >= MAX_ATTEMPTS) {
-          item.status = QUEUE_STATUS.FAILED_PERMANENT;
+          item.status = QUEUE_STATUS.FAILED;
           item.nextRetryAt = 0;
           failed.push(item);
         } else {
-          item.status = QUEUE_STATUS.FAILED_RETRYABLE;
+          item.status = QUEUE_STATUS.RETRY_PENDING;
           item.nextRetryAt = Date.now() + backoffMs(item.attempts);
         }
         blockedPartitions.add(item.partitionKey);
@@ -310,12 +377,13 @@ export async function processQueue() {
   } finally {
     processing = false;
     if (succeeded.length || failed.length) emitSyncComplete({ succeeded, failed });
+    if (succeeded.length) setTimeout(pruneSynced, SYNCED_PRUNE_DELAY_MS + 250);
   }
 }
 
 /** User-initiated retry of a dead-lettered item — resets it back to
  * PENDING (attempts/lastError kept for history) and immediately kicks the
- * queue. Never happens automatically; a FAILED_PERMANENT item only leaves
+ * queue. Never happens automatically; a FAILED item only leaves
  * that state because a person asked it to. */
 export async function retryItem(id) {
   await hydrate();
@@ -348,13 +416,13 @@ export async function discardItem(id) {
  * genuinely back online and the very next attempt would likely succeed —
  * from the field employee's perspective this looks exactly like "I'm
  * online but my data just isn't syncing." Only clears the *timer*, not the
- * item's attempts/history, and never touches FAILED_PERMANENT items —
+ * item's attempts/history, and never touches FAILED items —
  * those still only leave that state via retryItem()/discardItem(). */
 async function resetPendingBackoff() {
   await hydrate();
   let changed = false;
   for (const item of queue) {
-    if (item.status === QUEUE_STATUS.FAILED_RETRYABLE && item.nextRetryAt > Date.now()) {
+    if (item.status === QUEUE_STATUS.RETRY_PENDING && item.nextRetryAt > Date.now()) {
       item.nextRetryAt = 0;
       changed = true;
     }

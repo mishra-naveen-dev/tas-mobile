@@ -17,7 +17,7 @@ import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { colors, typography, spacing } from '../../theme/tokens';
 import GeocodingService from '../../services/GeocodingService';
-import { enqueue, registerReplayer, isNetworkError } from '../../services/OfflineQueue';
+import { enqueue, registerReplayer, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
 
 // payload is already plain/JSON-safe (correction_date is a string, not a
 // Date) by the time it's built below, so it can be queued and replayed as-is.
@@ -318,6 +318,12 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
             const manual = claimedDistance ? parseFloat(claimedDistance) : 0;
 
             payload = {
+                // Generated once per submit attempt, captured here (not at
+                // replay time) so a delayed offline replay still reports the
+                // true original submission instant — mirrors PunchContext's
+                // client_transaction_id/event_at pattern.
+                client_transaction_id: generateTransactionId(),
+                event_at: new Date().toISOString(),
                 correction_type: formData.correction_type,
                 correction_date: formData.correction_date.toISOString().split('T')[0],
                 correction_time: timeStr,
