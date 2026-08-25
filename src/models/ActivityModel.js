@@ -25,7 +25,7 @@ export const createActivity = (data) => ({
     timestamp: data.timestamp || data.punched_at || new Date().toISOString(),
     location: data.location || data.current_address || null,
     amount: data.amount || data.total_amount || null,
-    clientName: data.client_name || data.clientName || null,
+    clientName: data.client_name || data.clientName || data.customer_name || null,
     notes: data.notes || data.reason || null,
     withPerson: data.with_person || data.withPerson || null,
     status: data.status || ACTIVITY_STATUS.SUCCESS,
