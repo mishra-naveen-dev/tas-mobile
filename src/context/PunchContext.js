@@ -21,6 +21,13 @@ registerReplayer('PUNCH_IN', async (payload) => {
   await api.post('/attendance/punches/', payload);
 });
 
+// Same endpoint, same idempotency guard (AttendancePunchViewSet.create()'s
+// client_transaction_id short-circuit) — a queued punch-out replayed after
+// the app already restarted still resolves to the one real punch-out event.
+registerReplayer('PUNCH_OUT', async (payload) => {
+  await api.post('/attendance/punches/', payload);
+});
+
 // Reverse geocoding must never be able to hang the punch flow — race it
 // against a timeout and fall back to null (caller uses raw coordinates).
 const reverseGeocodeWithTimeout = (lat, lng, timeoutMs = GEOCODE_TIMEOUT_MS) =>
@@ -379,6 +386,9 @@ export const PunchProvider = ({ children }) => {
     setErrorMessage(null);
     setSuccess(false);
 
+    // Declared outside the try block so the catch handler can still queue
+    // it for offline sync on a network failure — mirrors punchIn()'s pattern.
+    let payload;
     try {
       // Try to get a fresh GPS fix for punch out accuracy. Never fabricate
       // (0, 0) as a fallback — a real production bug this replaced: when
@@ -392,6 +402,10 @@ export const PunchProvider = ({ children }) => {
       // still real coordinates, never a fabricated default → a clear
       // client-side error instead of ever submitting nothing.
       let lat, lng, address, accuracy, gpsExtra;
+      // Generated once per tap, before any network attempt, and reused
+      // unchanged if this falls through to the offline queue below — same
+      // pattern as punchIn()'s client_transaction_id.
+      const clientTransactionId = generateTransactionId();
 
       const currentLocation = await captureFieldActivityLocation();
       if (!currentLocation.error) {
@@ -447,7 +461,8 @@ export const PunchProvider = ({ children }) => {
         return { success: false, error: errorMsg };
       }
 
-      const payload = {
+      payload = {
+        client_transaction_id: clientTransactionId,
         punch_type: 'PUNCH_OUT',
         latitude: lat,
         longitude: lng,
@@ -488,6 +503,21 @@ export const PunchProvider = ({ children }) => {
       return { success: true };
     } catch (err) {
       if (IS_DEV) console.error('[Punch] Punch out failed:', err?.response?.data || err.message);
+      if (isNetworkError(err) && payload) {
+        await enqueue('PUNCH_OUT', payload);
+        setIsActive(false);
+        setPunchState(STATES.IDLE);
+        setCapturedLocation(null);
+        trackingStartTime.current = null;
+        routePoints.current = [];
+        setErrorMessage(null);
+        return {
+          success: false,
+          queuedOffline: true,
+          error: "No internet connection. Your punch out has been saved on this device and will sync automatically once you're back online.",
+        };
+      }
+
       const parsed = parseApiError(err);
       const errorMsg = parsed.reference ? `${parsed.message}\n\nRef: ${parsed.reference}` : parsed.message;
       setPunchState(STATES.ERROR);
