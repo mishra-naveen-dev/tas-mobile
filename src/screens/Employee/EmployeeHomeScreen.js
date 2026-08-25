@@ -449,7 +449,11 @@ const EmployeeHomeScreen = ({ navigation }) => {
     // and the screen shows the last-known page instantly instead of blank
     // while useFocusEffect's refetch (below) is in flight.
     const summaryQuery = useApiQuery(['homeDailySummary'], () => api.get('/attendance/punches/daily_summary/'));
-    const todayPunchesApiQuery = useApiQuery(['homeTodayPunchesApi'], () => api.get('/attendance/punches/today_punches/'));
+    const todayPunchesApiQuery = useApiQuery(
+        ['homeTodayPunchesApi', todayStr],
+        () => api.get('/attendance/punches/today_punches/'),
+        { retry: 2 },
+    );
     // getCorrectionCounts() already returns the counts object directly, not
     // an axios response — wrap it so useApiQuery's res.data unwrap still works.
     const correctionQuery = useApiQuery(['homeCorrectionCounts'], () => api.getCorrectionCounts().then((counts) => ({ data: counts })));
@@ -458,7 +462,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
     const collectionUpdatesQuery = useApiQuery(
         ['homeCollectionUpdatesToday', user?.id, todayStr],
         () => api.getCollectionUpdates({ updated_by: user?.id, date_from: todayStr, date_to: todayStr }),
-        { enabled: !!user?.id },
+        { enabled: !!user?.id, retry: 2 },
     );
 
     // Live mirror of the offline outbox — this IS the "Pending Sync" section
@@ -504,6 +508,19 @@ const EmployeeHomeScreen = ({ navigation }) => {
 
     const isLoading = summaryQuery.isLoading || todayPunchesApiQuery.isLoading || correctionQuery.isLoading;
     const isRefreshing = summaryQuery.isFetching && !summaryQuery.isLoading;
+
+    // react-query keeps showing the last good cached result on a failed
+    // background refetch (retry exhausted) rather than clearing it — which
+    // is the right call for a field agent's flaky signal, but it means a
+    // punch/visit made after the last successful fetch can go missing from
+    // this list with nothing telling the employee it might be incomplete.
+    // Surface that instead of rendering a confidently-stale snapshot.
+    const activityMayBeStale = todayPunchesApiQuery.isError || collectionUpdatesQuery.isError;
+    const retryActivityFetch = useCallback(() => {
+        todayPunchesApiQuery.refetch();
+        collectionUpdatesQuery.refetch();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const summary = useMemo(() => summaryQuery.data || {}, [summaryQuery.data]);
     const correctionSummary = useMemo(() => correctionQuery.data || {}, [correctionQuery.data]);
@@ -955,6 +972,17 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         </Text>
                     </View>
 
+                    {activityMayBeStale && (
+                        <View style={styles.staleBanner}>
+                            <Text style={styles.staleBannerText}>
+                                Couldn't refresh — showing last known activity
+                            </Text>
+                            <TouchableOpacity onPress={retryActivityFetch} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                                <Text style={styles.staleBannerRetry}>Retry</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
                     <ActivityFilterBar
                         selectedFilter={selectedFilter}
                         onFilterChange={handleFilterChange}
@@ -1239,6 +1267,27 @@ const styles = StyleSheet.create({
     sectionCount: {
         fontSize: typography.sizes.xs,
         color: colors.textMuted,
+    },
+    staleBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: colors.warningLight,
+        borderRadius: 10,
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.md,
+        marginBottom: spacing.sm,
+    },
+    staleBannerText: {
+        flex: 1,
+        fontSize: typography.sizes.xs,
+        color: colors.textDark,
+        marginRight: spacing.sm,
+    },
+    staleBannerRetry: {
+        fontSize: typography.sizes.xs,
+        fontWeight: typography.weights.semibold,
+        color: colors.warning,
     },
     emptyState: {
         alignItems: 'center',
