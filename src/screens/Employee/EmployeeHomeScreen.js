@@ -484,9 +484,11 @@ const EmployeeHomeScreen = ({ navigation }) => {
         // screen focus, so the just-synced record shows up in Previous
         // Activity right away rather than sitting invisible in the gap.
         if (items.length < prevQueueLengthRef.current) {
+            summaryQuery.refetch();
             todayPunchesApiQuery.refetch();
             collectionUpdatesQuery.refetch();
             collectionStatsQuery.refetch();
+            visitSummaryQuery.refetch();
         }
         prevQueueLengthRef.current = items.length;
         setQueuedItems(items);
