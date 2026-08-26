@@ -696,6 +696,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 value: collectionStats
                     ? (collectionStats.today?.amount ?? 0)
                     : (summary?.total_collection ?? 0),
+                onPress: () => navigation.navigate('CollectionDone'),
             },
             {
                 id: 'total_visits', icon: 'map-pin', label: 'Total Visits',
