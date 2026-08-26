@@ -687,7 +687,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
 
         return [
             { id: 'distance', icon: 'navigation', value: distanceValue, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km' },
-            { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
+            { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight, onPress: () => navigation.navigate('PunchHistory') },
             {
                 id: 'collected', icon: 'dollar-sign', label: 'Collected',
                 iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹',

@@ -7,31 +7,39 @@ import {
     ActivityIndicator,
     Dimensions,
     ScrollView,
-    RefreshControl,
+    Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
-import { filterGpsOutliers, calcTotalDistanceKm } from '../../utils/gpsUtils';
+import { filterGpsOutliers } from '../../utils/gpsUtils';
 
 const { height } = Dimensions.get('window');
 
-const PUNCH_COLORS = {
-    PUNCH_IN: '#22C55E',
-    PUNCH_OUT: '#EF4444',
-    COLLECTION: '#3B82F6',
-    DISBURSEMENT: '#8B5CF6',
+// ─── Activity type config ─────────────────────────────────────────────────────
+const ACTIVITY_TYPES = {
+    PUNCH_IN:        { icon: 'log-in',       color: '#22C55E', label: 'Punch In',          bgColor: '#D1FAE5' },
+    PUNCH_OUT:       { icon: 'log-out',      color: '#EF4444', label: 'Punch Out',         bgColor: '#FEE2E2' },
+    COLLECTION_VISIT:{ icon: 'dollar-sign',  color: '#3B82F6', label: 'Collection Visit',  bgColor: '#DBEAFE' },
+    DISBURSEMENT:    { icon: 'trending-up',  color: '#8B5CF6', label: 'Disbursement',      bgColor: '#EDE9FE' },
 };
 
-const PUNCH_LABELS = {
-    PUNCH_IN: 'Punch In',
-    PUNCH_OUT: 'Punch Out',
-    COLLECTION: 'Collection',
-    DISBURSEMENT: 'Disbursement',
+const getStatusConfig = (status) => {
+    switch (status) {
+        case 'COLLECTED':          return { color: '#059669', bg: '#D1FAE5', label: 'Collected' };
+        case 'PARTIALLY_COLLECTED':return { color: '#D97706', bg: '#FEF3C7', label: 'Partial' };
+        case 'VISITED':            return { color: '#2563EB', bg: '#DBEAFE', label: 'Visited' };
+        case 'NOT_PAID':           return { color: '#DC2626', bg: '#FEE2E2', label: 'Not Paid' };
+        case 'PENDING':            return { color: '#6B7280', bg: '#F3F4F6', label: 'Pending' };
+        default:                   return { color: '#6B7280', bg: '#F3F4F6', label: status || '—' };
+    }
 };
 
+const ACTIVITY_CONFIG = (type) => ACTIVITY_TYPES[type] || { icon: 'map-pin', color: '#9CA3AF', label: type || 'Activity', bgColor: '#F3F4F6' };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 const toDateStr = (d) => {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -39,19 +47,199 @@ const toDateStr = (d) => {
     return `${y}-${m}-${day}`;
 };
 
-const punchColor = (type) => PUNCH_COLORS[type] ?? '#9CA3AF';
-const punchLabel = (type) => PUNCH_LABELS[type] ?? type;
+const formatTime = (ts) =>
+    ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
 
-const formatINR = (v) => `₹${Number(v).toLocaleString('en-IN')}`;
+const formatDateFull = (ts) =>
+    ts ? new Date(ts).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-const VISIT_TYPE_LABELS = {
-    COLLECTION: 'Collection',
-    DISBURSEMENT: 'Disbursement',
-    HOME_VISIT: 'Home Visit',
-    OD_VISIT: 'OD Visit',
+const formatDateTime = (ts) =>
+    ts ? `${formatDateFull(ts)} ${formatTime(ts)}` : '—';
+
+const formatCoord = (val) =>
+    val != null ? parseFloat(val).toFixed(6) : '—';
+
+const formatDistMeters = (val) => {
+    if (val == null) return '—';
+    const m = parseFloat(val);
+    if (isNaN(m)) return '—';
+    return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(2)} km`;
 };
-const visitTypeLabel = (t) => VISIT_TYPE_LABELS[t] ?? t;
 
+// ─── Activity Detail Modal ────────────────────────────────────────────────────
+const ActivityDetailModal = ({ visible, activity, onClose }) => {
+    if (!activity) return null;
+    const cfg = ACTIVITY_CONFIG(activity._activityType);
+    const isCollection = activity._activityType === 'COLLECTION_VISIT';
+    const statusCfg = isCollection ? getStatusConfig(activity.collectionStatus) : null;
+
+    const Field = ({ label, value, icon }) => {
+        if (value == null || value === '' || value === false) return null;
+        return (
+            <View style={dm.fieldRow}>
+                {icon ? <Icon name={icon} size={14} color={colors.textMuted} style={dm.fieldIcon} /> : null}
+                <Text style={dm.fieldLabel}>{label}</Text>
+                <Text style={dm.fieldValue}>{String(value)}</Text>
+            </View>
+        );
+    };
+
+    const Section = ({ title, children }) => (
+        <View style={dm.section}>
+            <Text style={dm.sectionTitle}>{title}</Text>
+            {children}
+        </View>
+    );
+
+    return (
+        <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+            <SafeAreaView style={dm.container}>
+                <View style={dm.header}>
+                    <View style={[dm.typeBadge, { backgroundColor: cfg.bgColor }]}>
+                        <Icon name={cfg.icon} size={16} color={cfg.color} />
+                        <Text style={[dm.typeText, { color: cfg.color }]}>{cfg.label}</Text>
+                    </View>
+                    <TouchableOpacity onPress={onClose} style={dm.closeBtn}>
+                        <Icon name="x" size={22} color={colors.textDark} />
+                    </TouchableOpacity>
+                </View>
+
+                <ScrollView style={dm.scroll} contentContainerStyle={dm.scrollContent} showsVerticalScrollIndicator={false}>
+                    {/* Status badge for collection visits */}
+                    {isCollection && statusCfg && (
+                        <View style={[dm.statusBadge, { backgroundColor: statusCfg.bg }]}>
+                            <Text style={[dm.statusText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
+                            {activity.collectedAmount ? (
+                                <Text style={[dm.amountText, { color: statusCfg.color }]}>
+                                    ₹{parseFloat(activity.collectedAmount).toLocaleString('en-IN')}
+                                </Text>
+                            ) : null}
+                        </View>
+                    )}
+
+                    {/* Activity info */}
+                    <Section title="Activity">
+                        <Field label="Type" value={cfg.label} icon="tag" />
+                        <Field label="Date & Time" value={formatDateTime(activity._timestamp)} icon="clock" />
+                        {activity.loanId ? <Field label="Loan ID" value={activity.loanId} icon="hash" /> : null}
+                        {activity.visitReason ? <Field label="Visit Reason" value={activity.visitReason} icon="compass" /> : null}
+                        {activity.activityReason ? <Field label="Activity Type" value={activity.activityReason} icon="layers" /> : null}
+                        {isCollection && activity.remarks ? <Field label="Remarks" value={activity.remarks} icon="message-square" /> : null}
+                        {isCollection && activity.promiseDate ? <Field label="Promise Date" value={activity.promiseDate} icon="calendar" /> : null}
+                    </Section>
+
+                    {/* Customer info */}
+                    {(activity.customerName || activity.customerPhone || activity.customerAddress) && (
+                        <Section title="Customer">
+                            <Field label="Name" value={activity.customerName} icon="user" />
+                            <Field label="Phone" value={activity.customerPhone} icon="phone" />
+                            <Field label="Address" value={activity.customerAddress} icon="map-pin" />
+                        </Section>
+                    )}
+
+                    {/* GPS / Location */}
+                    <Section title="Location">
+                        <Field
+                            label="Captured GPS"
+                            value={activity.latitude != null && activity.longitude != null
+                                ? `${formatCoord(activity.latitude)}, ${formatCoord(activity.longitude)}`
+                                : null}
+                            icon="crosshair"
+                        />
+                        {activity.currentAddress ? <Field label="Location" value={activity.currentAddress} icon="navigation" /> : null}
+                        {activity.customerLatitude != null && activity.customerLongitude != null && (
+                            <Field
+                                label="Customer GPS"
+                                value={`${formatCoord(activity.customerLatitude)}, ${formatCoord(activity.customerLongitude)}`}
+                                icon="user"
+                            />
+                        )}
+                        {activity.distanceFromCustomer != null && (
+                            <Field label="Distance from Customer" value={formatDistMeters(activity.distanceFromCustomer)} icon="ruler" />
+                        )}
+                    </Section>
+
+                    {/* GPS Capture detail */}
+                    {activity.gpsCaptureDetails && (
+                        <Section title="GPS Capture">
+                            <Field label="Accuracy" value={activity.gpsCaptureDetails.accuracy != null ? `${Math.round(activity.gpsCaptureDetails.accuracy)} m` : null} icon="crosshair" />
+                            <Field label="Altitude" value={activity.gpsCaptureDetails.altitude != null ? `${Math.round(activity.gpsCaptureDetails.altitude)} m` : null} icon="arrow-up" />
+                            <Field label="Speed" value={activity.gpsCaptureDetails.speed != null ? `${(activity.gpsCaptureDetails.speed * 3.6).toFixed(1)} km/h` : null} icon="activity" />
+                            <Field label="Provider" value={activity.gpsCaptureDetails.gps_provider || activity.gpsCaptureDetails.location_source} icon="radio" />
+                            <Field label="Mock Location" value={activity.gpsCaptureDetails.is_mock_location ? 'Yes' : null} icon="alert-triangle" />
+                            {activity.gpsStatus ? <Field label="GPS Status" value={activity.gpsStatus} icon="check-circle" /> : null}
+                        </Section>
+                    )}
+
+                    {/* Validation */}
+                    <Section title="Validation">
+                        {activity.geoStatus ? <Field label="Geo Status" value={activity.geoStatus} icon="shield" /> : null}
+                        {activity.isOutOfRange != null && activity.isOutOfRange ? (
+                            <Field label="Out of Range" value="Yes" icon="alert-circle" />
+                        ) : null}
+                        {activity.outOfRangeReason ? <Field label="Out of Range Reason" value={activity.outOfRangeReason} icon="alert-circle" /> : null}
+                        {activity.isDuplicateLocation != null && activity.isDuplicateLocation ? (
+                            <Field label="Duplicate Location" value="Yes" icon="copy" />
+                        ) : null}
+                        {activity.distanceFromBranch != null && (
+                            <Field label="Distance from Branch" value={formatDistMeters(activity.distanceFromBranch)} icon="building" />
+                        )}
+                    </Section>
+
+                    {/* Sync info */}
+                    <Section title="Sync">
+                        {activity.clientTransactionId ? <Field label="Transaction ID" value={activity.clientTransactionId} icon="key" /> : null}
+                        {activity.createdAt ? <Field label="Synced At" value={formatDateTime(activity.createdAt)} icon="upload-cloud" /> : null}
+                        {activity._timestamp && activity.createdAt ? (
+                            <Field
+                                label="Sync Delay"
+                                value={`${Math.round((new Date(activity.createdAt) - new Date(activity._timestamp)) / 1000)}s`}
+                                icon="clock"
+                            />
+                        ) : null}
+                    </Section>
+
+                    <View style={{ height: 40 }} />
+                </ScrollView>
+            </SafeAreaView>
+        </Modal>
+    );
+};
+
+const dm = StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    header: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+        backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border,
+    },
+    typeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+    typeText: { fontSize: typography.sizes.sm, fontWeight: typography.weights.bold },
+    closeBtn: { padding: spacing.xs },
+    scroll: { flex: 1 },
+    scrollContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
+    statusBadge: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, marginBottom: spacing.md,
+    },
+    statusText: { fontSize: typography.sizes.sm, fontWeight: typography.weights.bold },
+    amountText: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold },
+    section: { marginBottom: spacing.lg },
+    sectionTitle: {
+        fontSize: typography.sizes.xs, fontWeight: typography.weights.bold,
+        color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5,
+        marginBottom: spacing.xs,
+    },
+    fieldRow: {
+        flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 6,
+        borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+    },
+    fieldIcon: { width: 18, marginTop: 2, marginRight: 6 },
+    fieldLabel: { width: 120, fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 1 },
+    fieldValue: { flex: 1, fontSize: typography.sizes.xs, color: colors.textDark, fontWeight: typography.weights.medium },
+});
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
 const RouteMapScreen = ({ navigation, route }) => {
     const mapRef = useRef(null);
     const employeeId = route?.params?.employeeId ?? null;
@@ -59,17 +247,20 @@ const RouteMapScreen = ({ navigation, route }) => {
 
     const initialDate = route?.params?.date ? new Date(route.params.date) : new Date();
     const [activeDate, setActiveDate] = useState(initialDate);
-    const [allPunches,  setAllPunches]  = useState([]);
-    const [gpsRoute,    setGpsRoute]    = useState([]);   // actual 10-s GPS track
-    const [routeDist,   setRouteDist]   = useState(null); // km, outlier-filtered
-    const [loading,     setLoading]     = useState(true);
-    const [refreshing,  setRefreshing]  = useState(false);
-    const [error,       setError]       = useState(null);
+    const [allPunches, setAllPunches] = useState([]);
+    const [allCollectionUpdates, setAllCollectionUpdates] = useState([]);
+    const [gpsRoute, setGpsRoute] = useState([]);
+    const [dailySummary, setDailySummary] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [selectedActivity, setSelectedActivity] = useState(null);
+    const [detailVisible, setDetailVisible] = useState(false);
 
     const isTodayActive = toDateStr(activeDate) === toDateStr(new Date());
 
-    const fetchData = useCallback(async (isRefresh = false) => {
-        if (isRefresh) setRefreshing(true); else setLoading(true);
+    // ── Fetch all data sources in parallel ────────────────────────────────────
+    const fetchData = useCallback(async () => {
+        setLoading(true);
         setError(null);
         try {
             const dateStr = toDateStr(activeDate);
@@ -79,136 +270,242 @@ const RouteMapScreen = ({ navigation, route }) => {
             const liveParams = { date: dateStr };
             if (employeeId) liveParams.employee_id = employeeId;
 
-            const collectionParams = { date_from: dateStr, date_to: dateStr };
-            if (employeeId) collectionParams.updated_by = employeeId;
+            const collParams = { date_from: dateStr, date_to: dateStr };
+            if (employeeId) collParams.updated_by = employeeId;
 
-            // Run all requests in parallel
-            const [punchRes, liveRes, collectionRes] = await Promise.allSettled([
+            const summaryParams = { date: dateStr };
+
+            const [punchRes, liveRes, collRes, summaryRes] = await Promise.allSettled([
                 api.get('/attendance/punches/', { params: punchParams }),
                 api.getLiveDailyRoute(liveParams),
-                api.getCollectionUpdates(collectionParams),
+                api.getCollectionUpdates(collParams),
+                api.get('/attendance/punches/daily_summary/', { params: summaryParams }),
             ]);
 
-            // ── Punch records (markers) ───────────────────────────────────────
+            // Punch records
             if (punchRes.status === 'fulfilled') {
                 const raw = Array.isArray(punchRes.value.data)
                     ? punchRes.value.data
                     : Array.isArray(punchRes.value.data?.results)
                     ? punchRes.value.data.results
                     : [];
-
-                // Field activity (e.g. a collection outcome update) doesn't
-                // always happen inside an explicit punch-tracked GPS session
-                // — shape each update to look like a punch (this screen's own
-                // punch_type-based coloring/labeling, see PUNCH_COLORS above,
-                // already has a COLLECTION entry) so it's never silently
-                // dropped from the route/list just because no punch exists.
-                const rawCollections = collectionRes.status === 'fulfilled'
-                    ? (collectionRes.value.data?.results || collectionRes.value.data || [])
-                    : [];
-                const collectionActivities = rawCollections.map(c => ({
-                    id: `coll-${c.id}`,
-                    punch_type: 'COLLECTION',
-                    punched_at: c.created_at,
-                    current_address: c.location_address,
-                    latitude: c.latitude,
-                    longitude: c.longitude,
-                    amount: c.collected_amount,
-                    customer_name: c.customer_name,
-                    customer_phone: c.customer_phone,
-                    reason: c.remarks,
-                    visit_type: c.visit_reason,
-                    status_display: c.status_display,
-                    distance_from_customer: c.distance_from_customer,
-                    distance_from_branch: c.distance_from_branch,
-                    geo_status: c.geo_status,
-                }));
-
                 setAllPunches(
-                    [...raw, ...collectionActivities].sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
+                    [...raw].sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
                 );
             }
 
-            // ── Actual GPS track (polyline) ───────────────────────────────────
+            // GPS track
             if (liveRes.status === 'fulfilled') {
                 const rawPoints = liveRes.value.data?.route || [];
-                // Speed-based outlier filter (>120 km/h → drop the point)
                 const clean = filterGpsOutliers(rawPoints);
                 setGpsRoute(clean);
-                setRouteDist(calcTotalDistanceKm(clean));
+            }
+
+            // Collection updates
+            if (collRes.status === 'fulfilled') {
+                const raw = Array.isArray(collRes.value.data)
+                    ? collRes.value.data
+                    : Array.isArray(collRes.value.data?.results)
+                    ? collRes.value.data.results
+                    : [];
+                setAllCollectionUpdates(raw);
+            }
+
+            // Daily summary (authoritative distance)
+            if (summaryRes.status === 'fulfilled') {
+                setDailySummary(summaryRes.value.data);
             }
         } catch {
             setError('Failed to load route data. Pull down to retry.');
         } finally {
             setLoading(false);
-            setRefreshing(false);
         }
     }, [activeDate, employeeId]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
-    const onRefresh = useCallback(() => fetchData(true), [fetchData]);
+    // ── Merge punches + collection updates into unified activity list ──────────
+    const mergedActivities = useMemo(() => {
+        // Build map: punchId → CollectionUpdate (for linked records)
+        const punchToColl = {};
+        for (const cu of allCollectionUpdates) {
+            if (cu.punch != null) {
+                punchToColl[cu.punch] = cu;
+            }
+        }
 
-    // Punch markers — only those with valid GPS
-    const mappablePunches = allPunches.filter(
-        (p) =>
-            p.latitude != null &&
-            p.longitude != null &&
-            parseFloat(p.latitude) !== 0 &&
-            parseFloat(p.longitude) !== 0
+        const activities = [];
+
+        // Process each punch
+        for (const punch of allPunches) {
+            const collUpdate = punchToColl[punch.id];
+
+            if (collUpdate) {
+                // Linked: complete_visit created both — merge into one activity
+                activities.push({
+                    _id: `punch-${punch.id}`,
+                    _activityType: 'COLLECTION_VISIT',
+                    _source: 'punch+collection',
+                    _timestamp: punch.punched_at,
+                    _sortKey: new Date(punch.punched_at).getTime(),
+                    // Punch data (GPS, timing)
+                    id: punch.id,
+                    latitude: punch.latitude,
+                    longitude: punch.longitude,
+                    currentAddress: punch.current_address,
+                    gpsCaptureDetails: punch.gps_capture_details,
+                    gpsStatus: punch.gps_status,
+                    accuracy: punch.accuracy,
+                    // Customer data
+                    customerName: collUpdate.customer_name || punch.customer_name,
+                    customerPhone: collUpdate.customer_phone || punch.customer_phone,
+                    customerAddress: collUpdate.customer_address || punch.customer_address,
+                    customerLatitude: collUpdate.customer_latitude,
+                    customerLongitude: collUpdate.customer_longitude,
+                    // Collection data
+                    loanId: collUpdate.loan_id || punch.loan_id,
+                    collectionStatus: collUpdate.status,
+                    collectedAmount: collUpdate.collected_amount,
+                    remarks: collUpdate.remarks,
+                    promiseDate: collUpdate.promise_date,
+                    visitReason: collUpdate.visit_reason || punch.visit_reason,
+                    activityReason: collUpdate.activity_reason,
+                    // Geo validation (from collection update — more complete)
+                    distanceFromCustomer: collUpdate.distance_from_customer,
+                    distanceFromBranch: collUpdate.distance_from_branch,
+                    geoStatus: collUpdate.geo_status,
+                    isOutOfRange: punch.is_out_of_range,
+                    outOfRangeReason: punch.out_of_range_reason,
+                    isDuplicateLocation: punch.is_duplicate_location,
+                    // Sync
+                    clientTransactionId: punch.client_transaction_id || collUpdate.client_transaction_id,
+                    createdAt: collUpdate.created_at || punch.created_at,
+                });
+            } else {
+                // Standalone punch — no linked collection update
+                const punchType = punch.punch_type || 'PUNCH_IN';
+                activities.push({
+                    _id: `punch-${punch.id}`,
+                    _activityType: punch.visit_type === 'DISBURSEMENT' ? 'DISBURSEMENT' : punchType,
+                    _source: 'punch',
+                    _timestamp: punch.punched_at,
+                    _sortKey: new Date(punch.punched_at).getTime(),
+                    id: punch.id,
+                    latitude: punch.latitude,
+                    longitude: punch.longitude,
+                    currentAddress: punch.current_address,
+                    gpsCaptureDetails: punch.gps_capture_details,
+                    gpsStatus: punch.gps_status,
+                    accuracy: punch.accuracy,
+                    customerName: punch.customer_name,
+                    customerPhone: punch.customer_phone,
+                    customerAddress: punch.customer_address,
+                    customerLatitude: null,
+                    customerLongitude: null,
+                    loanId: punch.loan_id,
+                    collectionStatus: null,
+                    collectedAmount: punch.amount,
+                    remarks: punch.notes,
+                    promiseDate: null,
+                    visitReason: punch.visit_reason,
+                    activityReason: null,
+                    distanceFromCustomer: punch.distance_from_customer,
+                    distanceFromBranch: punch.distance_from_branch,
+                    geoStatus: punch.geo_status,
+                    isOutOfRange: punch.is_out_of_range,
+                    outOfRangeReason: punch.out_of_range_reason,
+                    isDuplicateLocation: punch.is_duplicate_location,
+                    clientTransactionId: punch.client_transaction_id,
+                    createdAt: punch.created_at,
+                });
+            }
+        }
+
+        // Standalone collection updates (no linked punch)
+        for (const cu of allCollectionUpdates) {
+            if (cu.punch != null) continue; // already merged above
+            activities.push({
+                _id: `coll-${cu.id}`,
+                _activityType: 'COLLECTION_VISIT',
+                _source: 'collection',
+                _timestamp: cu.event_at || cu.created_at,
+                _sortKey: new Date(cu.event_at || cu.created_at).getTime(),
+                id: cu.id,
+                latitude: cu.latitude,
+                longitude: cu.longitude,
+                currentAddress: cu.location_address,
+                gpsCaptureDetails: null,
+                gpsStatus: cu.gps_status,
+                accuracy: null,
+                customerName: cu.customer_name,
+                customerPhone: cu.customer_phone,
+                customerAddress: cu.customer_address,
+                customerLatitude: cu.customer_latitude,
+                customerLongitude: cu.customer_longitude,
+                loanId: cu.loan_id,
+                collectionStatus: cu.status,
+                collectedAmount: cu.collected_amount,
+                remarks: cu.remarks,
+                promiseDate: cu.promise_date,
+                visitReason: cu.visit_reason,
+                activityReason: cu.activity_reason,
+                distanceFromCustomer: cu.distance_from_customer,
+                distanceFromBranch: cu.distance_from_branch,
+                geoStatus: cu.geo_status,
+                isOutOfRange: null,
+                outOfRangeReason: null,
+                isDuplicateLocation: null,
+                clientTransactionId: cu.client_transaction_id,
+                createdAt: cu.created_at,
+            });
+        }
+
+        // Sort chronologically by event timestamp
+        activities.sort((a, b) => a._sortKey - b._sortKey);
+        return activities;
+    }, [allPunches, allCollectionUpdates]);
+
+    // ── Mappable activities (valid GPS) ───────────────────────────────────────
+    const mappableActivities = useMemo(() =>
+        mergedActivities.filter(
+            (a) =>
+                a.latitude != null &&
+                a.longitude != null &&
+                parseFloat(a.latitude) !== 0 &&
+                parseFloat(a.longitude) !== 0
+        ),
+        [mergedActivities]
     );
 
-    // The true GPS track converted to react-native-maps coordinate format
+    // ── GPS polyline coordinates ──────────────────────────────────────────────
     const gpsCoordinates = useMemo(() =>
         gpsRoute.map((p) => ({ latitude: Number(p.lat ?? p.latitude), longitude: Number(p.lon ?? p.lng ?? p.longitude) })),
         [gpsRoute]
     );
 
-    // Fallback: if live track unavailable, connect punch markers
-    const punchCoordinates = mappablePunches.map((p) => ({
-        latitude: parseFloat(p.latitude),
-        longitude: parseFloat(p.longitude),
+    // ── Authoritative distance (from daily_summary, same source as Home) ──────
+    const totalDistance = useMemo(() => {
+        if (dailySummary?.total_distance_today != null) {
+            return parseFloat(dailySummary.total_distance_today);
+        }
+        return null;
+    }, [dailySummary]);
+
+    // ── Stats from merged activities ──────────────────────────────────────────
+    const stats = useMemo(() => {
+        const total = mergedActivities.length;
+        const visits = mergedActivities.filter((a) => a._activityType === 'COLLECTION_VISIT').length;
+        const punchIns = mergedActivities.filter((a) => a._activityType === 'PUNCH_IN').length;
+        const punchOuts = mergedActivities.filter((a) => a._activityType === 'PUNCH_OUT').length;
+        return { total, visits, punchIns, punchOuts };
+    }, [mergedActivities]);
+
+    // ── Coordinates for map fitting ───────────────────────────────────────────
+    const punchCoordinates = mappableActivities.map((a) => ({
+        latitude: parseFloat(a.latitude),
+        longitude: parseFloat(a.longitude),
     }));
-
-    // Coordinates used to fit the map view
     const allCoordinates = gpsCoordinates.length > 0 ? gpsCoordinates : punchCoordinates;
-
-    // Several punches often share (near-)identical GPS — e.g. a few quick
-    // back-to-back check-ins without moving — which would otherwise stack
-    // exactly on top of each other with only the last one visible. Spread
-    // same-spot markers into a small ring purely for on-map visibility; the
-    // callout still shows each punch's real captured address/time, and every
-    // other calculation (distance, polyline, fit-bounds) keeps using the
-    // true, un-offset coordinates above.
-    const markerPositions = useMemo(() => {
-        const groups = new Map();
-        punchCoordinates.forEach((c, idx) => {
-            const key = `${c.latitude.toFixed(5)},${c.longitude.toFixed(5)}`;
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(idx);
-        });
-
-        const positions = new Array(punchCoordinates.length);
-        groups.forEach((indices) => {
-            const n = indices.length;
-            if (n === 1) {
-                positions[indices[0]] = punchCoordinates[indices[0]];
-                return;
-            }
-            const { latitude: baseLat, longitude: baseLng } = punchCoordinates[indices[0]];
-            const radiusMeters = 10 + Math.min(n, 8) * 2;
-            const latOffset = radiusMeters / 111320;
-            const lngOffset = radiusMeters / (111320 * Math.cos(baseLat * Math.PI / 180) || 1);
-            indices.forEach((idx, i) => {
-                const angle = (2 * Math.PI * i) / n;
-                positions[idx] = {
-                    latitude: baseLat + latOffset * Math.sin(angle),
-                    longitude: baseLng + lngOffset * Math.cos(angle),
-                };
-            });
-        });
-        return positions;
-    }, [punchCoordinates]);
 
     const getMapRegion = () => {
         if (allCoordinates.length === 0) {
@@ -242,13 +539,10 @@ const RouteMapScreen = ({ navigation, route }) => {
     const formatDate = (d) =>
         d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
-    const formatTime = (ts) =>
-        ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-
-    // Latest known location: prefer last GPS track point, fall back to last punch
-    const latestGpsPt  = gpsCoordinates.length > 0 ? gpsCoordinates[gpsCoordinates.length - 1] : null;
-    const latestMappable = mappablePunches.length > 0
-        ? mappablePunches[mappablePunches.length - 1]
+    // Latest known location
+    const latestGpsPt = gpsCoordinates.length > 0 ? gpsCoordinates[gpsCoordinates.length - 1] : null;
+    const latestMappable = mappableActivities.length > 0
+        ? mappableActivities[mappableActivities.length - 1]
         : null;
 
     const goToLatest = () => {
@@ -262,6 +556,11 @@ const RouteMapScreen = ({ navigation, route }) => {
         );
     };
 
+    const openDetail = (activity) => {
+        setSelectedActivity(activity);
+        setDetailVisible(true);
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             {/* Header */}
@@ -272,7 +571,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                 <Text style={styles.headerTitle}>
                     {employeeName ? employeeName : 'Route Map'}
                 </Text>
-                <TouchableOpacity onPress={() => fetchData()} style={styles.refreshBtn}>
+                <TouchableOpacity onPress={fetchData} style={styles.refreshBtn}>
                     <Icon name="refresh-cw" size={20} color={loading ? colors.border : colors.primary} />
                 </TouchableOpacity>
             </View>
@@ -321,7 +620,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                         }
                     }}
                 >
-                    {/* Actual GPS track — drawn from live tracking points (10 s intervals) */}
+                    {/* GPS track polyline */}
                     {gpsCoordinates.length > 1 && (
                         <Polyline
                             coordinates={gpsCoordinates}
@@ -331,7 +630,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                         />
                     )}
 
-                    {/* Fallback: connect punch markers when GPS track unavailable */}
+                    {/* Fallback: connect activity markers when GPS track unavailable */}
                     {gpsCoordinates.length < 2 && punchCoordinates.length > 1 && (
                         <Polyline
                             coordinates={punchCoordinates}
@@ -341,56 +640,42 @@ const RouteMapScreen = ({ navigation, route }) => {
                         />
                     )}
 
-                    {/* Numbered punch markers */}
-                    {mappablePunches.map((punch, idx) => (
-                        <Marker
-                            key={String(punch.id)}
-                            coordinate={markerPositions[idx] || {
-                                latitude: parseFloat(punch.latitude),
-                                longitude: parseFloat(punch.longitude),
-                            }}
-                        >
-                            <View style={[styles.pin, { borderColor: punchColor(punch.punch_type) }]}>
-                                <View
-                                    style={[
-                                        styles.pinCore,
-                                        { backgroundColor: punchColor(punch.punch_type) },
-                                    ]}
-                                >
-                                    <Text style={styles.pinText}>{idx + 1}</Text>
+                    {/* Activity markers */}
+                    {mappableActivities.map((activity, idx) => {
+                        const cfg = ACTIVITY_CONFIG(activity._activityType);
+                        return (
+                            <Marker
+                                key={activity._id}
+                                coordinate={{
+                                    latitude: parseFloat(activity.latitude),
+                                    longitude: parseFloat(activity.longitude),
+                                }}
+                            >
+                                <View style={[styles.pin, { borderColor: cfg.color }]}>
+                                    <View style={[styles.pinCore, { backgroundColor: cfg.color }]}>
+                                        <Text style={styles.pinText}>{idx + 1}</Text>
+                                    </View>
                                 </View>
-                            </View>
-                            <Callout tooltip>
-                                <View style={styles.callout}>
-                                    <Text style={[styles.calloutType, { color: punchColor(punch.punch_type) }]}>
-                                        {punchLabel(punch.punch_type)}
-                                    </Text>
-                                    <Text style={styles.calloutTime}>{formatTime(punch.punched_at)}</Text>
-                                    {punch.visit_type ? (
-                                        <Text style={styles.calloutDetail}>{visitTypeLabel(punch.visit_type)}</Text>
-                                    ) : null}
-                                    {punch.customer_name ? (
-                                        <Text style={styles.calloutDetail}>{punch.customer_name}</Text>
-                                    ) : null}
-                                    {punch.amount != null ? (
-                                        <Text style={styles.calloutDetail}>
-                                            {formatINR(punch.amount)}{punch.payment_method ? ` · ${punch.payment_method}` : ''}
+                                <Callout tooltip onPress={() => openDetail(activity)}>
+                                    <View style={styles.callout}>
+                                        <Text style={[styles.calloutType, { color: cfg.color }]}>
+                                            {cfg.label}
                                         </Text>
-                                    ) : null}
-                                    {punch.current_address ? (
-                                        <Text style={styles.calloutAddr} numberOfLines={2}>
-                                            {punch.current_address}
-                                        </Text>
-                                    ) : null}
-                                    {(punch.is_out_of_range || punch.is_duplicate_location) ? (
-                                        <Text style={styles.calloutWarning}>
-                                            {punch.is_out_of_range ? 'Out of range' : 'Duplicate location'}
-                                        </Text>
-                                    ) : null}
-                                </View>
-                            </Callout>
-                        </Marker>
-                    ))}
+                                        <Text style={styles.calloutTime}>{formatTime(activity._timestamp)}</Text>
+                                        {activity.customerName ? (
+                                            <Text style={styles.calloutDetail}>{activity.customerName}</Text>
+                                        ) : null}
+                                        {activity.currentAddress ? (
+                                            <Text style={styles.calloutAddr} numberOfLines={2}>
+                                                {activity.currentAddress}
+                                            </Text>
+                                        ) : null}
+                                        <Text style={styles.calloutTap}>Tap for details</Text>
+                                    </View>
+                                </Callout>
+                            </Marker>
+                        );
+                    })}
                 </MapView>
 
                 {loading && (
@@ -414,7 +699,6 @@ const RouteMapScreen = ({ navigation, route }) => {
                     </TouchableOpacity>
                 )}
 
-                {/* Go-to-latest button — like Google Maps location button */}
                 {(latestGpsPt || latestMappable) && !loading && (
                     <TouchableOpacity
                         style={styles.latestBtn}
@@ -429,36 +713,39 @@ const RouteMapScreen = ({ navigation, route }) => {
                 )}
             </View>
 
-            {/* Summary + Punch List */}
+            {/* Stats + Activity List */}
             <ScrollView
                 style={styles.list}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
-                refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
-                }
             >
                 {/* Stats row */}
                 <View style={styles.statsRow}>
                     <View style={styles.statItem}>
-                        <Text style={styles.statVal}>{allPunches.length}</Text>
-                        <Text style={styles.statLbl}>Total</Text>
+                        <Text style={styles.statVal}>{stats.total}</Text>
+                        <Text style={styles.statLbl}>Activities</Text>
                     </View>
                     <View style={[styles.statItem, styles.statDivider]}>
-                        <Text style={[styles.statVal, { color: PUNCH_COLORS.PUNCH_IN }]}>
-                            {allPunches.filter((p) => p.punch_type === 'PUNCH_IN').length}
+                        <Text style={[styles.statVal, { color: ACTIVITY_TYPES.COLLECTION_VISIT.color }]}>
+                            {stats.visits}
+                        </Text>
+                        <Text style={styles.statLbl}>Visits</Text>
+                    </View>
+                    <View style={[styles.statItem, styles.statDivider]}>
+                        <Text style={[styles.statVal, { color: ACTIVITY_TYPES.PUNCH_IN.color }]}>
+                            {stats.punchIns}
                         </Text>
                         <Text style={styles.statLbl}>Punch In</Text>
                     </View>
                     <View style={[styles.statItem, styles.statDivider]}>
-                        <Text style={[styles.statVal, { color: PUNCH_COLORS.PUNCH_OUT }]}>
-                            {allPunches.filter((p) => p.punch_type === 'PUNCH_OUT').length}
+                        <Text style={[styles.statVal, { color: ACTIVITY_TYPES.PUNCH_OUT.color }]}>
+                            {stats.punchOuts}
                         </Text>
                         <Text style={styles.statLbl}>Punch Out</Text>
                     </View>
                     <View style={[styles.statItem, styles.statDivider]}>
                         <Text style={[styles.statVal, { color: '#7b1fa2', fontSize: 14 }]}>
-                            {routeDist != null ? `${routeDist}` : '—'}
+                            {totalDistance != null ? `${totalDistance}` : '—'}
                         </Text>
                         <Text style={styles.statLbl}>km</Text>
                     </View>
@@ -469,96 +756,108 @@ const RouteMapScreen = ({ navigation, route }) => {
                         <Icon name="alert-circle" size={15} color={colors.danger} />
                         <Text style={styles.errorText}>{error}</Text>
                     </View>
-                ) : !loading && allPunches.length === 0 ? (
+                ) : !loading && mergedActivities.length === 0 ? (
                     <View style={styles.emptyBox}>
                         <Icon name="map-pin" size={36} color={colors.border} />
-                        <Text style={styles.emptyText}>No punches recorded on this date</Text>
+                        <Text style={styles.emptyText}>No activities recorded on this date</Text>
                     </View>
                 ) : (
-                    allPunches.map((punch, idx) => (
-                        <View key={String(punch.id)} style={styles.punchRow}>
-                            {/* Number badge with colour coding */}
-                            <View
-                                style={[
-                                    styles.punchBadge,
-                                    { backgroundColor: punchColor(punch.punch_type) },
-                                ]}
-                            >
-                                <Text style={styles.punchBadgeText}>{idx + 1}</Text>
-                            </View>
+                    mergedActivities.map((activity, idx) => {
+                        const cfg = ACTIVITY_CONFIG(activity._activityType);
+                        const isCollection = activity._activityType === 'COLLECTION_VISIT';
+                        const statusCfg = isCollection ? getStatusConfig(activity.collectionStatus) : null;
+                        const hasGps = activity.latitude != null && activity.longitude != null &&
+                            parseFloat(activity.latitude) !== 0 && parseFloat(activity.longitude) !== 0;
 
-                            {/* Punch details */}
-                            <View style={styles.punchInfo}>
-                                <View style={styles.punchTopRow}>
-                                    <Text
-                                        style={[
-                                            styles.punchType,
-                                            { color: punchColor(punch.punch_type) },
-                                        ]}
-                                    >
-                                        {punchLabel(punch.punch_type)}
-                                    </Text>
-                                    <Text style={styles.punchTime}>
-                                        {formatTime(punch.punched_at)}
-                                    </Text>
+                        return (
+                            <TouchableOpacity
+                                key={activity._id}
+                                style={styles.activityRow}
+                                onPress={() => openDetail(activity)}
+                                activeOpacity={0.7}
+                            >
+                                {/* Number badge */}
+                                <View style={[styles.activityBadge, { backgroundColor: cfg.color }]}>
+                                    <Text style={styles.activityBadgeText}>{idx + 1}</Text>
                                 </View>
-                                {(punch.visit_type || punch.reason) ? (
-                                    <Text style={styles.punchMeta}>
-                                        {[punch.visit_type ? visitTypeLabel(punch.visit_type) : null, punch.reason]
-                                            .filter(Boolean).join(' · ')}
-                                    </Text>
-                                ) : null}
-                                {punch.customer_name ? (
-                                    <Text style={styles.punchCustomer}>
-                                        {punch.customer_name}{punch.customer_phone ? ` · ${punch.customer_phone}` : ''}
-                                    </Text>
-                                ) : null}
-                                {punch.amount != null ? (
-                                    <Text style={styles.punchAmount}>
-                                        {formatINR(punch.amount)}{punch.payment_method ? ` · ${punch.payment_method}` : ''}
-                                    </Text>
-                                ) : null}
-                                {punch.current_address ? (
-                                    <Text style={styles.punchAddr} numberOfLines={1}>
-                                        {punch.current_address}
-                                    </Text>
-                                ) : null}
-                                {(punch.accuracy != null || punch.distance_from_customer != null) ? (
-                                    <Text style={styles.punchMeta}>
-                                        {[
-                                            punch.accuracy != null ? `±${Math.round(punch.accuracy)}m GPS` : null,
-                                            punch.distance_from_customer != null ? `${Math.round(punch.distance_from_customer)}m from customer` : null,
-                                        ].filter(Boolean).join(' · ')}
-                                    </Text>
-                                ) : null}
-                                {(punch.travel_type === 'WITH_EMPLOYEE' && punch.companion_name) ? (
-                                    <Text style={styles.punchMeta}>With {punch.companion_name}</Text>
-                                ) : null}
-                                {(punch.is_out_of_range || punch.is_duplicate_location) ? (
-                                    <View style={styles.warningBadge}>
-                                        <Icon name="alert-triangle" size={11} color={colors.danger} />
-                                        <Text style={styles.warningBadgeText}>
-                                            {punch.is_out_of_range
-                                                ? (punch.out_of_range_reason || 'Out of range')
-                                                : (punch.duplicate_location_reason || 'Duplicate location')}
+
+                                {/* Activity details */}
+                                <View style={styles.activityInfo}>
+                                    <View style={styles.activityTopRow}>
+                                        <View style={[styles.typeTag, { backgroundColor: cfg.bgColor }]}>
+                                            <Icon name={cfg.icon} size={12} color={cfg.color} />
+                                            <Text style={[styles.typeTagText, { color: cfg.color }]}>
+                                                {cfg.label}
+                                            </Text>
+                                        </View>
+                                        <Text style={styles.activityTime}>
+                                            {formatTime(activity._timestamp)}
                                         </Text>
                                     </View>
-                                ) : null}
-                                {(!punch.latitude || !punch.longitude ||
-                                    parseFloat(punch.latitude) === 0) ? (
-                                    <Text style={styles.noGps}>No GPS recorded</Text>
-                                ) : null}
-                            </View>
 
-                            {/* Connector line between rows */}
-                            {idx < allPunches.length - 1 && (
-                                <View style={styles.connector} />
-                            )}
-                        </View>
-                    ))
+                                    {/* Status + amount for collection visits */}
+                                    {isCollection && statusCfg && (
+                                        <View style={styles.activityStatusRow}>
+                                            <View style={[styles.statusTag, { backgroundColor: statusCfg.bg }]}>
+                                                <Text style={[styles.statusTagText, { color: statusCfg.color }]}>
+                                                    {statusCfg.label}
+                                                </Text>
+                                            </View>
+                                            {activity.collectedAmount ? (
+                                                <Text style={[styles.amountText, { color: statusCfg.color }]}>
+                                                    ₹{parseFloat(activity.collectedAmount).toLocaleString('en-IN')}
+                                                </Text>
+                                            ) : null}
+                                        </View>
+                                    )}
+
+                                    {activity.customerName ? (
+                                        <Text style={styles.activityCustomer}>{activity.customerName}</Text>
+                                    ) : null}
+                                    {activity.currentAddress ? (
+                                        <Text style={styles.activityAddr} numberOfLines={1}>
+                                            {activity.currentAddress}
+                                        </Text>
+                                    ) : null}
+
+                                    {/* Footer badges */}
+                                    <View style={styles.activityFooter}>
+                                        {hasGps ? (
+                                            <View style={styles.gpsBadge}>
+                                                <Icon name="crosshair" size={10} color={colors.success} />
+                                                <Text style={styles.gpsBadgeText}>GPS</Text>
+                                            </View>
+                                        ) : (
+                                            <View style={[styles.gpsBadge, { backgroundColor: '#FEF3C7' }]}>
+                                                <Icon name="alert-triangle" size={10} color={colors.warning} />
+                                                <Text style={[styles.gpsBadgeText, { color: colors.warning }]}>No GPS</Text>
+                                            </View>
+                                        )}
+                                        {activity.loanId ? (
+                                            <View style={styles.loanBadge}>
+                                                <Text style={styles.loanBadgeText}>{activity.loanId}</Text>
+                                            </View>
+                                        ) : null}
+                                    </View>
+                                </View>
+
+                                {/* Connector */}
+                                {idx < mergedActivities.length - 1 && (
+                                    <View style={styles.connector} />
+                                )}
+                            </TouchableOpacity>
+                        );
+                    })
                 )}
                 <View style={{ height: 40 }} />
             </ScrollView>
+
+            {/* Activity Detail Modal */}
+            <ActivityDetailModal
+                visible={detailVisible}
+                activity={selectedActivity}
+                onClose={() => { setDetailVisible(false); setSelectedActivity(null); }}
+            />
         </SafeAreaView>
     );
 };
@@ -597,12 +896,8 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: colors.border,
     },
-    navArrow: {
-        padding: spacing.sm,
-    },
-    disabledArrow: {
-        opacity: 0.3,
-    },
+    navArrow: { padding: spacing.sm },
+    disabledArrow: { opacity: 0.3 },
     datePill: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -624,9 +919,7 @@ const styles = StyleSheet.create({
         width: '100%',
         backgroundColor: '#e8e8e8',
     },
-    map: {
-        flex: 1,
-    },
+    map: { flex: 1 },
     mapLoadOverlay: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'rgba(255,255,255,0.5)',
@@ -634,266 +927,106 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     fitBtn: {
-        position: 'absolute',
-        top: spacing.md,
-        right: spacing.md,
-        backgroundColor: '#fff',
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        alignItems: 'center',
-        justifyContent: 'center',
-        elevation: 4,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 4,
+        position: 'absolute', top: spacing.md, right: spacing.md,
+        backgroundColor: '#fff', width: 40, height: 40, borderRadius: 20,
+        alignItems: 'center', justifyContent: 'center',
+        elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15, shadowRadius: 4,
     },
     latestBtn: {
-        position: 'absolute',
-        bottom: spacing.md,
-        right: spacing.md,
-        alignItems: 'center',
+        position: 'absolute', bottom: spacing.md, right: spacing.md, alignItems: 'center',
     },
     latestBtnInner: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: colors.primary,
-        alignItems: 'center',
-        justifyContent: 'center',
-        elevation: 6,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6,
+        width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary,
+        alignItems: 'center', justifyContent: 'center',
+        elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.25, shadowRadius: 6,
     },
-    latestBtnLabel: {
-        fontSize: 10,
-        color: colors.primary,
-        fontWeight: '600',
-        marginTop: 3,
-    },
+    latestBtnLabel: { fontSize: 10, color: colors.primary, fontWeight: '600', marginTop: 3 },
 
     // Custom map pin
     pin: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        borderWidth: 2,
-        backgroundColor: '#fff',
-        alignItems: 'center',
-        justifyContent: 'center',
+        width: 32, height: 32, borderRadius: 16, borderWidth: 2,
+        backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
     },
-    pinCore: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    pinText: {
-        color: '#fff',
-        fontSize: 11,
-        fontWeight: '700',
-    },
+    pinCore: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    pinText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
-    // Callout tooltip
+    // Callout
     callout: {
-        backgroundColor: '#fff',
-        borderRadius: 10,
-        padding: 10,
-        minWidth: 140,
-        maxWidth: 220,
-        elevation: 4,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 4,
+        backgroundColor: '#fff', borderRadius: 10, padding: 10, minWidth: 140, maxWidth: 220,
+        elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15, shadowRadius: 4,
     },
-    calloutType: {
-        fontSize: 13,
-        fontWeight: '700',
-        marginBottom: 2,
-    },
-    calloutTime: {
-        fontSize: 12,
-        color: colors.textMuted,
-        marginBottom: 2,
-    },
-    calloutDetail: {
-        fontSize: 11,
-        color: colors.textDark,
-        marginBottom: 2,
-    },
-    calloutAddr: {
-        fontSize: 11,
-        color: colors.textMuted,
-    },
-    calloutWarning: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: colors.danger,
-        marginTop: 2,
-    },
+    calloutType: { fontSize: 13, fontWeight: '700', marginBottom: 2 },
+    calloutTime: { fontSize: 12, color: colors.textMuted, marginBottom: 2 },
+    calloutDetail: { fontSize: 11, color: colors.textDark, marginBottom: 2 },
+    calloutAddr: { fontSize: 11, color: colors.textMuted },
+    calloutTap: { fontSize: 10, color: colors.primary, marginTop: 4, fontStyle: 'italic' },
 
-    // Punch list
-    list: {
-        flex: 1,
-    },
-    listContent: {
-        paddingHorizontal: spacing.md,
-        paddingTop: spacing.md,
-    },
+    // Activity list
+    list: { flex: 1 },
+    listContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
 
     // Stats row
     statsRow: {
-        flexDirection: 'row',
-        backgroundColor: colors.surface,
-        borderRadius: 14,
-        marginBottom: spacing.md,
-        overflow: 'hidden',
-        elevation: 1,
+        flexDirection: 'row', backgroundColor: colors.surface, borderRadius: 14,
+        marginBottom: spacing.md, overflow: 'hidden', elevation: 1,
     },
-    statItem: {
-        flex: 1,
-        alignItems: 'center',
-        paddingVertical: spacing.md,
-    },
-    statDivider: {
-        borderLeftWidth: 1,
-        borderLeftColor: colors.border,
-    },
-    statVal: {
-        fontSize: typography.sizes.lg,
-        fontWeight: typography.weights.bold,
-        color: colors.textDark,
-    },
-    statLbl: {
-        fontSize: typography.sizes.xs,
-        color: colors.textMuted,
-        marginTop: 2,
-    },
+    statItem: { flex: 1, alignItems: 'center', paddingVertical: spacing.md },
+    statDivider: { borderLeftWidth: 1, borderLeftColor: colors.border },
+    statVal: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
+    statLbl: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
 
     // Error / empty
     errorRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fff0f0',
-        borderRadius: 10,
-        padding: spacing.md,
-        gap: 8,
+        flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff0f0',
+        borderRadius: 10, padding: spacing.md, gap: 8,
     },
-    errorText: {
-        fontSize: typography.sizes.sm,
-        color: colors.danger,
-        flex: 1,
-    },
-    emptyBox: {
-        alignItems: 'center',
-        paddingVertical: spacing.xxl,
-        gap: spacing.sm,
-    },
-    emptyText: {
-        fontSize: typography.sizes.md,
-        color: colors.textMuted,
-    },
+    errorText: { fontSize: typography.sizes.sm, color: colors.danger, flex: 1 },
+    emptyBox: { alignItems: 'center', paddingVertical: spacing.xxl, gap: spacing.sm },
+    emptyText: { fontSize: typography.sizes.md, color: colors.textMuted },
 
-    // Punch row
-    punchRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        backgroundColor: colors.surface,
-        borderRadius: 12,
-        padding: spacing.md,
-        marginBottom: spacing.xs,
-        elevation: 1,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.04,
-        shadowRadius: 2,
+    // Activity row
+    activityRow: {
+        flexDirection: 'row', alignItems: 'flex-start', backgroundColor: colors.surface,
+        borderRadius: 12, padding: spacing.md, marginBottom: spacing.xs, elevation: 1,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2,
     },
-    punchBadge: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: spacing.md,
-        marginTop: 1,
+    activityBadge: {
+        width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center',
+        marginRight: spacing.md, marginTop: 1,
     },
-    punchBadgeText: {
-        color: '#fff',
-        fontSize: 13,
-        fontWeight: '700',
+    activityBadgeText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+    activityInfo: { flex: 1 },
+    activityTopRow: {
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4,
     },
-    punchInfo: {
-        flex: 1,
+    typeTag: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
     },
-    punchTopRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 2,
+    typeTagText: { fontSize: 11, fontWeight: typography.weights.bold },
+    activityTime: { fontSize: typography.sizes.sm, color: colors.textMuted },
+    activityStatusRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4,
     },
-    punchType: {
-        fontSize: typography.sizes.sm,
-        fontWeight: typography.weights.semibold,
+    statusTag: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
+    statusTagText: { fontSize: 11, fontWeight: typography.weights.semibold },
+    amountText: { fontSize: typography.sizes.sm, fontWeight: typography.weights.bold },
+    activityCustomer: { fontSize: typography.sizes.sm, color: colors.textDark, marginTop: 2 },
+    activityAddr: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
+    activityFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' },
+    gpsBadge: {
+        flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: colors.successLight, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
     },
-    punchTime: {
-        fontSize: typography.sizes.sm,
-        color: colors.textMuted,
-    },
-    punchCustomer: {
-        fontSize: typography.sizes.sm,
-        color: colors.textDark,
-        marginTop: 2,
-    },
-    punchAmount: {
-        fontSize: typography.sizes.sm,
-        fontWeight: typography.weights.semibold,
-        color: colors.success,
-        marginTop: 2,
-    },
-    punchMeta: {
-        fontSize: typography.sizes.xs,
-        color: colors.textMuted,
-        marginTop: 2,
-    },
-    punchAddr: {
-        fontSize: typography.sizes.xs,
-        color: colors.textMuted,
-        marginTop: 2,
-    },
-    warningBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        marginTop: 4,
-        alignSelf: 'flex-start',
-        backgroundColor: colors.dangerLight,
-        borderRadius: 8,
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-    },
-    warningBadgeText: {
-        fontSize: typography.sizes.xs,
-        fontWeight: '700',
-        color: colors.danger,
-    },
-    noGps: {
-        fontSize: typography.sizes.xs,
-        color: colors.border,
-        marginTop: 2,
-        fontStyle: 'italic',
-    },
+    gpsBadgeText: { fontSize: 10, color: colors.success, fontWeight: '600' },
+    loanBadge: { backgroundColor: '#F0FDF4', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
+    loanBadgeText: { fontSize: 10, color: colors.success, fontWeight: '600' },
     connector: {
-        position: 'absolute',
-        left: spacing.md + 15,
-        bottom: -spacing.xs,
-        width: 1,
-        height: spacing.xs,
-        backgroundColor: colors.border,
+        position: 'absolute', left: spacing.md + 15, bottom: -spacing.xs,
+        width: 1, height: spacing.xs, backgroundColor: colors.border,
     },
 });
 

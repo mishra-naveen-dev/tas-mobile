@@ -116,13 +116,18 @@ export const PunchProvider = ({ children }) => {
           // restore-after-restart) is missing until the next punch event.
           // apps.livetracking's LiveSession.total_distance is the real,
           // continuously-updated distance for the session in progress, so
-          // prefer it when available and only fall back to the punch
-          // snapshot if there's no active live session to read from yet.
+          // ADD it to the punch-chain snapshot rather than replacing it —
+          // total_distance_day already covers everything up through this
+          // punch-in (including any earlier, already-closed sessions today),
+          // and the live session covers movement since punch-in, so summing
+          // reconstructs the full day instead of discarding earlier sessions.
           LocationService.setBaseDistance(lastPunch.total_distance_day);
           try {
             const liveRes = await api.getActiveLiveSession();
             if (liveRes.data?.active && liveRes.data.session?.total_distance != null) {
-              LocationService.setBaseDistance(liveRes.data.session.total_distance);
+              LocationService.setBaseDistance(
+                Number(lastPunch.total_distance_day || 0) + Number(liveRes.data.session.total_distance || 0)
+              );
             }
           } catch (e) {
             if (IS_DEV) console.warn('[Punch] getActiveLiveSession restore error:', e.message);
