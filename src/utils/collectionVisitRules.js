@@ -96,6 +96,7 @@ export const isAudioRequiredFor = (form) => (
   || form.status === 'PARTIALLY_COLLECTED'
   || form.status === 'PENDING'
   || form.visit_reason === 'HOME_VISIT'
+  || form.visit_reason === 'OD_VISIT'
 );
 
 // The PTP/expected-payment-date range for P2P, Not Paid, and Partial
@@ -289,6 +290,9 @@ export const validateVisitType = (form, { audioNote } = {}) => {
     if (form.follow_up_required === null) return 'Please specify whether a follow-up is required.';
     if (form.follow_up_required === true && !form.promise_date) return 'Please select the next follow-up date.';
     if (isAudioRequiredFor(form) && !audioNote) return 'Please record a voice note for this Home Visit.';
+  }
+  if (form.visit_reason === 'OD_VISIT') {
+    if (isAudioRequiredFor(form) && !audioNote) return 'Please record a voice note for this OD Visit.';
   }
   return null;
 };

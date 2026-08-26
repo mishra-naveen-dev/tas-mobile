@@ -192,7 +192,8 @@ const CollectionWidget = ({ stats, onPress }) => {
         return `₹${Number(n).toLocaleString('en-IN')}`;
     };
 
-    const done       = (stats.today?.collected || 0) + (stats.today?.partial || 0);
+    const done       = stats.mtd?.collected || 0;
+    const partial    = stats.mtd?.partial || 0;
     const todayAmt   = stats.today?.amount || 0;
     const mtdAmt     = stats.mtd?.amount || 0;
     const total      = stats.total_assigned || 0;
@@ -209,11 +210,11 @@ const CollectionWidget = ({ stats, onPress }) => {
                     </View>
                     <View>
                         <Text style={cwStyles.title}>My Collections</Text>
-                        <Text style={cwStyles.sub}>Today's activity</Text>
+                        <Text style={cwStyles.sub}>Month to date</Text>
                     </View>
                 </View>
                 <View style={cwStyles.todayBadge}>
-                    <Text style={cwStyles.todayBadgeText}>{done} done today</Text>
+                    <Text style={cwStyles.todayBadgeText}>{done} done</Text>
                 </View>
             </View>
 
@@ -223,6 +224,7 @@ const CollectionWidget = ({ stats, onPress }) => {
                     { label: 'Assigned', value: total,   color: '#1d4ed8', bg: '#dbeafe' },
                     { label: 'Pending',  value: pending, color: '#d97706', bg: '#fef3c7' },
                     { label: 'Done',     value: done,    color: '#16a34a', bg: '#dcfce7' },
+                    { label: 'Partial',  value: partial, color: '#ea580c', bg: '#fff7ed' },
                     { label: 'Not Paid', value: notPaid, color: '#dc2626', bg: '#fee2e2' },
                 ].map(p => (
                     <View key={p.label} style={[cwStyles.pill, { backgroundColor: p.bg }]}>
@@ -383,10 +385,17 @@ const MapPreview = React.memo(({ points, mapRef }) => {
     );
 });
 
-const StatCard = React.memo(({ icon, value, label, iconColor, bgColor, prefix = '', suffix = '', onPress }) => {
+const StatCard = React.memo(({ icon, value, label, iconColor, bgColor, prefix = '', suffix = '', onPress, badge }) => {
     const Container = onPress ? TouchableOpacity : View;
     return (
         <Container style={styles.statCard} onPress={onPress} activeOpacity={onPress ? 0.7 : 1}>
+            {badge != null && (
+                <View style={styles.statBadgeRow}>
+                    <View style={styles.statBadge}>
+                        <Text style={styles.statBadgeText}>{badge}</Text>
+                    </View>
+                </View>
+            )}
             <View style={[styles.statIconContainer, { backgroundColor: bgColor }]}>
                 <Icon name={icon} size={20} color={iconColor} />
             </View>
@@ -477,6 +486,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
         if (items.length < prevQueueLengthRef.current) {
             todayPunchesApiQuery.refetch();
             collectionUpdatesQuery.refetch();
+            collectionStatsQuery.refetch();
         }
         prevQueueLengthRef.current = items.length;
         setQueuedItems(items);
@@ -686,8 +696,8 @@ const EmployeeHomeScreen = ({ navigation }) => {
             : parseFloat((summary?.total_distance_today || 0).toFixed(2));
 
         return [
-            { id: 'distance', icon: 'navigation', value: distanceValue, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km' },
-            { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
+            { id: 'distance', icon: 'navigation', value: distanceValue, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km', onPress: () => navigation.navigate('RouteMap') },
+            { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight, onPress: () => navigation.navigate('PunchHistory') },
             {
                 id: 'collected', icon: 'dollar-sign', label: 'Collected',
                 iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹',
@@ -696,6 +706,10 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 value: collectionStats
                     ? (collectionStats.today?.amount ?? 0)
                     : (summary?.total_collection ?? 0),
+                badge: collectionStats
+                    ? `${(collectionStats.today?.collected || 0) + (collectionStats.today?.partial || 0)} Cases Today`
+                    : null,
+                onPress: () => navigation.navigate('CollectionDone'),
             },
             {
                 id: 'total_visits', icon: 'map-pin', label: 'Total Visits',
@@ -1192,6 +1206,22 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 1 },
         shadowOpacity: 0.05,
         shadowRadius: 4,
+    },
+    statBadgeRow: {
+        width: '100%',
+        alignItems: 'flex-end',
+        marginBottom: 2,
+    },
+    statBadge: {
+        backgroundColor: '#dcfce7',
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+        borderRadius: 8,
+    },
+    statBadgeText: {
+        fontSize: 9,
+        fontWeight: '700',
+        color: '#16a34a',
     },
     statIconContainer: {
         width: 40,
