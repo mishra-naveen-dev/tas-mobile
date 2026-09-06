@@ -958,8 +958,8 @@ const CollectionsScreen = ({ route }) => {
                                 ['Spouse / Nominee', item.spouse_nominee_name],
                                 ['Disb. Date', item.disbursement_date ? fmtDate(item.disbursement_date) : null],
                                 ['Disb. Amount', item.disbursement_amount != null ? fmtAmount(item.disbursement_amount) : null],
-                                ['Outstanding Amount', item.total_arrear != null ? fmtAmount(item.total_arrear) : null],
-                                ['Out. Amount', item.outstanding_amount != null ? fmtAmount(item.outstanding_amount) : null],
+                                ['Total Arrear', item.total_arrear != null ? fmtAmount(item.total_arrear) : null],
+                                ['Outstanding Amount', item.outstanding_amount != null ? fmtAmount(item.outstanding_amount) : null],
                             ].filter(([, v]) => !!v).map(([label, value]) => (
                                 <View key={label} style={styles.extraFactCell}>
                                     <Text style={styles.extraFactLabel}>{label}</Text>
@@ -1521,7 +1521,8 @@ const CollectionsScreen = ({ route }) => {
                                 <View style={styles.loanDetailsBox}>
                                     {[
                                         ['Product Type', modal.record.product_type],
-                                        ['Outstanding Principal', modal.record.principal_arrear != null ? `₹${Number(modal.record.principal_arrear).toLocaleString('en-IN')}` : null],
+                                        ['Outstanding Principal', modal.record.outstanding_amount != null ? `₹${Number(modal.record.outstanding_amount).toLocaleString('en-IN')}` : null],
+                                        ['Principal Arrear', modal.record.principal_arrear != null ? `₹${Number(modal.record.principal_arrear).toLocaleString('en-IN')}` : null],
                                         ['Interest Arrear', modal.record.interest_arrear != null ? `₹${Number(modal.record.interest_arrear).toLocaleString('en-IN')}` : null],
                                         ['Total Arrear', modal.record.total_arrear != null ? `₹${Number(modal.record.total_arrear).toLocaleString('en-IN')}` : null],
                                         ['Disbursement Date', modal.record.disbursement_date ? new Date(modal.record.disbursement_date).toLocaleDateString('en-IN') : null],

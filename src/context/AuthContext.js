@@ -42,6 +42,11 @@ const normalizeUser = (userData) => {
         near_me_enabled: userData.near_me_enabled !== undefined
             ? userData.near_me_enabled
             : (String(userData.role || userData.role_name || '').toUpperCase() === 'EMPLOYEE'),
+        // Server-enforced feature codes (list of strings). Super Admin /
+        // ADMIN get everything; employees get only what their role /
+        // designation / user toggles grant. Used by hasFeature() to gate
+        // navigation items. Falls back to [] so older cached logins work.
+        access: Array.isArray(userData.access) ? userData.access : [],
     };
 };
 
@@ -89,6 +94,17 @@ export const AuthProvider = ({ children }) => {
     const isAdminOrAbove = useCallback(() => {
         return isAdmin() || isSuperAdmin();
     }, [isAdmin, isSuperAdmin]);
+
+    // Server-enforced feature gating. Returns true when the user's access
+    // list includes the given feature code (e.g. 'COLLECTION', 'LOCATION').
+    // The access list is resolved server-side at login and on /me refresh.
+    // A code NOT in the user's access list means the backend would deny
+    // the request anyway, so hiding the menu item is just a UX courtesy.
+    const featureAccessList = useMemo(() => user?.access || [], [user]);
+
+    const hasFeature = useCallback((code) => {
+        return featureAccessList.includes(code);
+    }, [featureAccessList]);
 
     const initializeAuth = useCallback(async () => {
         const startTime = Date.now();
@@ -281,6 +297,8 @@ export const AuthProvider = ({ children }) => {
         isManager: isManager(),
         isEmployee: isEmployee(),
         isAdminOrAbove: isAdminOrAbove(),
+        access: featureAccessList,
+        hasFeature,
         login,
         logout,
         updateUser,
@@ -298,6 +316,8 @@ export const AuthProvider = ({ children }) => {
         isManager,
         isEmployee,
         isAdminOrAbove,
+        featureAccessList,
+        hasFeature,
         login,
         logout,
         updateUser,
@@ -331,6 +351,8 @@ export const useAuth = () => {
             isManager: false,
             isEmployee: false,
             isAdminOrAbove: false,
+            access: [],
+            hasFeature: () => false,
             login: () => Promise.resolve({ success: false, error: 'Auth not initialized' }),
             logout: () => Promise.resolve(),
             updateUser: () => {},
