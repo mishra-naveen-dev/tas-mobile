@@ -98,6 +98,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # v3's default is "tools platform-tools"; Google removed the legacy
+          # `tools` package from the SDK repo (Sep 2026), so sdkmanager exits 1.
+          packages: platform-tools
 
 
       # --------------------------------------------------------
