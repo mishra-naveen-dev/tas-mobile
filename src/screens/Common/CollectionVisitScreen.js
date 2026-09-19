@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Alert, TextInput, ActivityIndicator, Image, Platform,
@@ -66,6 +66,47 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-dig
 // distinct, identifiable timestamp.
 const fmtConfirmTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
+// Merges the two per-loan audit sources — CustomerAssignment (who the case
+// moved to/from, when, why, by whom) and CollectionUpdate (field collection
+// outcomes) — into one newest-first timeline for the Activity & History card.
+const buildTimeline = (history, updates) => {
+  const items = [];
+  (history || []).forEach((h) => {
+    const emp = h.assigned_employee_details;
+    const name = emp
+      ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.username || `#${h.assigned_employee}`
+      : (h.assigned_employee ? `#${h.assigned_employee}` : 'unassigned');
+    const isRemoved = h.status === 'REMOVED';
+    items.push({
+      id: `h-${h.id}`,
+      ts: (h.assigned_date || h.created_at || h.removed_date)
+        ? new Date(h.assigned_date || h.created_at || h.removed_date).getTime() : 0,
+      icon: isRemoved ? 'user-x' : 'user-check',
+      iconColor: isRemoved ? colors.textMuted : colors.success,
+      title: isRemoved ? `Removed from ${name}` : `Assigned to ${name}`,
+      detail: h.reason ? `Reason: ${h.reason}` : '',
+      time: fmtDateTime(h.assigned_date || h.created_at || h.removed_date),
+    });
+  });
+  (updates || []).forEach((u) => {
+    const status = u.status_display || u.status;
+    const amount = u.collected_amount != null ? ` · ₹${Number(u.collected_amount).toLocaleString('en-IN')}` : '';
+    items.push({
+      id: `u-${u.id}${u.created_at || ''}`,
+      ts: (u.event_at || u.created_at) ? new Date(u.event_at || u.created_at).getTime() : 0,
+      icon: u.status === 'COLLECTED' ? 'check-circle'
+        : u.status === 'NOT_PAID' ? 'alert-circle' : 'edit-3',
+      iconColor: u.status === 'COLLECTED' ? colors.success
+        : u.status === 'PARTIALLY_COLLECTED' ? colors.warning
+        : u.status === 'NOT_PAID' ? colors.danger : colors.textMuted,
+      title: `${status || 'Updated'}${amount}`,
+      detail: u.remarks || '',
+      time: fmtDateTime(u.event_at || u.created_at),
+    });
+  });
+  return items.sort((a, b) => b.ts - a.ts || a.id.localeCompare(b.id)).slice(0, 20);
+};
+
 const COLLECTION_STATUS_VALUES = ['PENDING', 'COLLECTED', 'PARTIALLY_COLLECTED', 'NOT_PAID'];
 
 const CollectionVisitScreen = ({ navigation, route }) => {
@@ -80,6 +121,32 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   // because the device is offline.
   const [record, setRecord] = useState(initialRecord || null);
   const [loadingRecord, setLoadingRecord] = useState(!initialRecord);
+
+  // Per-loan Activity & History — field collection updates (CollectionUpdate
+  // ledger) merged with the CustomerAssignment audit trail, newest first.
+  const [history, setHistory] = useState([]);
+  const [activity, setActivity] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+
+  useEffect(() => {
+    if (!collectionId) return;
+    let cancelled = false;
+    setActivityLoading(true);
+    Promise.all([
+      api.getCollectionUpdates({ collection: collectionId, ordering: '-created_at', page_size: 20 }),
+      api.getAssignmentHistory(collectionId),
+    ])
+      .then(([updatesRes, historyRes]) => {
+        if (cancelled) return;
+        setActivity(updatesRes?.data?.results || updatesRes?.data || []);
+        setHistory(historyRes?.data || []);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setActivityLoading(false); });
+    return () => { cancelled = true; };
+  }, [collectionId]);
+
+  const activityTimeline = useMemo(() => buildTimeline(history, activity), [history, activity]);
 
   const [localLocation, setLocalLocation] = useState(null);
   const [fetchingLocation, setFetchingLocation] = useState(true);
@@ -700,6 +767,30 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           )}
         </View>
 
+        {/* Activity & History — assignment trail + field collection outcomes */}
+        <View style={styles.activityCard}>
+          <View style={styles.activityHeader}>
+            <Icon name="clock" size={15} color={colors.primary} />
+            <Text style={styles.activityTitle}>Activity & History</Text>
+            {activityLoading && <ActivityIndicator size="small" color={colors.primary} />}
+          </View>
+          {!activityLoading && activityTimeline.length === 0 && (
+            <Text style={styles.activityEmpty}>No activity recorded for this case yet.</Text>
+          )}
+          {!activityLoading && activityTimeline.map((item) => (
+            <View key={item.id} style={styles.activityRow}>
+              <View style={[styles.activityIcon, { backgroundColor: `${item.iconColor}1A` }]}>
+                <Icon name={item.icon} size={13} color={item.iconColor} />
+              </View>
+              <View style={styles.activityMain}>
+                <Text style={styles.activityLine}>{item.title}</Text>
+                {!!item.detail && <Text style={styles.activityMeta}>{item.detail}</Text>}
+                <Text style={styles.activityTime}>{item.time}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
         {/* GPS status */}
         <View style={[
           styles.gpsBadge,
@@ -1025,6 +1116,16 @@ const styles = StyleSheet.create({
   },
   moneyTileLabel: { fontSize: 10, color: colors.textMuted },
   moneyTileValue: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.text, marginTop: 1 },
+  activityCard: { backgroundColor: colors.surface, borderRadius: 12, padding: spacing.md, marginBottom: spacing.sm, elevation: 2 },
+  activityHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
+  activityTitle: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.text, flex: 1 },
+  activityEmpty: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: spacing.xs },
+  activityRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  activityIcon: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  activityMain: { flex: 1 },
+  activityLine: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.text },
+  activityMeta: { fontSize: typography.sizes.xs, color: colors.text, marginTop: 1 },
+  activityTime: { fontSize: 10, color: colors.textMuted, marginTop: 1 },
   gpsBadge: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm, paddingVertical: spacing.xs, paddingHorizontal: spacing.md, borderRadius: 8 },
   gpsFetching: { backgroundColor: colors.primaryLight },
   gpsMock: { backgroundColor: colors.warningLight },

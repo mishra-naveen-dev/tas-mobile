@@ -748,6 +748,12 @@ api.getMonthlyTarget = (month) =>
 api.getCollectionUpdates = (params = {}) =>
     api.get('/loans/collection-updates/', { params });
 
+// Full assignment audit trail for one loan/case (CustomerAssignment ledger),
+// newest first — who this case moved to/from, when, why and by whom. Feeds
+// the per-loan Activity/History timeline on the collection visit screen.
+api.getAssignmentHistory = (collectionId) =>
+    api.get(`/loans/collections/${collectionId}/assignment_history/`);
+
 // Total Visits aggregation (VISIT/COLLECTION P2P+NOT_PAID/OTHER counts) for
 // the Home Screen card and Visit Activity Summary screen — see
 // CollectionUpdateViewSet.visit_summary(). Role-scoped server-side (an
