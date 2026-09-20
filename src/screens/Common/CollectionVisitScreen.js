@@ -747,10 +747,11 @@ const CollectionVisitScreen = ({ navigation, route }) => {
               {/* Loan-level money figures — each an independent value from the
                   upload (never derived from another, see backend), so kept
                   as its own labelled tile rather than folded into one number. */}
-              {(record?.outstanding_amount != null || record?.total_arrear != null || record?.disbursement_amount != null) && (
+              {(record?.outstanding_amount != null || record?.principal_arrear != null || record?.total_arrear != null || record?.disbursement_amount != null) && (
                 <View style={styles.moneyGrid}>
                   {[
-                    ['Outstanding Amount', record?.outstanding_amount],
+                    ['Outstanding Principal', record?.outstanding_amount],
+                    ['Principal Arrear', record?.principal_arrear],
                     ['Total Arrear', record?.total_arrear],
                     ['Disbursement Amount', record?.disbursement_amount],
                   ].filter(([, v]) => v != null).map(([label, value]) => (
