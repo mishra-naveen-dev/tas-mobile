@@ -640,7 +640,7 @@ const CustomerMapScreen = ({ navigation }) => {
                                 )}
                                 <View style={styles.detailRow}>
                                     <Icon name="dollar-sign" size={14} color={colors.textMuted} />
-                                    <Text style={styles.detailRowText}>Outstanding: ₹{Number(detail.amount_due || 0).toLocaleString('en-IN')}</Text>
+                                    <Text style={styles.detailRowText}>EMI due: ₹{Number(detail.amount_due || 0).toLocaleString('en-IN')}</Text>
                                 </View>
                                 {detail.dpd_days != null && (
                                     <View style={styles.detailRow}>

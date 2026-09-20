@@ -951,7 +951,7 @@ const CollectionsScreen = ({ route }) => {
                         balances together. Blank until a sheet actually
                         supplies these columns, so most cards show nothing here. */}
                     {(item.father_name || item.spouse_nominee_name || item.disbursement_date
-                        || item.disbursement_amount != null || item.total_arrear != null || item.outstanding_amount != null) && (
+                        || item.disbursement_amount != null || item.total_arrear != null || item.outstanding_amount != null || item.principal_arrear != null) && (
                         <View style={styles.extraFactsBox}>
                             {[
                                 ['Father', item.father_name],
@@ -959,7 +959,8 @@ const CollectionsScreen = ({ route }) => {
                                 ['Disb. Date', item.disbursement_date ? fmtDate(item.disbursement_date) : null],
                                 ['Disb. Amount', item.disbursement_amount != null ? fmtAmount(item.disbursement_amount) : null],
                                 ['Total Arrear', item.total_arrear != null ? fmtAmount(item.total_arrear) : null],
-                                ['Outstanding Amount', item.outstanding_amount != null ? fmtAmount(item.outstanding_amount) : null],
+                                ['Outstanding Principal', item.outstanding_amount != null ? fmtAmount(item.outstanding_amount) : null],
+                                ['Principal Arrear', item.principal_arrear != null ? fmtAmount(item.principal_arrear) : null],
                             ].filter(([, v]) => !!v).map(([label, value]) => (
                                 <View key={label} style={styles.extraFactCell}>
                                     <Text style={styles.extraFactLabel}>{label}</Text>
