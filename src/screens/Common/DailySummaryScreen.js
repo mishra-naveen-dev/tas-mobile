@@ -9,7 +9,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
-import { filterGpsOutliers, calcTotalDistanceKm } from '../../utils/gpsUtils';
+import { buildAcceptedRoute } from '../../utils/gpsUtils';
 import { SkeletonStatsGrid, SkeletonListItem } from '../../components/SkeletonComponents';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -209,12 +209,22 @@ const DailySummaryScreen = ({ navigation }) => {
             }
 
             // ── GPS route & distance ───────────────────────────────────────────
-            if (liveRes.status === 'fulfilled' && liveRes.value?.data?.route?.length > 0) {
-                const clean = filterGpsOutliers(liveRes.value.data.route);
+            // Distance between ACCEPTED route points only (stationary noise
+            // excluded) — same centralized buildAcceptedRoute rule the Route
+            // Map draws. Prefers the backend's accepted_distance_km when the
+            // response carries it.
+            if (liveRes.status === 'fulfilled' && (liveRes.value?.data?.route?.length > 0 || liveRes.value?.data?.accepted_route)) {
+                const data = liveRes.value.data;
+                const distance = data.accepted_distance_km != null
+                    ? Number(data.accepted_distance_km)
+                    : buildAcceptedRoute(data.route || []).acceptedDistanceKm;
+                const count = Array.isArray(data.accepted_route)
+                    ? data.accepted_route.length
+                    : buildAcceptedRoute(data.route || []).accepted.length;
                 setLiveRoute({
-                    distance: calcTotalDistanceKm(clean),
-                    points:   clean.length,
-                    sessions: liveRes.value.data.total_sessions ?? 0,
+                    distance,
+                    points:   count,
+                    sessions: data.total_sessions ?? 0,
                 });
             } else {
                 setLiveRoute(null);

@@ -31,6 +31,7 @@ import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities, activityFromQueueItem } from '../../models/ActivityModel';
 import { SkeletonStatsGrid, SkeletonListItem } from '../../components/SkeletonComponents';
 import { subscribe as subscribeOfflineQueue, retryItem as retryOfflineQueueItem } from '../../services/OfflineQueue';
+import { trackingPhase, formatRemaining } from '../../utils/gpsUtils';
 
 const ZOHO_CHART_URL = 'https://analytics.zoho.in/open-view/334082000154073362';
 
@@ -803,15 +804,31 @@ const EmployeeHomeScreen = ({ navigation }) => {
 
     const duration = getTrackingDuration();
 
+    // Display-only lifecycle phase from the persisted server session marks
+    // (ACTIVE → GRACE → EXPIRED). Recomputed every render; renders already
+    // tick every few seconds while tracking, so the remaining-time label
+    // stays fresh without any independent timer that could drift.
+    const phaseInfo = useMemo(
+        () => trackingPhase(punchCtx.trackingMarks, Date.now()),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [punchCtx.trackingMarks, duration],
+    );
+
     const trackingStatus = useMemo(() => {
         if (isActive || isTracking) {
+            if (phaseInfo.phase === 'GRACE') {
+                return { color: colors.warning, text: 'Grace Period', dot: true };
+            }
+            if (phaseInfo.phase === 'EXPIRED') {
+                return { color: colors.textMuted, text: 'Closing…', dot: false };
+            }
             return { color: colors.success, text: 'Tracking Active', dot: true };
         }
         if (success) {
             return { color: colors.info, text: 'Punch Success', dot: false };
         }
         return { color: colors.textMuted, text: 'Ready', dot: false };
-    }, [isActive, isTracking, success]);
+    }, [isActive, isTracking, success, phaseInfo]);
 
     const punchStartTime = currentPunch?.punched_at || null;
 
@@ -855,6 +872,11 @@ const EmployeeHomeScreen = ({ navigation }) => {
                             <Text style={[styles.trackingText, { color: trackingStatus.color }]}>
                                 {trackingStatus.text}
                             </Text>
+                            {phaseInfo.phase === 'GRACE' && phaseInfo.remainingCloseSec != null && (
+                                <Text style={styles.punchInTime}>
+                                    Auto-close in {formatRemaining(phaseInfo.remainingCloseSec)}
+                                </Text>
+                            )}
                             {punchStartTime && (
                                 <Text style={styles.punchInTime}>
                                     Since {formatTime(punchStartTime)}

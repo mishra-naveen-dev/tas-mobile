@@ -25,32 +25,19 @@ const CONFIG = {
   // reject (STALE_AGE_H in apps.livetracking.services.GPSValidator), with
   // margin for however long the device stays offline after capturing it.
   maxCacheAgeMs: 6 * 60 * 60 * 1000, // 6h
-  // A cached fix at least this fresh AND at least this accurate is trusted
-  // immediately, skipping live sampling altogether — the common case for
-  // consecutive field visits at the same physical spot (e.g. a JLG group
-  // meeting), where redoing a full ~16s live GPS acquisition for every
-  // single customer visited is both pointless (the device hasn't moved
-  // yet) and the direct cause of employees hitting "waiting for GPS"/
-  // timeout errors on back-to-back visits.
-  //
-  // Was 30s, which in practice almost never fired: a real visit (status,
-  // payment mode, photos, audio, remarks, plus the GPS wait itself) takes
-  // well over 30s to fill in, so by the time the NEXT visit's screen opens
-  // and checks the cache, the previous fix has almost always already aged
-  // out — meaning every single visit in a multi-stop sequence, not just
-  // the first, was doing a full live re-acquisition, and reports of
-  // "waiting for GPS" specifically piling up by the 4th/5th visit in one
-  // spot are the direct symptom. Widened to a few minutes — long enough to
-  // actually cover a typical visit's fill-in time (the case this exists
-  // for), still short enough that it can't plausibly paper over a real
-  // walk to a genuinely different nearby address and blur two customers'
-  // geofence evidence together (a few minutes of walking covers a much
-  // smaller radius than the accuracy/geofence tolerances already in play
-  // elsewhere in this app). maxAgeMs is unrelated to (and much stricter
-  // than) maxCacheAgeMs above, which exists for a different purpose
-  // entirely (last-resort fallback once live acquisition has genuinely
-  // failed).
-  freshCacheFastPath: { maxAgeMs: 3 * 60 * 1000, maxAccuracyM: 25 },
+  // Fresh-GPS-first policy for field activities (Collection Visit, Punch).
+  // A LIVE reading is only "current" when it was just sampled (age within
+  // currentGpsMaxAgeMs) — a cached fix is NEVER returned as current, only
+  // as a last-resort CACHED fallback after all live attempts fail. Same
+  // coordinates as the previous activity are valid (no movement required);
+  // each capture still gets its own fresh timestamp. maxAcceptableAccuracyM
+  // (100m) only decides whether to keep retrying for a better fix — a live
+  // reading is always preferred over a cached one, even if noisy, because
+  // it reflects where the device actually is right now.
+  currentGpsMaxAgeMs: 60 * 1000, // 60s — upper bound of the 30–60s freshness spec
+  maxAcceptableAccuracyM: 100, // 50–100m spec, upper bound so field staff aren't blocked
+  freshAttempts: 3, // Attempt 1 immediate, Attempt 2/3 after short delays
+  retryDelayMs: 1500,
 };
 
 class LocationService {
@@ -167,24 +154,30 @@ class LocationService {
     };
   }
 
-  static async getCurrentLocation() {
-    if (__DEV__) console.log('[Location] Fetching current location...');
+  static _sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
-    // Fast path: a fix this fresh AND this accurate means the device almost
-    // certainly hasn't moved since it was captured moments ago — trust it
-    // instead of making the employee sit through another full live GPS
-    // acquisition for what's very likely the same physical spot. The tight
-    // accuracy+age bounds keep this from silently reusing stale/coarse
-    // coordinates for a visit at a genuinely different nearby address.
-    const recent = await this.getCachedLocation();
-    if (
-      recent &&
-      (Date.now() - recent.timestamp) <= CONFIG.freshCacheFastPath.maxAgeMs &&
-      recent.accuracy <= CONFIG.freshCacheFastPath.maxAccuracyM
-    ) {
-      if (__DEV__) console.log('[Location] Using fresh cached fix, skipping live sampling:', recent.accuracy, 'm');
-      return recent;
-    }
+  // Fresh-GPS-first one-shot capture for field activities.
+  //
+  // Flow per call (every Collection Visit open/refresh and every punch):
+  //   1. Permission check first — PERMISSION_DENIED/BLOCKED and LOCATION_OFF
+  //      fail fast, never masked as CACHED.
+  //   2. Up to CONFIG.freshAttempts live sampling windows (8s each, short
+  //      delay between). Same coordinates as the previous activity are
+  //      accepted — no movement is required; each capture gets its own
+  //      fresh timestamp.
+  //   3. Best live reading wins (lowest accuracy). Poor accuracy triggers
+  //      another attempt, never an immediate cached fallback. Any live
+  //      reading is preferred over cached, even noisy — it is where the
+  //      device actually is right now.
+  //   4. CACHED (last known-good fix, ≤6h) only when zero live samples
+  //      arrived after all retries — GPS unavailable, services disabled
+  //      mid-capture, or deep indoors. Carries its ORIGINAL capture time
+  //      plus locationAgeSeconds/fallbackReason so the server audits it
+  //      honestly.
+  static async getCurrentLocation() {
+    if (__DEV__) console.log('[Location] Fetching current location (fresh GPS first)...');
 
     const status = await this.requestForegroundStatus();
     if (status !== 'granted') {
@@ -208,26 +201,57 @@ class LocationService {
     // A cold GPS fix (first request after the chip's been idle — app just
     // opened, screen was off, etc.) routinely takes longer than one sample
     // window to produce even a single reading, while the chip stays "warm"
-    // for a while after. That's why hitting Retry right after a timeout
-    // reliably works — the second attempt gets a fix fast. Do that retry
-    // automatically, silently, before ever surfacing an error, instead of
-    // making the user do it by hand.
-    const first = await this._sampleOnce();
-    if (first.reading || first.error) return first.reading || first.error;
+    // for a while after. Retry automatically before ever surfacing an error
+    // or touching the cache.
+    let bestReading = null;
+    let hardError = null;
+    for (let attempt = 1; attempt <= CONFIG.freshAttempts; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const { reading, error } = await this._sampleOnce();
+      if (reading) {
+        if (!bestReading || reading.accuracy < bestReading.accuracy) {
+          bestReading = reading;
+        }
+        // Good enough — stop early; otherwise keep sampling for a better fix.
+        if (bestReading.accuracy <= CONFIG.goodEnoughAccuracyM) break;
+        if (bestReading.accuracy <= CONFIG.maxAcceptableAccuracyM) {
+          // Acceptable but not great — one more attempt may improve it, but
+          // don't burn all remaining windows if we're already reasonable.
+          if (attempt >= 2) break;
+        }
+      }
+      if (error) {
+        // Hard error (permission revoked mid-capture, GPS switched off):
+        // surface immediately, never mask as CACHED.
+        if (error.errorType === 'PERMISSION_BLOCKED' || error.errorType === 'LOCATION_OFF') {
+          return error;
+        }
+        hardError = error;
+      }
+      if (attempt < CONFIG.freshAttempts && !bestReading) {
+        if (__DEV__) console.log(`[Location] Attempt ${attempt} got no sample — retrying fresh GPS`);
+        // eslint-disable-next-line no-await-in-loop
+        await this._sleep(CONFIG.retryDelayMs);
+      } else if (attempt < CONFIG.freshAttempts && bestReading && bestReading.accuracy > CONFIG.maxAcceptableAccuracyM) {
+        if (__DEV__) console.log(`[Location] Attempt ${attempt} poor accuracy (${bestReading.accuracy}m) — retrying fresh GPS`);
+        // eslint-disable-next-line no-await-in-loop
+        await this._sleep(CONFIG.retryDelayMs);
+      }
+    }
 
-    if (__DEV__) console.log('[Location] First attempt got no sample — retrying once automatically');
-    const second = await this._sampleOnce();
-    if (second.reading || second.error) return second.reading || second.error;
+    if (bestReading) {
+      bestReading.locationAgeSeconds = Math.max(0, Math.round((Date.now() - bestReading.timestamp) / 1000));
+      if (__DEV__) console.log('[Location] Fresh GPS fix:', bestReading.accuracy, 'm, age', bestReading.locationAgeSeconds, 's');
+      return bestReading;
+    }
 
-    // Neither attempt produced a live fix or a hard error — genuinely no
-    // GPS available right now (deep indoors, underground, dead zone).
-    // Field staff routinely work in patchy-coverage areas and still need
-    // to record a visit — fall back to the last known-good fix on this
-    // device rather than blocking them outright. The fallback carries its
-    // own original capture time (not "now"), so the server's own
-    // freshness check evaluates it honestly rather than being told it's
-    // fresher than it really is.
-    console.warn('[Location] No live GPS after two attempts — trying last-known cached location');
+    // Zero live samples after all retries — genuinely no GPS right now
+    // (deep indoors, underground, dead zone, or offline with no fix).
+    // Field staff still need to record a visit — fall back to the last
+    // known-good fix on this device rather than blocking them outright.
+    // The fallback carries its own original capture time (not "now"), so
+    // the server's own freshness check evaluates it honestly.
+    console.warn('[Location] No live GPS after all retries — trying last-known cached location');
     const cached = await this.getCachedLocation();
     if (cached) {
       if (__DEV__) {
@@ -237,8 +261,8 @@ class LocationService {
       return cached;
     }
 
-    console.warn('[Location] GPS timeout on both attempts and no cached fallback available');
-    return this.createError('GPS request timed out. Please try again.', 'TIMEOUT');
+    console.warn('[Location] GPS timeout on all attempts and no cached fallback available');
+    return hardError || this.createError('GPS request timed out. Please try again.', 'TIMEOUT');
   }
 
   // Last known-good GPS fix on this device, persisted to disk so it
@@ -261,7 +285,16 @@ class LocationService {
       const cached = JSON.parse(raw);
       const ageMs = Date.now() - (cached.timestamp || 0);
       if (!(ageMs >= 0) || ageMs > CONFIG.maxCacheAgeMs) return null;
-      return { ...cached, locationSource: 'CACHED' };
+      // True fallback only — original capture time preserved, never "now",
+      // so freshness/age audits stay honest. Same coordinates as a previous
+      // activity are NOT rewritten here; this row is only returned when live
+      // GPS produced zero samples after all retries.
+      return {
+        ...cached,
+        locationSource: 'CACHED',
+        locationAgeSeconds: Math.max(0, Math.round(ageMs / 1000)),
+        fallbackReason: 'NO_LIVE_FIX_AFTER_RETRIES',
+      };
     } catch {
       return null;
     }
@@ -286,6 +319,8 @@ class LocationService {
         if (watchId != null) Geolocation.clearWatch(watchId);
         if (reading) {
           reading.locationSource = 'LIVE';
+          reading.provider = 'gps';
+          reading.locationAgeSeconds = Math.max(0, Math.round((Date.now() - (reading.timestamp || Date.now())) / 1000));
           // Fire-and-forget — a fresh fix updates the fallback cache for
           // next time a live one can't be had at all. Never cache the
           // dev-mode fake location (isMock) as if it were a real fix.
@@ -329,6 +364,9 @@ class LocationService {
             timestamp: Date.now(),
             isMock: false,
             address: '',
+            provider: 'gps',
+            locationSource: 'LIVE',
+            locationAgeSeconds: 0,
           };
 
           if (__DEV__) console.log('[Location] Sample:', reading.accuracy, 'm');

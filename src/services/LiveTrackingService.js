@@ -47,6 +47,12 @@ const DEFAULT_CONFIG = {
   max_speed_kmh: 200,
   batch_upload_interval_s: 60,
   batch_max_points: 6,
+  // Route-noise gate — mirrors backend TrackingConfiguration + GPSValidator.
+  // Fixes closer than this to the last queued point cluster into the same
+  // stationary zone instead of drawing zig-zag segments (see services.py
+  // STATIONARY_DIST_M). Fetched from /livetracking/config/, default 50m.
+  stationary_distance_m: 50,
+  stationary_window_s: 60,
 };
 
 const QUEUE_KEY = '@tas_live_tracking_queue';
@@ -287,12 +293,18 @@ class LiveTrackingService {
         return;
       }
 
-      // Stationary — barely moved within the stationary window
-      if (distM < 5) {
+      // Stationary — barely moved within the stationary window. Uses the
+      // backend-driven stationary radius (default 50m — wide enough that GPS
+      // wander while standing still clusters into one zone instead of drawing
+      // zig-zag segments), not a tight few-metre epsilon that every noisy fix
+      // would exceed.
+      const stationaryDistM = this.config.stationary_distance_m ?? 50;
+      const stationaryWindowS = this.config.stationary_window_s ?? 60;
+      if (distM < stationaryDistM) {
         const lastKeepAge = this._lastStationaryKeepTs != null
           ? (now - this._lastStationaryKeepTs) / 1000
           : Infinity;
-        if (lastKeepAge < 60) {
+        if (lastKeepAge < stationaryWindowS) {
           if (IS_DEV) console.log('[Live] Skipped stationary fix:', distM.toFixed(1), 'm');
           return;
         }

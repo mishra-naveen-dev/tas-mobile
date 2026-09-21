@@ -16,7 +16,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { useApiQuery } from '../../hooks/useApiQuery';
-import { filterGpsOutliers, calcTotalDistanceKm } from '../../utils/gpsUtils';
+import { buildAcceptedRoute } from '../../utils/gpsUtils';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import HeroHeader from '../../components/HeroHeader';
@@ -172,16 +172,21 @@ const DashboardScreen = ({ navigation }) => {
     const punches = useMemo(() => punchesQuery.data?.results || punchesQuery.data || [], [punchesQuery.data]);
     const isGpsActive = punches.length > 0;
 
-    // Use live tracking distance with GPS outlier filtering. The
-    // daily_summary distance can be wildly wrong when any punch record was
-    // captured with a bad GPS fix (multipath / NLOS outlier). The live track
-    // gives the actual travelled path — filter it for any remaining bad
-    // points and use that as the displayed distance; falls back to the
-    // summary value (null here) when there's no live route yet.
+    // Use accepted-route distance (stationary GPS noise excluded) with the one
+    // centralized buildAcceptedRoute rule. The daily_summary distance can be
+    // wildly wrong when any punch record was captured with a bad GPS fix
+    // (multipath / NLOS outlier). The live track gives the actual travelled
+    // path — cluster it into accepted points and use that as the displayed
+    // distance; falls back to the summary value (null here) when there's no
+    // live route yet. Prefers the backend's accepted_distance_km when present.
     const cleanDistanceKm = useMemo(() => {
-        const route = liveRouteQuery.data?.route;
+        const data = liveRouteQuery.data;
+        if (data?.accepted_distance_km != null) {
+            return Number(data.accepted_distance_km);
+        }
+        const route = data?.route;
         if (route?.length > 0) {
-            return calcTotalDistanceKm(filterGpsOutliers(route));
+            return buildAcceptedRoute(route).acceptedDistanceKm;
         }
         return null;
     }, [liveRouteQuery.data]);
