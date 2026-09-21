@@ -26,6 +26,26 @@ export async function captureFieldActivityLocation() {
     return location;
   }
 
+  // Validate location quality: latitude/longitude/timestamp/accuracy must be
+  // present and sane. A reading failing this is never passed off as current —
+  // the caller surfaces the error (retry UI) instead of silently saving a
+  // bad fix. Same coordinates as the previous activity are valid — only the
+  // shape/freshness is checked here, never movement.
+  if (
+    typeof location.latitude !== 'number' || typeof location.longitude !== 'number'
+    || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)
+    || !location.timestamp || typeof location.accuracy !== 'number'
+  ) {
+    return {
+      error: 'GPS returned an invalid location — please retry in an open area.',
+      errorType: 'GPS_ERROR',
+      latitude: null,
+      longitude: null,
+      address: '',
+      isMock: false,
+    };
+  }
+
   let batteryLevel = null;
   try {
     const level = await DeviceInfo.getBatteryLevel();
@@ -72,13 +92,23 @@ export async function captureFieldActivityLocation() {
     battery_level: batteryLevel,
     is_mock_location: isMockLocation,
     mock_detection_method: mockDetectionMethod,
-    gps_provider: '',
+    // Backend audit columns: provider is free-text ('gps' for a live fix,
+    // 'cached' preserved from the fallback row). Never send a blank provider
+    // for a live fix — an empty string is indistinguishable from "unknown".
+    gps_provider: location.gps_provider || location.provider || (location.locationSource === 'CACHED' ? 'cached' : 'gps'),
+    provider: location.provider || (location.locationSource === 'CACHED' ? 'cached' : 'gps'),
     network_status: networkStatus,
     device_timestamp: new Date(location.timestamp || Date.now()).toISOString(),
+    // Explicit audit trail per activity: own capture time + age in seconds,
+    // so each of several same-spot activities carries its own timestamp even
+    // when coordinates are almost identical — never reused from Activity 1.
+    captured_at: new Date(location.timestamp || Date.now()).toISOString(),
+    location_age_seconds: location.locationAgeSeconds
+      ?? Math.max(0, Math.round((Date.now() - (location.timestamp || Date.now())) / 1000)),
     // 'LIVE' (fresh GPS fix) or 'CACHED' (LocationService fell back to the
-    // device's last known-good fix — see LocationService.getCachedLocation)
-    // — lets the backend/admin distinguish a live-verified point from a
-    // stand-in used because live acquisition genuinely failed.
+    // device's last known-good fix only after all live retries failed — see
+    // LocationService.getCurrentLocation). The backend/admin uses this to
+    // distinguish a live-verified point from a stand-in.
     location_source: location.locationSource || 'LIVE',
   };
 }

@@ -14,7 +14,7 @@ import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-nativ
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
-import { filterGpsOutliers } from '../../utils/gpsUtils';
+import { filterGpsOutliers, buildAcceptedRoute } from '../../utils/gpsUtils';
 
 const { height } = Dimensions.get('window');
 
@@ -294,11 +294,26 @@ const RouteMapScreen = ({ navigation, route }) => {
                 );
             }
 
-            // GPS track
+            // GPS track — polyline from ACCEPTED route points only, never raw.
+            // Prefers the backend's accepted_route (authoritative, same rule
+            // as ingest); falls back to the identical local buildAcceptedRoute
+            // rule for responses predating that field. Raw records stay on
+            // the server for audit — they are simply not drawn.
             if (liveRes.status === 'fulfilled') {
-                const rawPoints = liveRes.value.data?.route || [];
-                const clean = filterGpsOutliers(rawPoints);
-                setGpsRoute(clean);
+                const data = liveRes.value.data || {};
+                const serverAccepted = Array.isArray(data.accepted_route) ? data.accepted_route : null;
+                if (serverAccepted) {
+                    setGpsRoute(serverAccepted);
+                } else {
+                    const rawPoints = data.route || [];
+                    let clean = rawPoints;
+                    try {
+                        clean = buildAcceptedRoute(rawPoints).accepted;
+                    } catch {
+                        clean = filterGpsOutliers(rawPoints);
+                    }
+                    setGpsRoute(clean);
+                }
             }
 
             // Collection updates

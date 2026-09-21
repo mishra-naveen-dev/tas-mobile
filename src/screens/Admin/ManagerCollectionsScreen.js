@@ -16,7 +16,7 @@ const fmtDateTime = (s) => {
     if (!s) return '—';
     const d = new Date(s);
     return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('en-IN', {
-        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
     });
 };
 const STATUS_COLOR = {
@@ -24,6 +24,27 @@ const STATUS_COLOR = {
     VISITED: colors.info, PENDING: colors.warning,
 };
 const label = (s) => (s || '').replace(/_/g, ' ');
+
+// Resolved assignee (User FK) preferred; falls back to the upload snapshot
+// (name/code from the file) when the code never matched a system user.
+const assigneeOf = (item) => {
+    const d = item.assigned_employee_details;
+    if (d && (d.id || d.employee_id)) {
+        const name = [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.name || '—';
+        return {
+            name, employeeId: d.employee_id || '—', userId: d.id ?? '—',
+            role: d.role_name || d.role || '', designation: d.designation_name || '',
+            status: 'Assigned', resolved: true,
+        };
+    }
+    if (item.assigned_employee_name || item.assigned_employee_code) {
+        return {
+            name: item.assigned_employee_name || '—', employeeId: item.assigned_employee_code || '—',
+            userId: '—', role: '', designation: '', status: 'Assigned (unmatched)', resolved: false,
+        };
+    }
+    return { name: 'Unassigned', employeeId: '—', userId: '—', role: '', designation: '', status: 'Unassigned', resolved: false };
+};
 
 /**
  * Manager view of the shared case pool: who owns each case now, who updated it
@@ -42,8 +63,18 @@ const ManagerCollectionsScreen = ({ navigation }) => {
     const [error, setError] = useState('');
     const [searchText, setSearchText] = useState('');
     const [search, setSearch] = useState('');
-    const [employee, setEmployee] = useState(null);
+    // Multi-select: cases anyone selected owns OR ever worked (server union).
+    const [employees, setEmployees] = useState([]);
     const seq = useRef(0);
+
+    const addEmployee = useCallback((row) => {
+        if (!row) return;
+        setEmployees((prev) => (prev.some((e) => e.id === row.id) ? prev : [...prev, row]));
+    }, []);
+
+    const removeEmployee = useCallback((id) => {
+        setEmployees((prev) => prev.filter((e) => e.id !== id));
+    }, []);
 
     useEffect(() => {
         const t = setTimeout(() => setSearch(searchText.trim()), 400);
@@ -59,7 +90,10 @@ const ManagerCollectionsScreen = ({ navigation }) => {
             const res = await api.getCollections({
                 page: pageNo, page_size: PAGE_SIZE, with_activity: 1,
                 ...(search ? { search } : {}),
-                ...(employee ? { employee: employee.id } : {}),
+                // One id → ?employee=<id>; several → axios array (?employee[]=<id>
+                // × n), both understood by the backend's employee filter.
+                ...(employees.length === 1 ? { employee: employees[0].id } : {}),
+                ...(employees.length > 1 ? { employee: employees.map((e) => e.id) } : {}),
             });
             if (mine !== seq.current) return;           // a newer request superseded this one
             const data = res.data;
@@ -72,7 +106,7 @@ const ManagerCollectionsScreen = ({ navigation }) => {
         } finally {
             if (mine === seq.current) { setLoading(false); setLoadingMore(false); setRefreshing(false); }
         }
-    }, [search, employee]);
+    }, [search, employees]);
 
     useEffect(() => { load(1, 'initial'); }, [load]);
     // Coming back from a case (after a transfer, say) refreshes what's on screen.
@@ -84,6 +118,7 @@ const ManagerCollectionsScreen = ({ navigation }) => {
 
     const renderItem = ({ item }) => {
         const tone = STATUS_COLOR[item.status] || colors.textMuted;
+        const assignee = assigneeOf(item);
         return (
             <TouchableOpacity
                 style={styles.card}
@@ -100,30 +135,40 @@ const ManagerCollectionsScreen = ({ navigation }) => {
                     </View>
                 </View>
 
-                <View style={styles.line}>
-                    <Icon name="user" size={14} color={colors.textMuted} />
-                    <Text style={styles.lineText} numberOfLines={1}>
-                        Owner: <Text style={styles.bold}>
-                            {item.assigned_employee_name ? `${item.assigned_employee_name} (${item.assigned_employee_code})` : 'Unassigned'}
-                        </Text>
+                <View style={styles.assignBox}>
+                    <Text style={styles.assignTitle}>Assigned To: <Text style={styles.bold}>{assignee.name}</Text></Text>
+                    <Text style={styles.assignMeta} numberOfLines={1}>
+                        Employee ID: {assignee.employeeId} · User ID: {assignee.userId}
                     </Text>
+                    {!!(assignee.role || assignee.designation) && (
+                        <Text style={styles.assignMeta} numberOfLines={1}>
+                            Role: {[assignee.designation || assignee.role].filter(Boolean).join('')}
+                        </Text>
+                    )}
+                    <Text style={styles.assignMeta}>Status: {assignee.status}</Text>
                 </View>
                 <View style={styles.line}>
                     <Icon name="edit-3" size={14} color={colors.textMuted} />
-                    <Text style={styles.lineText} numberOfLines={1}>
+                    <Text style={styles.lineText} numberOfLines={2}>
                         Last updated by: <Text style={styles.bold}>
-                            {item.last_updated_by_name ? `${item.last_updated_by_name} (${item.last_updated_by_code})` : '—'}
+                            {item.last_updated_by_name ? `${item.last_updated_by_name} (${item.last_updated_by_code || '—'})` : '—'}
                         </Text>
+                        {item.last_activity_at ? ` · ${fmtDateTime(item.last_activity_at)}` : ''}
                     </Text>
                 </View>
-                <View style={styles.line}>
-                    <Icon name="clock" size={14} color={colors.textMuted} />
-                    <Text style={styles.lineText} numberOfLines={1}>
-                        {item.last_activity_at
-                            ? `${label(item.last_activity_status)}${item.last_activity_amount ? ` · ${fmtAmount(item.last_activity_amount)}` : ''}  ·  ${fmtDateTime(item.last_activity_at)}`
-                            : 'No activity yet'}
-                    </Text>
-                </View>
+                {item.last_activity_status ? (
+                    <View style={styles.line}>
+                        <Icon name="clock" size={14} color={colors.textMuted} />
+                        <Text style={styles.lineText} numberOfLines={1}>
+                            {label(item.last_activity_status)}{item.last_activity_amount ? ` · ${fmtAmount(item.last_activity_amount)}` : ''}
+                        </Text>
+                    </View>
+                ) : (
+                    <View style={styles.line}>
+                        <Icon name="clock" size={14} color={colors.textMuted} />
+                        <Text style={styles.lineText} numberOfLines={1}>No activity yet</Text>
+                    </View>
+                )}
 
                 <View style={styles.footer}>
                     <Text style={styles.meta} numberOfLines={1}>
@@ -158,10 +203,24 @@ const ManagerCollectionsScreen = ({ navigation }) => {
                 </View>
                 <EmployeeSearchInput
                     style={{ marginTop: spacing.xs }}
-                    value={employee}
-                    onSelect={setEmployee}
-                    placeholder="Employee (owns or worked) — name or ID"
+                    value={null}
+                    onSelect={addEmployee}
+                    placeholder="Assigned employee — name or ID (multi-select)"
                 />
+                {employees.length > 0 && (
+                    <View style={styles.chipRow}>
+                        {employees.map((e) => (
+                            <View key={e.id} style={styles.pickChip}>
+                                <Text style={styles.pickChipText} numberOfLines={1}>
+                                    {e.name} ({e.employee_id})
+                                </Text>
+                                <TouchableOpacity onPress={() => removeEmployee(e.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                    <Icon name="x" size={14} color={colors.textMuted} />
+                                </TouchableOpacity>
+                            </View>
+                        ))}
+                    </View>
+                )}
             </View>
 
             {loading ? (
@@ -206,6 +265,19 @@ const styles = StyleSheet.create({
     line: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
     lineText: { flex: 1, marginLeft: 8, fontSize: typography.sizes.sm, color: colors.text },
     bold: { fontWeight: '700' },
+    assignBox: {
+        backgroundColor: colors.background, borderRadius: 10, paddingHorizontal: 10,
+        paddingVertical: 8, marginTop: 6,
+    },
+    assignTitle: { fontSize: typography.sizes.sm, color: colors.text },
+    assignMeta: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
+    chipRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: spacing.xs },
+    pickChip: {
+        flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface,
+        borderWidth: 1, borderColor: colors.primary, borderRadius: 999,
+        paddingHorizontal: 10, paddingVertical: 5, marginRight: 6, marginBottom: 6, maxWidth: '100%',
+    },
+    pickChipText: { flexShrink: 1, fontSize: typography.sizes.xs, fontWeight: '700', color: colors.primary, marginRight: 6 },
     footer: {
         flexDirection: 'row', alignItems: 'center', marginTop: spacing.xs, paddingTop: spacing.xs,
         borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,

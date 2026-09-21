@@ -72,6 +72,13 @@ export const PunchProvider = ({ children }) => {
 
   const trackingStartTime = useRef(null);
   const routePoints = useRef([]);
+  // Lifecycle marks of the server-owned live session (persisted start +
+  // 11h/13.5h marks from /livetracking/sessions/active/) — display-only input
+  // for the ACTIVE/GRACE/EXPIRED banner. The backend remains authoritative
+  // for actual closing; these marks can never drift (absolute ISO instants)
+  // and are re-seeded from the server on every punch-state restore, so an
+  // app restart never creates a new start time.
+  const [trackingMarks, setTrackingMarks] = useState(null);
 
   const fetchTodayPunches = useCallback(async () => {
     try {
@@ -129,16 +136,31 @@ export const PunchProvider = ({ children }) => {
                 Number(lastPunch.total_distance_day || 0) + Number(liveRes.data.session.total_distance || 0)
               );
             }
+            // Seed display marks from the persisted server session (phase +
+            // remaining are derived at render from these absolute instants).
+            if (liveRes.data?.active && liveRes.data.session) {
+              const s = liveRes.data.session;
+              const ph = liveRes.data.phase || {};
+              setTrackingMarks({
+                startIso: s.start_time || null,
+                maxDurationEndsAt: ph.max_duration_ends_at || s.max_duration_ends_at || null,
+                absoluteExpiresAt: ph.absolute_expires_at || s.absolute_expires_at || null,
+              });
+            } else {
+              setTrackingMarks(null);
+            }
           } catch (e) {
             if (IS_DEV) console.warn('[Punch] getActiveLiveSession restore error:', e.message);
           }
         } else {
           trackingStartTime.current = null;
+          setTrackingMarks(null);
           LocationService.setBaseDistance(0);
         }
       } else {
         setIsActive(false);
         trackingStartTime.current = null;
+        setTrackingMarks(null);
         LocationService.setBaseDistance(0);
       }
     } catch (err) {
@@ -402,7 +424,7 @@ export const PunchProvider = ({ children }) => {
       // default silently submitted exact null-island coordinates, which
       // the backend correctly rejects as INVALID_COORD. The fallback chain
       // is now: fresh GPS (captureFieldActivityLocation already retries
-      // twice and falls back to LocationService's own persisted
+      // live GPS and falls back to LocationService's own persisted
       // last-known-good fix internally) → this session's punch-in reading,
       // still real coordinates, never a fabricated default → a clear
       // client-side error instead of ever submitting nothing.
@@ -437,7 +459,7 @@ export const PunchProvider = ({ children }) => {
         }
         if (!address) address = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
       } else if (capturedLocation?.latitude != null && capturedLocation?.longitude != null) {
-        // captureFieldActivityLocation() already tried live GPS twice and
+        // captureFieldActivityLocation() already tried live GPS (with retries) and
         // its own persisted cache — this in-session punch-in reading is a
         // last resort on top of that, still a real captured fix, not a
         // fabricated one.
@@ -501,6 +523,7 @@ export const PunchProvider = ({ children }) => {
       setSuccess(true);
       setCapturedLocation(null);
       trackingStartTime.current = null;
+      setTrackingMarks(null);
       routePoints.current = [];
 
       await fetchTodayPunches();
@@ -514,6 +537,7 @@ export const PunchProvider = ({ children }) => {
         setPunchState(STATES.IDLE);
         setCapturedLocation(null);
         trackingStartTime.current = null;
+        setTrackingMarks(null);
         routePoints.current = [];
         setErrorMessage(null);
         return {
@@ -588,6 +612,7 @@ export const PunchProvider = ({ children }) => {
     getTotalDistance,
     getTrackingDuration,
     LocationService,
+    trackingMarks,
     pendingAutoClosure,
     checkPendingAutoClosure,
     submitForgotPunchRequest,
@@ -595,7 +620,7 @@ export const PunchProvider = ({ children }) => {
     punches, loading, error, errorMessage, success, punchState, isActive,
     isMockLocation, capturedLocation, initialFetchDone, fetchTodayPunches, punchIn, punchOut, registerExternalPunchIn,
     fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration,
-    pendingAutoClosure, checkPendingAutoClosure, submitForgotPunchRequest,
+    trackingMarks, pendingAutoClosure, checkPendingAutoClosure, submitForgotPunchRequest,
   ]);
 
   return <PunchContext.Provider value={value}>{children}</PunchContext.Provider>;
@@ -631,6 +656,7 @@ export const usePunch = () => {
       getTotalDistance: () => 0,
       getTrackingDuration: () => 0,
       LocationService: null,
+      trackingMarks: null,
       pendingAutoClosure: null,
       checkPendingAutoClosure: () => {},
       submitForgotPunchRequest: () => Promise.resolve({ success: false, error: 'Context not ready' }),
