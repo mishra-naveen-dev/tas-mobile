@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Linking, Image, Modal, ActivityIndicator, Platform,
+  Linking, Image, ActivityIndicator, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -47,7 +47,6 @@ const HelpSupportScreen = ({ navigation }) => {
   const [profile, setProfile] = useState(user || null);
   const [appInfo, setAppInfo] = useState({ version: '', buildNumber: '', lastUpdated: null });
   const [expandedFaq, setExpandedFaq] = useState(null);
-  const [legalModal, setLegalModal] = useState(null); // 'privacy' | 'terms' | null
   const [sendingReport, setSendingReport] = useState(false);
 
   useEffect(() => {
@@ -251,16 +250,22 @@ const HelpSupportScreen = ({ navigation }) => {
           ))}
         </View>
 
-        {/* Section 7: Legal */}
+        {/* Section 7: Legal — opens the live published documents (same backend
+            source as More → Privacy & Legal), not a static copy. */}
         <Text style={styles.sectionLabel}>Legal</Text>
         <View style={styles.card}>
-          <TouchableOpacity style={styles.legalRow} onPress={() => setLegalModal('privacy')}>
+          <TouchableOpacity style={styles.legalRow} onPress={() => navigation.navigate('LegalDocument', { docType: 'PRIVACY' })}>
             <Text style={styles.legalText}>Privacy Policy</Text>
             <Icon name="chevron-right" size={16} color={colors.textMuted} />
           </TouchableOpacity>
           <View style={styles.faqRowBorder} />
-          <TouchableOpacity style={styles.legalRow} onPress={() => setLegalModal('terms')}>
+          <TouchableOpacity style={styles.legalRow} onPress={() => navigation.navigate('LegalDocument', { docType: 'TERMS' })}>
             <Text style={styles.legalText}>Terms & Conditions</Text>
+            <Icon name="chevron-right" size={16} color={colors.textMuted} />
+          </TouchableOpacity>
+          <View style={styles.faqRowBorder} />
+          <TouchableOpacity style={styles.legalRow} onPress={() => navigation.navigate('LegalDocument', { docType: 'LOCATION_TRACKING' })}>
+            <Text style={styles.legalText}>Location & Tracking Notice</Text>
             <Icon name="chevron-right" size={16} color={colors.textMuted} />
           </TouchableOpacity>
           <View style={styles.faqRowBorder} />
@@ -275,27 +280,6 @@ const HelpSupportScreen = ({ navigation }) => {
           </View>
         </View>
       </ScrollView>
-
-      <Modal visible={!!legalModal} transparent animationType="fade" onRequestClose={() => setLegalModal(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{legalModal === 'privacy' ? 'Privacy Policy' : 'Terms & Conditions'}</Text>
-              <TouchableOpacity onPress={() => setLegalModal(null)}>
-                <Icon name="x" size={22} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalBody}>
-              The full {legalModal === 'privacy' ? 'Privacy Policy' : 'Terms & Conditions'} for TAS has not
-              been published in-app yet. Please contact Namra Finance Ltd. or the IT Technical Support
-              team above for the current document.
-            </Text>
-            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setLegalModal(null)}>
-              <Text style={styles.modalCloseBtnText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };
@@ -334,13 +318,6 @@ const styles = StyleSheet.create({
   legalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.sm },
   legalText: { fontSize: typography.sizes.sm, color: colors.text, fontWeight: '600' },
   legalValue: { fontSize: typography.sizes.sm, color: colors.textMuted },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  modalCard: { width: '100%', maxWidth: 420, backgroundColor: colors.surface, borderRadius: 16, padding: spacing.lg },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
-  modalTitle: { fontSize: typography.sizes.md, fontWeight: '700', color: colors.text },
-  modalBody: { fontSize: typography.sizes.sm, color: colors.textMuted, lineHeight: 20 },
-  modalCloseBtn: { marginTop: spacing.lg, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: spacing.sm, alignItems: 'center' },
-  modalCloseBtnText: { color: '#fff', fontWeight: '700' },
 });
 
 export default HelpSupportScreen;
