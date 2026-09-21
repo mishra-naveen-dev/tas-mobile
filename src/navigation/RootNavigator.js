@@ -26,6 +26,9 @@ import MyCollectionCorrectionsScreen from '../screens/Common/MyCollectionCorrect
 import CollectionCorrectionFormScreen from '../screens/Common/CollectionCorrectionFormScreen';
 import CollectionCorrectionDetailScreen from '../screens/Common/CollectionCorrectionDetailScreen';
 import HelpSupportScreen from '../screens/Common/HelpSupportScreen';
+import PrivacyLegalScreen from '../screens/Common/PrivacyLegalScreen';
+import LegalDocumentScreen from '../screens/Common/LegalDocumentScreen';
+import LegalGate from '../components/LegalGate';
 
 // Admin Screens
 import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
@@ -141,6 +144,8 @@ const EmployeeStackNavigator = () => (
         <EmployeeStack.Screen name="MyRequests" component={MyRequestsScreen} />
         <EmployeeStack.Screen name="Notifications" component={NotificationsScreen} />
         <EmployeeStack.Screen name="HelpSupport" component={HelpSupportScreen} />
+        <EmployeeStack.Screen name="PrivacyLegal" component={PrivacyLegalScreen} />
+        <EmployeeStack.Screen name="LegalDocument" component={LegalDocumentScreen} />
     </EmployeeStack.Navigator>
 );
 
@@ -158,6 +163,8 @@ const AdminStackNavigator = () => (
         <AdminStack.Screen name="Profile" component={ProfileScreen} />
         <AdminStack.Screen name="Notifications" component={NotificationsScreen} />
         <AdminStack.Screen name="HelpSupport" component={HelpSupportScreen} />
+        <AdminStack.Screen name="PrivacyLegal" component={PrivacyLegalScreen} />
+        <AdminStack.Screen name="LegalDocument" component={LegalDocumentScreen} />
     </AdminStack.Navigator>
 );
 
@@ -256,6 +263,8 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="Profile" component={ProfileScreen} />
         <SuperAdminStack.Screen name="Notifications" component={NotificationsScreen} />
         <SuperAdminStack.Screen name="HelpSupport" component={HelpSupportScreen} />
+        <SuperAdminStack.Screen name="PrivacyLegal" component={PrivacyLegalScreen} />
+        <SuperAdminStack.Screen name="LegalDocument" component={LegalDocumentScreen} />
     </SuperAdminStack.Navigator>
 );
 
@@ -276,15 +285,15 @@ const RootNavigator = () => {
             </AuthStack.Navigator>
         );
     } else if (isSuperAdmin) {
-        content = <SuperAdminStackNavigator />;
+        content = <LegalGate><SuperAdminStackNavigator /></LegalGate>;
     } else if (isAdmin) {
-        content = <AdminStackNavigator />;
+        content = <LegalGate><AdminStackNavigator /></LegalGate>;
     } else {
         // Employees must grant background ("Allow all the time") location before
         // using the app — checked on login and every time the app is foregrounded.
         content = (
             <LocationGate user={auth.user}>
-                <EmployeeStackNavigator />
+                <LegalGate><EmployeeStackNavigator /></LegalGate>
             </LocationGate>
         );
     }

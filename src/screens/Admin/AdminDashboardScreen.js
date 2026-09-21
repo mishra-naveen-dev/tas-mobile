@@ -211,6 +211,13 @@ const AdminDashboardScreen = ({ navigation }) => {
                             onPress={() => navigation.navigate('ManagerCollections')}
                         />
                         <MenuItem
+                            title="Privacy & Legal"
+                            subtitle="Terms, Privacy Policy, Location Notice"
+                            icon="shield"
+                            color={colors.info}
+                            onPress={() => navigation.navigate('PrivacyLegal')}
+                        />
+                        <MenuItem
                             title="Customer Map"
                             subtitle="Branch-scoped customer locations"
                             icon="map"

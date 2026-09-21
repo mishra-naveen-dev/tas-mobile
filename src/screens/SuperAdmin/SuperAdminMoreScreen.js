@@ -118,6 +118,13 @@ const SuperAdminMoreScreen = ({ navigation }) => {
                         onPress={() => navigation.navigate('ManagerCollections')}
                     />
                     <MenuItem
+                        title="Privacy & Legal"
+                        subtitle="Terms, Privacy Policy, Location Notice"
+                        icon="shield"
+                        color={colors.info}
+                        onPress={() => navigation.navigate('PrivacyLegal')}
+                    />
+                    <MenuItem
                         title="Employee List"
                         subtitle="View and manage employees"
                         icon="user-check"
