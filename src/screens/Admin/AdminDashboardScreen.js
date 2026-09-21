@@ -204,6 +204,13 @@ const AdminDashboardScreen = ({ navigation }) => {
                             onPress={() => navigation.navigate('EmployeeTracking')}
                         />
                         <MenuItem
+                            title="Team Collections"
+                            subtitle="Case owners, activity history & transfers"
+                            icon="dollar-sign"
+                            color={colors.primary}
+                            onPress={() => navigation.navigate('ManagerCollections')}
+                        />
+                        <MenuItem
                             title="Customer Map"
                             subtitle="Branch-scoped customer locations"
                             icon="map"

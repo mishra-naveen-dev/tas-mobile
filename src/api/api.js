@@ -716,6 +716,26 @@ api.getCollections = (params = {}) =>
 api.getCollectionRecord = (id) =>
     api.get(`/loans/collections/${id}/`);
 
+// ── Manager case activity (same backend endpoints as the web Case Activity drawer) ──
+// Type-ahead: matched in the database, <=10 rows, limited to people the user may see.
+api.employeeAutocomplete = (q) =>
+    api.get('/organization/users/autocomplete/', { params: { q } });
+
+// One case: current owner, ownership periods, employee-wise breakdown and a
+// paginated timeline (?page &page_size &type &employee_id &order).
+api.getCaseActivity = (id, params = {}) =>
+    api.get(`/loans/collections/${id}/case_activity/`, { params });
+
+// Move a single case to another employee — the same audited, ledger-writing
+// endpoint the web transfer uses; the reason is stored on the ownership history.
+api.transferCase = (id, targetEmployeeId, reason) =>
+    api.post('/loans/collections/bulk_transfer/', {
+        target_employee_id: targetEmployeeId,
+        transfer_all: false,
+        full_ids: [id],
+        reason,
+    });
+
 // Exact (case-insensitive) Loan ID lookup — distinct from getCollections'
 // fuzzy ?search=; used when a caller has a specific Loan ID (typed manually,
 // not picked from an autosuggest list) and needs to resolve it to exactly
