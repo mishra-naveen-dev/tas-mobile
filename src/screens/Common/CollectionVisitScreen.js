@@ -10,6 +10,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
 import api from '../../api/api';
+import { loadCaseTimeline, buildCaseTimeline } from '../../utils/caseTimeline';
 import { usePunch } from '../../context/PunchContext';
 import { useAuth } from '../../context/AuthContext';
 import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
@@ -100,7 +101,8 @@ const buildTimeline = (history, updates) => {
         : u.status === 'PARTIALLY_COLLECTED' ? colors.warning
         : u.status === 'NOT_PAID' ? colors.danger : colors.textMuted,
       title: `${status || 'Updated'}${amount}`,
-      detail: u.remarks || '',
+      detail: [u.employee_name && `By ${u.employee_name}${u.employee_employee_id ? ` (${u.employee_employee_id})` : ''}`, u.remarks]
+        .filter(Boolean).join(' · '),
       time: fmtDateTime(u.event_at || u.created_at),
     });
   });
@@ -128,25 +130,27 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   const [activity, setActivity] = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
 
+  const [caseEvents, setCaseEvents] = useState(null);   // from case_activity; null = use the legacy sources
+
   useEffect(() => {
     if (!collectionId) return;
     let cancelled = false;
     setActivityLoading(true);
-    Promise.all([
-      api.getCollectionUpdates({ collection: collectionId, ordering: '-created_at', page_size: 20 }),
-      api.getAssignmentHistory(collectionId),
-    ])
-      .then(([updatesRes, historyRes]) => {
+    loadCaseTimeline(api, collectionId)
+      .then((r) => {
         if (cancelled) return;
-        setActivity(updatesRes?.data?.results || updatesRes?.data || []);
-        setHistory(historyRes?.data || []);
+        setCaseEvents(r.events || null);
+        setActivity(r.updates || []);
+        setHistory(r.history || []);
       })
-      .catch(() => {})
       .finally(() => { if (!cancelled) setActivityLoading(false); });
     return () => { cancelled = true; };
   }, [collectionId]);
 
-  const activityTimeline = useMemo(() => buildTimeline(history, activity), [history, activity]);
+  const activityTimeline = useMemo(
+    () => (caseEvents ? buildCaseTimeline(caseEvents) : buildTimeline(history, activity)),
+    [caseEvents, history, activity],
+  );
 
   const [localLocation, setLocalLocation] = useState(null);
   const [fetchingLocation, setFetchingLocation] = useState(true);
