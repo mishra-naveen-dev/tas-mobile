@@ -726,6 +726,13 @@ api.employeeAutocomplete = (q) =>
 api.getCaseActivity = (id, params = {}) =>
     api.get(`/loans/collections/${id}/case_activity/`, { params });
 
+// Legal & Privacy (backend apps/legal) — one source of Terms / Privacy / Tracking Notice
+// shared with the web app. The server records the acknowledgement; nothing is stored locally.
+api.getLegalDocuments = () => api.get('/legal/documents/');
+api.getLegalStatus = () => api.get('/legal/status/');
+api.acknowledgeLegal = (payload) => api.post('/legal/acknowledge/', payload);
+api.getMyAcknowledgements = () => api.get('/legal/my-acknowledgements/');
+
 // Move a single case to another employee — the same audited, ledger-writing
 // endpoint the web transfer uses; the reason is stored on the ownership history.
 api.transferCase = (id, targetEmployeeId, reason) =>

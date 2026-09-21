@@ -242,6 +242,15 @@ const EmployeeMoreScreen = ({ navigation }) => {
                 />
 
                 {/* ── Support ──────────────────────────────────────────────────── */}
+                <SectionLabel title="Privacy & Legal" />
+                <MenuRow
+                    title="Privacy & Legal"
+                    subtitle="Terms, Privacy Policy, Location Notice, My Acknowledgements"
+                    icon="shield"
+                    iconColor={colors.primary}
+                    onPress={() => navigation.navigate('PrivacyLegal')}
+                />
+
                 <SectionLabel title="Support" />
                 <MenuRow
                     title="Help & Support"
