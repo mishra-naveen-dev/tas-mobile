@@ -31,6 +31,8 @@ import HelpSupportScreen from '../screens/Common/HelpSupportScreen';
 import AdminDashboardScreen from '../screens/Admin/AdminDashboardScreen';
 import AdminApprovalsScreen from '../screens/Admin/AdminApprovalsScreen';
 import AdminDevicesScreen from '../screens/Admin/AdminDevicesScreen';
+import ManagerCollectionsScreen from '../screens/Admin/ManagerCollectionsScreen';
+import CaseActivityScreen from '../screens/Admin/CaseActivityScreen';
 import EmployeeTrackingScreen from '../screens/Admin/EmployeeTrackingScreen';
 
 // SuperAdmin Screens
@@ -148,6 +150,8 @@ const AdminStackNavigator = () => (
         <AdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
         <AdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <AdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <AdminStack.Screen name="ManagerCollections" component={ManagerCollectionsScreen} />
+        <AdminStack.Screen name="CaseActivity" component={CaseActivityScreen} />
         <AdminStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <AdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
@@ -238,6 +242,8 @@ const SuperAdminStackNavigator = () => (
         <SuperAdminStack.Screen name="AdminApprovals" component={AdminApprovalsScreen} />
         <SuperAdminStack.Screen name="AdminDevices" component={AdminDevicesScreen} />
         <SuperAdminStack.Screen name="EmployeeTracking" component={EmployeeTrackingScreen} />
+        <SuperAdminStack.Screen name="ManagerCollections" component={ManagerCollectionsScreen} />
+        <SuperAdminStack.Screen name="CaseActivity" component={CaseActivityScreen} />
         <SuperAdminStack.Screen name="CustomerMap" component={CustomerMapScreen} />
         <SuperAdminStack.Screen name="DailySummary" component={DailySummaryScreen} />
         <SuperAdminStack.Screen name="UserManagement" component={UserManagementScreen} />

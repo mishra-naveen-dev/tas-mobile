@@ -111,6 +111,13 @@ const SuperAdminMoreScreen = ({ navigation }) => {
                         onPress={() => navigation.navigate('UserManagement')}
                     />
                     <MenuItem
+                        title="Team Collections"
+                        subtitle="Case owners, activity history & transfers"
+                        icon="dollar-sign"
+                        color={colors.primary}
+                        onPress={() => navigation.navigate('ManagerCollections')}
+                    />
+                    <MenuItem
                         title="Employee List"
                         subtitle="View and manage employees"
                         icon="user-check"
