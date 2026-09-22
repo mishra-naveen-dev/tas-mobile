@@ -7,13 +7,17 @@ import {
     KeyboardAvoidingView,
     Platform,
     TouchableOpacity,
-    Linking
+    Linking,
+    Modal,
+    ScrollView,
+    ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 
 import { useAuth } from '../../context/AuthContext';
-import { loadCustomBaseURL, setCustomBaseURL, getBaseURL } from '../../api/api';
+import api, { loadCustomBaseURL, setCustomBaseURL, getBaseURL } from '../../api/api';
+import { DOC_LABEL, DocumentText } from '../../components/LegalGate';
 
 import InputField from '../../components/InputField';
 import PrimaryButton from '../../components/PrimaryButton';
@@ -67,6 +71,29 @@ const LoginScreen = ({ navigation }) => {
                 { text: 'Cancel', style: 'cancel' }
             ]
         );
+    };
+
+    // ── §19: informational legal links on the login screen (pre-login, public
+    // read of /legal/documents/). Purely informational — no checkboxes, no
+    // consent capture here; the mandatory acknowledgement happens after login
+    // on the LegalGate screen. Content is always served by the backend. ──
+    const [viewDocType, setViewDocType] = useState(null);
+    const [viewDoc, setViewDoc] = useState(null);
+    const [docLoading, setDocLoading] = useState(false);
+
+    const openLegalDoc = async (type) => {
+        setViewDocType(type);
+        setViewDoc(null);
+        setDocLoading(true);
+        try {
+            const r = await api.getLegalDocuments();
+            const all = Array.isArray(r?.data) ? r.data : [];
+            setViewDoc(all.find((d) => d.doc_type === type) || null);
+        } catch (e) {
+            setViewDoc(null);
+        } finally {
+            setDocLoading(false);
+        }
     };
 
     const handleLogin = async () => {
@@ -221,8 +248,52 @@ const LoginScreen = ({ navigation }) => {
                         <Icon name="help-circle" size={18} color="#FFFFFF" />
                         <Text style={styles.supportText}>Need Help? Contact Support</Text>
                     </TouchableOpacity>
+
+                    {/* Informational only — the mandatory acknowledgement is the post-login gate (§3, §19) */}
+                    <View style={styles.legalLinks}>
+                        <TouchableOpacity onPress={() => openLegalDoc('TERMS')} accessibilityRole="link"
+                            accessibilityLabel="View Terms and Conditions">
+                            <Text style={styles.legalLinkText}>Terms &amp; Conditions</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.legalDot}>·</Text>
+                        <TouchableOpacity onPress={() => openLegalDoc('PRIVACY')} accessibilityRole="link"
+                            accessibilityLabel="View Privacy Policy">
+                            <Text style={styles.legalLinkText}>Privacy Policy</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.legalDot}>·</Text>
+                        <TouchableOpacity onPress={() => openLegalDoc('LOCATION_TRACKING')} accessibilityRole="link"
+                            accessibilityLabel="View Location and Tracking Notice">
+                            <Text style={styles.legalLinkText}>Location &amp; Tracking Notice</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </KeyboardAvoidingView>
+
+            <Modal visible={!!viewDocType} animationType="slide"
+                onRequestClose={() => setViewDocType(null)}>
+                <SafeAreaView style={styles.docModal}>
+                    <View style={styles.docModalHead}>
+                        <Text style={styles.docModalTitle}>
+                            {DOC_LABEL[viewDocType] || 'Legal Document'}
+                        </Text>
+                        <TouchableOpacity onPress={() => setViewDocType(null)}
+                            accessibilityRole="button" accessibilityLabel="Close">
+                            <Icon name="x" size={24} color={colors.textPrimary} />
+                        </TouchableOpacity>
+                    </View>
+                    <ScrollView contentContainerStyle={styles.docModalBody}>
+                        {docLoading ? (
+                            <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} />
+                        ) : viewDoc ? (
+                            <DocumentText doc={viewDoc} />
+                        ) : (
+                            <Text style={styles.docModalMuted}>
+                                This document has not been published yet.
+                            </Text>
+                        )}
+                    </ScrollView>
+                </SafeAreaView>
+            </Modal>
         </SafeAreaView>
     );
 };
@@ -321,6 +392,49 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: typography.sizes.sm,
         fontWeight: typography.weights.semibold,
+    },
+    legalLinks: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 6,
+        marginTop: spacing.md,
+    },
+    legalLinkText: {
+        color: 'rgba(255, 255, 255, 0.85)',
+        fontSize: typography.sizes.xs,
+        textDecorationLine: 'underline',
+    },
+    legalDot: {
+        color: 'rgba(255, 255, 255, 0.5)',
+        fontSize: typography.sizes.xs,
+    },
+    docModal: {
+        flex: 1,
+        backgroundColor: colors.background || '#fff',
+    },
+    docModalHead: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: spacing.lg,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    docModalTitle: {
+        fontSize: typography.sizes.lg,
+        fontWeight: typography.weights.bold,
+        color: colors.textPrimary,
+        flex: 1,
+    },
+    docModalBody: {
+        padding: spacing.lg,
+    },
+    docModalMuted: {
+        color: colors.textMuted,
+        marginTop: spacing.xl,
+        textAlign: 'center',
     },
 });
 

@@ -279,10 +279,14 @@ const RootNavigator = () => {
     if (!isAuthenticated) {
         content = <AuthStackNavigator />;
     } else if (forcePasswordChange) {
+        // Still behind the legal gate: acknowledgement is required before ANY
+        // authenticated surface, including the forced password change (§4.2).
         content = (
-            <AuthStack.Navigator screenOptions={commonScreenOptions}>
-                <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
-            </AuthStack.Navigator>
+            <LegalGate>
+                <AuthStack.Navigator screenOptions={commonScreenOptions}>
+                    <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+                </AuthStack.Navigator>
+            </LegalGate>
         );
     } else if (isSuperAdmin) {
         content = <LegalGate><SuperAdminStackNavigator /></LegalGate>;

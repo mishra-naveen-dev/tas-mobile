@@ -120,6 +120,18 @@ export const parseApiError = (error) => {
 
         case 403:
             // Forbidden - device, permissions
+            if (data?.code === 'LEGAL_ACKNOWLEDGEMENT_REQUIRED') {
+                // Server-side legal gate: the LegalGate screen takes over the
+                // UI, so this is informational only — keep it low priority.
+                message = safeString(
+                    data.error,
+                    'Please acknowledge the required legal documents to continue.'
+                );
+                type = ErrorType.VALIDATION;
+                priority = ErrorPriority.LOW;
+                canRetry = true;
+                break;
+            }
             if (data?.code === 'DEVICE_BLOCKED') {
                 message = safeString(data.error, 'Your device has been blocked. Contact administrator.');
             } else if (data?.code === 'DEVICE_PENDING_APPROVAL') {

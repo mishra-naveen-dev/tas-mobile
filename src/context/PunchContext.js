@@ -165,8 +165,13 @@ export const PunchProvider = ({ children }) => {
       }
     } catch (err) {
       // 401 is already handled by the axios interceptor (session-expired flow)
-      // Logging or setting error for 401 causes duplicate noise in LogBox
-      if (err?.response?.status !== 401) {
+      // Logging or setting error for 401 causes duplicate noise in LogBox.
+      // 403 LEGAL_ACKNOWLEDGEMENT_REQUIRED is the server-side legal gate: the
+      // LegalGate screen takes over the UI (it re-checks /legal/status/), so
+      // surfacing it here would only duplicate an already-visible screen.
+      const status = err?.response?.status;
+      const code = err?.response?.data?.code;
+      if (status !== 401 && !(status === 403 && code === 'LEGAL_ACKNOWLEDGEMENT_REQUIRED')) {
         const { message } = parseApiError(err);
         setError(message);
       }
