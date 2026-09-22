@@ -125,6 +125,37 @@ const NEAR_ME_DEFAULT_RADIUS_KM = 1;
 
 const fmtDate = (d) =>
     d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const fmtDateTime = (d) => {
+    if (!d) return '—';
+    const t = new Date(d);
+    return Number.isNaN(t.getTime()) ? '—' : t.toLocaleString('en-IN', {
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+};
+
+// Current assignee from the backend's own assignment data — resolved User FK
+// preferred, upload snapshot (name/code) as fallback, Unassigned otherwise.
+// Never inferred from branch, activity, or the logged-in user: visibility is
+// not assignment (shared branch pools), and activity performer is not the
+// owner. Mirrors ManagerCollectionsScreen's mapping for the same payload.
+const assigneeOf = (item) => {
+    const d = item.assigned_employee_details;
+    if (d && (d.id || d.employee_id)) {
+        const name = [d.first_name, d.last_name].filter(Boolean).join(' ') || d.username || d.name || '—';
+        return {
+            name, employeeId: d.employee_id || '—',
+            extra: [d.designation_name || d.role_name || d.role, d.branch_name].filter(Boolean).join(' · '),
+            assigned: true,
+        };
+    }
+    if (item.assigned_employee_name || item.assigned_employee_code) {
+        return {
+            name: item.assigned_employee_name || '—',
+            employeeId: item.assigned_employee_code || '—', extra: '', assigned: true,
+        };
+    }
+    return { name: 'Unassigned', employeeId: '', extra: '', assigned: false };
+};
 const fmtAmount = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 const fmtCompact = (n) => {
     const v = Number(n || 0);
@@ -377,7 +408,12 @@ const AnimatedCard = React.memo(({ index, children }) => {
 // ── Main screen ──────────────────────────────────────────────────────────────
 const CollectionsScreen = ({ route }) => {
     const navigation = useNavigation();
-    const { user } = useAuth();
+    const { user, isManager } = useAuth();
+    // Managerial view (centralized role check + server-provided effective role
+    // so custom manager literals with an ADMIN base are covered without
+    // hard-coding designation names here). Employees keep the current view.
+    const showAssignment = !!isManager
+        || ['ADMIN', 'SUPER_ADMIN'].includes(String(user?.base_role || '').toUpperCase());
     // Deep-linked here (e.g. from a "customer assigned to you" notification)
     // with a specific record to jump straight to.
     const deepLinkCollectionId = route?.params?.collectionId;
@@ -456,6 +492,10 @@ const CollectionsScreen = ({ route }) => {
         if (typeFilter === 'OD' && dpdFilter !== 'ALL') params.dpd_bucket = dpdFilter;
         if (productFilter !== 'ALL') params.product_type = productFilter;
         if (debouncedSearch) params.search = debouncedSearch;
+        // Managers also get the activity annotation (last-updated-by/at) that
+        // powers the "Last Activity By" line — same ?with_activity=1 the
+        // Team Collections screen uses. Employees fetch exactly as before.
+        if (showAssignment) params.with_activity = 1;
         // Near Me: server-side distance filter — no 600-record bulk fetch needed
         if (nearMeEnabled && userLocation) {
             params.user_lat = userLocation.latitude;
@@ -464,7 +504,7 @@ const CollectionsScreen = ({ route }) => {
             params.sort_by_distance = 1;
         }
         return params;
-    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch, nearMeEnabled, userLocation, nearMeRadiusKm]);
+    }, [activeFilter, typeFilter, dpdFilter, productFilter, debouncedSearch, nearMeEnabled, userLocation, nearMeRadiusKm, showAssignment]);
 
     // Shared "turn off" path for both the manual toggle and the auto-off timer.
     const disableNearMe = useCallback(() => {
@@ -860,6 +900,32 @@ const CollectionsScreen = ({ route }) => {
                     </View>
 
                     <View style={styles.divider} />
+
+                    {showAssignment && (() => {
+                        const a = assigneeOf(item);
+                        return (
+                            <View style={styles.assignBox}>
+                                <View style={styles.assignRow}>
+                                    <Icon name="user" size={13} color={colors.textMuted} />
+                                    <Text style={styles.assignLabel}>Assigned To</Text>
+                                </View>
+                                <Text style={styles.assignName} numberOfLines={1}>{a.name}</Text>
+                                <Text style={styles.assignMeta} numberOfLines={1}>
+                                    {[a.employeeId ? `ID: ${a.employeeId}` : null, a.extra || null]
+                                        .filter(Boolean).join(' · ') || 'Unassigned'}
+                                </Text>
+                            </View>
+                        );
+                    })()}
+                    {showAssignment && !!item.last_updated_by_name && (
+                        <View style={styles.row}>
+                            <Icon name="edit-3" size={13} color={colors.textMuted} />
+                            <Text style={styles.rowTextSmall} numberOfLines={2}>
+                                Last Activity By: <Text style={styles.bold}>{item.last_updated_by_name}{item.last_updated_by_code ? ` (${item.last_updated_by_code})` : ''}</Text>
+                                {item.last_activity_at ? ` · ${fmtDateTime(item.last_activity_at)}` : ''}
+                            </Text>
+                        </View>
+                    )}
 
                     <View style={styles.row}>
                         <Icon name="map-pin" size={15} color={colors.textMuted} />
@@ -1531,6 +1597,17 @@ const CollectionsScreen = ({ route }) => {
                                         // branch_name/branch_id already come straight from
                                         // CollectionRecordSerializer — no extra request needed.
                                         ['Branch', [modal.record.branch_name, modal.record.branch_id].filter(Boolean).join(' / ') || null],
+                                        // Manager-only ownership rows from the same payload
+                                        // (resolved assignee + last activity) — full history
+                                        // lives in Team Collections → Case Activity.
+                                        ['Assigned To', showAssignment ? (() => {
+                                            const a = assigneeOf(modal.record);
+                                            if (!a.assigned) return 'Unassigned';
+                                            return `${a.name}${a.employeeId ? ` (${a.employeeId})` : ''}${a.extra ? ` · ${a.extra}` : ''}`;
+                                        })() : null],
+                                        ['Last Activity By', showAssignment && modal.record.last_updated_by_name
+                                            ? `${modal.record.last_updated_by_name}${modal.record.last_updated_by_code ? ` (${modal.record.last_updated_by_code})` : ''} · ${fmtDateTime(modal.record.last_activity_at)}`
+                                            : null],
                                     ].filter(([, value]) => !!value).map(([label, value]) => (
                                         <View key={label} style={styles.loanDetailRow}>
                                             <Text style={styles.loanDetailLabel}>{label}</Text>
@@ -1921,6 +1998,18 @@ const styles = StyleSheet.create({
     row: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xs },
     rowText: { flex: 1, fontSize: typography.sizes.sm, color: colors.textMedium, marginLeft: spacing.xs },
     bold: { fontWeight: typography.weights.bold, color: colors.textDark },
+    // Manager-only assignment block — compact by design: label + name smaller
+    // than customerName, meta smaller still. Sits after the loan header,
+    // before address/contact rows.
+    assignBox: {
+        backgroundColor: colors.background, borderRadius: borderRadius.md,
+        paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, marginBottom: spacing.xs,
+    },
+    assignRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    assignLabel: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
+    assignName: { fontSize: typography.sizes.sm, fontWeight: '700', color: colors.textDark, marginTop: 1 },
+    assignMeta: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 1 },
+    rowTextSmall: { flex: 1, fontSize: typography.sizes.xs, color: colors.textMuted, marginLeft: spacing.xs },
     extraFactsBox: {
         flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs,
         backgroundColor: colors.background, borderRadius: borderRadius.md,

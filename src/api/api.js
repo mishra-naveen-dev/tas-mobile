@@ -212,6 +212,17 @@ export const setSessionExpiredCallback = (callback) => {
     sessionExpiredCallback = callback;
 };
 
+// Set by LegalGate: any business call rejected with
+// LEGAL_ACKNOWLEDGEMENT_REQUIRED (server-side gate) re-opens the gate, so a
+// version published mid-session blocks immediately instead of at next login.
+let legalRequiredCallback = null;
+export const setLegalRequiredCallback = (callback) => {
+    legalRequiredCallback = callback;
+};
+export const resetLegalRequiredHandler = () => {
+    legalRequiredCallback = null;
+};
+
 export const resetSessionHandler = () => {
     isSessionExpiredHandled = false;
 };
@@ -220,7 +231,10 @@ export const resetSessionHandler = () => {
 // viewport bounding box changes on every pan/zoom, a free-text search on
 // every keystroke) — caching them adds near-zero hit value while being the
 // single biggest driver of unbounded local cache growth (see dataCache.js).
-const UNCACHEABLE_GET_PATTERNS = [/\/map_markers\//, /\/map_search\//];
+// /legal/status/ is excluded for a security reason: it is an authorisation
+// decision that must never be replayed from cache (a stale "pending: []"
+// would open the gate while the server still requires acknowledgement).
+const UNCACHEABLE_GET_PATTERNS = [/\/map_markers\//, /\/map_search\//, /\/legal\/status\//];
 
 api.interceptors.response.use(
     async (response) => {
@@ -240,7 +254,10 @@ api.interceptors.response.use(
         // Network failure (no response) → serve last cached data
         if (!error.response && originalRequest) {
             const method = (originalRequest.method || '').toLowerCase();
-            if (method === 'get') {
+            const url = originalRequest.url || '';
+            // Same uncacheable set as the write path — otherwise a stale
+            // /legal/status/ could satisfy this read after an app update.
+            if (method === 'get' && !UNCACHEABLE_GET_PATTERNS.some(re => re.test(url))) {
                 const key = makeCacheKey(originalRequest.url, originalRequest.params || {});
                 const cached = await cacheRead(key);
                 if (cached) {
@@ -320,8 +337,14 @@ api.interceptors.response.use(
 
         if (error.response?.status === 403) {
             const errorCode = error.response?.data?.code;
-            
-            if (errorCode === 'DEVICE_NOT_BINDED' || errorCode === 'DEVICE_ID_REQUIRED') {
+
+            if (errorCode === 'LEGAL_ACKNOWLEDGEMENT_REQUIRED') {
+                // Not an auth failure — do NOT clear tokens. The gate screen
+                // decides what to do; just tell it to re-check status.
+                if (legalRequiredCallback) {
+                    try { legalRequiredCallback(); } catch (_) { /* gate handles its own errors */ }
+                }
+            } else if (errorCode === 'DEVICE_NOT_BINDED' || errorCode === 'DEVICE_ID_REQUIRED') {
                 await AsyncStorage.removeItem('device_id');
                 await clearAuthData();
             }
