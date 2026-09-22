@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import DeviceInfo from 'react-native-device-info';
-import api from '../api/api';
+import api, { setLegalRequiredCallback, resetLegalRequiredHandler } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { colors, spacing } from '../theme/tokens';
 
@@ -42,12 +42,21 @@ const LegalGate = ({ children }) => {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
+    const refresh = () => api.getLegalStatus()
+        .then((r) => setPending(r?.data?.pending || []))
+        .catch(() => setPending((p) => (p === null ? [] : p)));   // offline: keep whatever we had
+
     useEffect(() => {
-        let alive = true;
-        api.getLegalStatus()
-            .then((r) => { if (alive) setPending(r?.data?.pending || []); })
-            .catch(() => { if (alive) setPending([]); });
-        return () => { alive = false; };
+        refresh();
+    }, []);
+
+    // A version can be published while the user is already past the gate
+    // (this component then renders `children`, not the checklist below); the
+    // server's 403 LEGAL_ACKNOWLEDGEMENT_REQUIRED on their next call is what
+    // tells us to re-open it, rather than waiting for the next app launch.
+    useEffect(() => {
+        setLegalRequiredCallback(refresh);
+        return () => resetLegalRequiredHandler();
     }, []);
 
     if (pending === null) {

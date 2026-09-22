@@ -12,6 +12,8 @@ import LegalGate from '../src/components/LegalGate';
 jest.mock('../src/api/api', () => ({
   __esModule: true,
   default: { getLegalStatus: jest.fn(), acknowledgeLegal: jest.fn() },
+  setLegalRequiredCallback: jest.fn(),
+  resetLegalRequiredHandler: jest.fn(),
 }));
 jest.mock('../src/context/AuthContext', () => ({ useAuth: () => ({ logout: jest.fn() }) }));
 jest.mock('react-native-vector-icons/Feather', () => 'Icon');
