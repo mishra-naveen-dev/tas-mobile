@@ -279,3 +279,70 @@ export function formatRemaining(totalSec) {
 export function safeDistanceKm(rawPoints, maxSpeedKmh = MAX_SPEED_KMH) {
     return calcTotalDistanceKm(filterGpsOutliers(rawPoints, maxSpeedKmh));
 }
+
+// ─── Gap/session-aware route segments (display) ─────────────────────────────
+// Mirrors backend build_accepted_route's `segments`: ONE inner array per
+// continuous run — render one Polyline per entry and never a single flat
+// line across a gap (no GPS evidence exists for what happened in between).
+
+/** {lat|latitude, lng|lon|longitude} → {latitude, longitude}, or null. */
+export function pointCoords(p) {
+    const latitude = Number(p?.lat ?? p?.latitude);
+    const longitude = Number(p?.lon ?? p?.lng ?? p?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    if (latitude === 0 && longitude === 0) return null;
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+    return { latitude, longitude };
+}
+
+/** One segment/run → [{latitude, longitude}, ...], unusable rows dropped. */
+export function segmentCoords(seg) {
+    if (!Array.isArray(seg)) return [];
+    return seg.map(pointCoords).filter(Boolean);
+}
+
+/**
+ * Coordinate runs for a daily-route response (§9).
+ * PREFER the backend's `route_segments` (validated, split at session
+ * boundaries and > max_gap_minutes gaps); fall back to a client-side gap
+ * split over `fallback` points on the SAME configured threshold (backend
+ * response's max_gap_minutes, else 15 = module default).
+ *
+ * @param {object|null} data       daily-route response
+ * @param {Array}       [fallback] points to split when route_segments absent
+ * @returns {Array<Array<{latitude, longitude}>>} chronological coord runs
+ */
+export function routeSegmentsFrom(data, fallback) {
+    if (Array.isArray(data?.route_segments) && data.route_segments.length > 0) {
+        return data.route_segments.map(segmentCoords).filter(c => c.length > 0);
+    }
+    const src = Array.isArray(fallback) ? fallback : [];
+    if (src.length === 0) return [];
+
+    const getTs = (p) => {
+        const v = p?.timestamp ?? p?.captured_at ?? p?.punched_at ?? null;
+        if (v == null) return null;
+        if (typeof v === 'number') return v > 1e12 ? v : v * 1000;
+        const t = new Date(v).getTime();
+        return Number.isNaN(t) ? null : t;
+    };
+
+    const gapMs = (Number(data?.max_gap_minutes) > 0 ? Number(data.max_gap_minutes) : 15) * 60000;
+    const sorted = [...src].sort((a, b) => (getTs(a) ?? 0) - (getTs(b) ?? 0));
+
+    const runs = [];
+    let current = [];
+    let prevT = null;
+    for (const p of sorted) {
+        const t = getTs(p);
+        if (current.length > 0 && t != null && prevT != null && t - prevT > gapMs) {
+            if (current.length) runs.push(current);
+            current = [];
+        }
+        const c = pointCoords(p);
+        if (c) current.push(c);
+        if (t != null) prevT = t;
+    }
+    if (current.length) runs.push(current);
+    return runs;
+}

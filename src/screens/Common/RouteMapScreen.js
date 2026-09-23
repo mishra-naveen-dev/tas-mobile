@@ -14,7 +14,7 @@ import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-nativ
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
-import { filterGpsOutliers, buildAcceptedRoute } from '../../utils/gpsUtils';
+import { filterGpsOutliers, buildAcceptedRoute, routeSegmentsFrom, segmentCoords } from '../../utils/gpsUtils';
 
 const { height } = Dimensions.get('window');
 
@@ -250,6 +250,7 @@ const RouteMapScreen = ({ navigation, route }) => {
     const [allPunches, setAllPunches] = useState([]);
     const [allCollectionUpdates, setAllCollectionUpdates] = useState([]);
     const [gpsRoute, setGpsRoute] = useState([]);
+    const [gpsSegments, setGpsSegments] = useState([]);   // coord runs — one Polyline each (§9)
     const [dailySummary, setDailySummary] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -299,11 +300,17 @@ const RouteMapScreen = ({ navigation, route }) => {
             // as ingest); falls back to the identical local buildAcceptedRoute
             // rule for responses predating that field. Raw records stay on
             // the server for audit — they are simply not drawn.
+            //
+            // §9: the DRAWN track is one Polyline per continuous run — prefer
+            // the backend's route_segments (validated, split at session
+            // boundaries and > max_gap_minutes gaps), else split locally on
+            // the same threshold. Never one flat line across a gap.
             if (liveRes.status === 'fulfilled') {
                 const data = liveRes.value.data || {};
                 const serverAccepted = Array.isArray(data.accepted_route) ? data.accepted_route : null;
+                let chosen;
                 if (serverAccepted) {
-                    setGpsRoute(serverAccepted);
+                    chosen = serverAccepted;
                 } else {
                     const rawPoints = data.route || [];
                     let clean = rawPoints;
@@ -312,8 +319,10 @@ const RouteMapScreen = ({ navigation, route }) => {
                     } catch {
                         clean = filterGpsOutliers(rawPoints);
                     }
-                    setGpsRoute(clean);
+                    chosen = clean;
                 }
+                setGpsRoute(chosen);
+                setGpsSegments(routeSegmentsFrom(data, chosen));
             }
 
             // Collection updates
@@ -492,10 +501,16 @@ const RouteMapScreen = ({ navigation, route }) => {
         [mergedActivities]
     );
 
-    // ── GPS polyline coordinates ──────────────────────────────────────────────
+    // ── GPS polyline coordinates (flat: fit-to / latest point only) ──────────
     const gpsCoordinates = useMemo(() =>
         gpsRoute.map((p) => ({ latitude: Number(p.lat ?? p.latitude), longitude: Number(p.lon ?? p.lng ?? p.longitude) })),
         [gpsRoute]
+    );
+
+    // ── What's DRAWN: one Polyline per continuous run (§9) ───────────────────
+    const gpsSegmentCoords = useMemo(
+        () => gpsSegments.map(segmentCoords).filter((c) => c.length > 1),
+        [gpsSegments]
     );
 
     // ── Authoritative distance (from daily_summary, same source as Home) ──────
@@ -635,18 +650,31 @@ const RouteMapScreen = ({ navigation, route }) => {
                         }
                     }}
                 >
-                    {/* GPS track polyline */}
-                    {gpsCoordinates.length > 1 && (
+                    {/* GPS track — one Polyline per continuous segment so a gap
+                        (session boundary / > max_gap_minutes) is a visible break,
+                        never a bridging line (§9). Flat fallback only when no
+                        runs resolved (legacy responses). */}
+                    {gpsSegmentCoords.length > 0 ? (
+                        gpsSegmentCoords.map((coords, idx) => (
+                            <Polyline
+                                key={`gps-seg-${idx}`}
+                                coordinates={coords}
+                                strokeColor={colors.primary}
+                                strokeWidth={3}
+                                lineDashPattern={undefined}
+                            />
+                        ))
+                    ) : gpsCoordinates.length > 1 ? (
                         <Polyline
                             coordinates={gpsCoordinates}
                             strokeColor={colors.primary}
                             strokeWidth={3}
                             lineDashPattern={undefined}
                         />
-                    )}
+                    ) : null}
 
-                    {/* Fallback: connect activity markers when GPS track unavailable */}
-                    {gpsCoordinates.length < 2 && punchCoordinates.length > 1 && (
+                    {/* Fallback: dashed activity path when GPS track unavailable */}
+                    {gpsSegmentCoords.length === 0 && gpsCoordinates.length < 2 && punchCoordinates.length > 1 && (
                         <Polyline
                             coordinates={punchCoordinates}
                             strokeColor={colors.primary}

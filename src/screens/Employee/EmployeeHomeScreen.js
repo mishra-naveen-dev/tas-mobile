@@ -338,8 +338,10 @@ const MapPreview = React.memo(({ points, mapRef }) => {
         return null;
     }
 
-    const latestPoint = points[0];
-    const startPoint = points[points.length - 1];
+    // `points` contract: chronological, oldest → newest. START is the first
+    // element, LATEST the last — never derived from table/display order.
+    const startPoint = points[0];
+    const latestPoint = points[points.length - 1];
 
     return (
         <View style={styles.mapContainer}>
@@ -359,10 +361,13 @@ const MapPreview = React.memo(({ points, mapRef }) => {
                 {points.length > 1 && startPoint && (
                     <>
                         <Marker coordinate={startPoint} pinColor="green" />
+                        {/* Dashed = punch/activity path, not a measured GPS route (§17);
+                            the full validated route lives in RouteMapScreen. */}
                         <Polyline 
-                            coordinates={[...points].reverse()} 
+                            coordinates={points} 
                             strokeWidth={4} 
                             strokeColor={colors.primary} 
+                            lineDashPattern={[6, 4]}
                         />
                     </>
                 )}
@@ -748,10 +753,15 @@ const EmployeeHomeScreen = ({ navigation }) => {
         return Array.from(map.values());
     }, [punches, todayPunches]);
 
+    // Route points are ALWAYS chronological (oldest → newest) — sorted by the
+    // authoritative punched_at, never table order. The activity feed keeps its
+    // own grouping; the map derives START (first) and LATEST (last) from ends
+    // of this array, so reversing or trusting input order can no longer swap
+    // them.
     const routePoints = useMemo(() => {
         return allPunches
             .filter(p => p.latitude && p.longitude)
-            .sort((a, b) => new Date(b.punched_at) - new Date(a.punched_at))
+            .sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
             .map(p => ({ 
                 latitude: Number(p.latitude), 
                 longitude: Number(p.longitude) 
