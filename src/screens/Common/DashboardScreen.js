@@ -29,8 +29,15 @@ import SectionHeader from '../../components/SectionHeader';
 import ActivityPresenter from '../../presenters/ActivityPresenter';
 import { mapApiResponseToActivities } from '../../models/ActivityModel';
 
-const MapPreview = React.memo(({ points, mapRef, navigation }) => {
-    const latestPoint = points[0];
+// `points` contract: CHRONOLOGICAL, oldest → newest (routePoints below sorts
+// by punched_at ascending). The latest fix is therefore the LAST element —
+// taking points[0] labelled the OLDEST point as "latest", and reversing the
+// array for the Polyline drew the route newest → oldest with start/end swapped.
+// `segments` (optional, §9): validated GPS runs from route_segments — drawn
+// SOLID, one Polyline per run so a gap is a visible break, never a bridge.
+// Without segments the punch chain draws DASHED (an activity path, §17).
+const MapPreview = React.memo(({ points, segments = null, mapRef, navigation }) => {
+    const latestPoint = points[points.length - 1];
     const [isMapReady, setIsMapReady] = useState(false);
     
     const centerOnLatest = () => {
@@ -62,11 +69,22 @@ const MapPreview = React.memo(({ points, mapRef, navigation }) => {
     };
 
     const formatCoords = (point) => ({
-        latitude: Number(point.latitude),
-        longitude: Number(point.longitude)
+        latitude: Number(point.latitude ?? point.lat),
+        longitude: Number(point.longitude ?? point.lng ?? point.lon)
     });
 
-    const routeCoordinates = points.map(formatCoords).reverse();
+    // Drawn oldest → newest, same order as the input — no reversal.
+    const routeCoordinates = points.map(formatCoords);
+
+    // §9/§17: VALIDATED GPS runs (route_segments) draw solid, one Polyline
+    // each; without them the punch chain draws DASHED below — an activity
+    // path that can never be mistaken for a measured route.
+    const drawnSegments = useMemo(
+        () => (segments || [])
+            .map(seg => seg.map(formatCoords))
+            .filter(coords => coords.length > 1),
+        [segments]
+    );
 
     // Auto-center on latest point when map is ready
     const onMapReady = () => {
@@ -98,13 +116,25 @@ const MapPreview = React.memo(({ points, mapRef, navigation }) => {
                     longitudeDelta: 0.05,
                 }}
             >
-                {routeCoordinates.length > 0 && (
+                {(routeCoordinates.length > 0 || drawnSegments.length > 0) && (
                     <>
-                        <Polyline 
-                            coordinates={routeCoordinates} 
-                            strokeWidth={4} 
-                            strokeColor={colors.primary} 
-                        />
+                        {drawnSegments.length > 0
+                            ? drawnSegments.map((coords, idx) => (
+                                <Polyline 
+                                    key={`seg-${idx}`}
+                                    coordinates={coords} 
+                                    strokeWidth={4} 
+                                    strokeColor={colors.primary} 
+                                />
+                            ))
+                            : (
+                                <Polyline 
+                                    coordinates={routeCoordinates} 
+                                    strokeWidth={4} 
+                                    strokeColor={colors.primary} 
+                                    lineDashPattern={[6, 4]}
+                                />
+                            )}
                         {routeCoordinates.map((coord, index) => (
                             <Marker 
                                 key={index}
@@ -220,12 +250,36 @@ const DashboardScreen = ({ navigation }) => {
         ];
     }, [summary, cleanDistanceKm]);
 
+    // Route points are ALWAYS chronological (oldest → newest), sorted by the
+    // authoritative punched_at — never derived from table/API order (which is
+    // newest-first). The table/activity feed keeps its own newest-first order.
     const routePoints = useMemo(() =>
         punches.filter(p => p.latitude && p.longitude)
             .sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at))
             .map(p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) })),
         [punches]
     );
+
+    // §9/§15: the preview draws the VALIDATED GPS route when the daily-route
+    // response has route_segments (markers ON that route), else the punch
+    // chain — which MapPreview draws DASHED as an activity path. Same
+    // liveRouteQuery the full RouteMap screen uses (one route source).
+    const mapModel = useMemo(() => {
+        const segs = liveRouteQuery.data?.route_segments;
+        if (Array.isArray(segs) && segs.length > 0) {
+            const runs = segs
+                .map(seg => seg
+                    .map(p => ({
+                        latitude: Number(p.lat ?? p.latitude),
+                        longitude: Number(p.lng ?? p.lon ?? p.longitude),
+                    }))
+                    .filter(c => Number.isFinite(c.latitude) && Number.isFinite(c.longitude)))
+                .filter(run => run.length > 1);
+            const flat = runs.flat();
+            if (flat.length > 0) return { points: flat, segments: runs };
+        }
+        return { points: routePoints, segments: null };
+    }, [liveRouteQuery.data, routePoints]);
 
     const activities = useMemo(() => {
         const mappedActivities = mapApiResponseToActivities(punches, []);
@@ -299,7 +353,7 @@ const DashboardScreen = ({ navigation }) => {
                 )}
 
                 {!isLoading && routePoints.length > 0 && (
-                    <MapPreview points={routePoints} mapRef={mapRef} navigation={navigation} />
+                    <MapPreview points={mapModel.points} segments={mapModel.segments} mapRef={mapRef} navigation={navigation} />
                 )}
 
                 <View style={styles.sectionHeader}>
@@ -313,7 +367,7 @@ const DashboardScreen = ({ navigation }) => {
                 />
             </View>
         </>
-    ), [user, logout, isGpsActive, hasError, isLoading, statsData, routePoints, navigation, retryAll, activities, selectedFilter]);
+    ), [user, logout, isGpsActive, hasError, isLoading, statsData, routePoints, mapModel, navigation, retryAll, activities, selectedFilter]);
 
     const renderItem = useCallback(({ item }) => {
         if (item.type === 'sectionHeader') {
