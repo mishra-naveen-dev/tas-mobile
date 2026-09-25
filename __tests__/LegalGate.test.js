@@ -11,7 +11,7 @@ import React from 'react';
 import { Text, BackHandler } from 'react-native';
 import { create, act } from 'react-test-renderer';
 import api, { setLegalRequiredCallback } from '../src/api/api';
-import LegalGate, { GATE_TITLE, GATE_SUBTITLE, ACCEPT_LABEL, CHECK_TEXT } from '../src/components/LegalGate';
+import LegalGate, { GATE_TITLE, GATE_SUBTITLE, ACCEPT_LABEL, CHECK_TEXT, SUCCESS_MESSAGE } from '../src/components/LegalGate';
 
 jest.mock('../src/api/api', () => ({
   __esModule: true,
@@ -116,9 +116,9 @@ describe('LegalGate', () => {
     expect(api.acknowledgeLegal).toHaveBeenCalledWith(expect.objectContaining({
       version_ids: [1, 2], app_version: '1.41', platform: expect.any(String),
     }));
-    // brief success state (§16), then the app opens
-    expect(textOf(r.root)).toContain('All required documents acknowledged.');
-    await act(async () => { await new Promise((res) => setTimeout(res, 800)); });
+    // brief success state (§8), then the app opens
+    expect(textOf(r.root)).toContain(SUCCESS_MESSAGE);
+    await act(async () => { await new Promise((res) => setTimeout(res, 1600)); });
     await flush();
     expect(textOf(r.root)).toContain('APP');
   });

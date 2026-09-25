@@ -174,7 +174,8 @@ const EmployeePunchScreen = ({ navigation }) => {
     isMockLocation, capturedLocation, todayPunches,
     error, errorMessage, success,
     punchIn, punchOut, fetchLocation, resetForm, dismissError,
-    getTotalDistance, getTrackingDuration, LocationService,
+    distanceKm,
+    getTrackingDuration, LocationService,
     pendingAutoClosure, submitForgotPunchRequest, registerExternalPunchIn,
   } = usePunch();
 
@@ -814,7 +815,9 @@ const EmployeePunchScreen = ({ navigation }) => {
   };
 
   const fmtDistance = (km) => {
-    if (!km) return '0 km';
+    // null means the server has not published a distance yet. Rendering that as
+    // "0 km" states a fact we do not know; an em dash states the truth.
+    if (km == null || !Number.isFinite(km)) return '—';
     return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(2)} km`;
   };
 
@@ -1010,7 +1013,11 @@ const EmployeePunchScreen = ({ navigation }) => {
   const isFetching = punchState === STATES.FETCHING_LOCATION;
   const isSubmitting = punchState === STATES.SUBMITTING || visitSaving;
   const isPunchingOut = punchState === STATES.PUNCHING_OUT;
-  const totalDistance = getTotalDistance();
+  // The official distance for the shift, from the backend's authoritative
+  // daily summary - the same value the Home card and the Route Map show. Null
+  // until the server has an answer; fmtDistance renders that as an em dash
+  // rather than 0.00 km.
+  const totalDistance = distanceKm ?? null;
   const duration = getTrackingDuration();
 
   return (

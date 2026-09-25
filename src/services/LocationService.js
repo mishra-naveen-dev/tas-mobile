@@ -473,89 +473,43 @@ class LocationService {
     }
   }
 
+  /**
+   * RETIRED - do not start a second location engine.
+   *
+   * This used to open its own high-accuracy `watchPosition` purely to feed a
+   * "Live Stats" distance card. It never uploaded anything, so it added no
+   * evidence; it only produced a SECOND distance chain - a raw point-to-point
+   * sum that knew nothing about GPS gaps, rejected outliers, session
+   * boundaries or the road network - which therefore disagreed with the route
+   * the backend had already determined, and doubled the high-accuracy GPS
+   * listeners running during every shift.
+   *
+   * The distance now comes from the backend's trusted route (see
+   * PunchContext.getTotalDistance): the same figure the Route Map draws. There
+   * is ONE location engine - LiveTrackingService (the Android foreground
+   * service, or the JS timer on iOS).
+   *
+   * Kept as a no-op so existing call sites keep working.
+   */
   static async startTracking() {
-    if (this.isTracking) {
-      if (__DEV__) console.log('[Location] Already tracking');
-      return { success: true };
+    if (__DEV__) {
+      console.log('[Location] startTracking() is retired - the live-tracking engine '
+        + 'is the single GPS source and the distance comes from the server.');
     }
-
-    const hasPermission = await this.requestPermission();
-    if (!hasPermission) {
-      return { success: false, error: 'Permission denied' };
-    }
-
-    this.routePoints = [];
-
-    try {
-      this.watchId = Geolocation.watchPosition(
-        (position) => {
-          try {
-            const { latitude, longitude, accuracy, speed } = position.coords;
-
-            if (!this.isValidCoord(latitude, longitude)) {
-              return;
-            }
-
-            // Drop junk indoor/WiFi fixes — accuracy > maxAccuracy means unreliable
-            if (accuracy && accuracy > CONFIG.maxAccuracy) {
-              return;
-            }
-
-            const point = {
-              latitude,
-              longitude,
-              accuracy: accuracy || 50,
-              speed: speed ? speed * 3.6 : 0,
-              timestamp: position.timestamp || Date.now(),
-              isMock: false,
-            };
-
-            const lastPoint = this.routePoints[this.routePoints.length - 1];
-            if (lastPoint) {
-              const dist = this.calcDistance(
-                lastPoint.latitude, lastPoint.longitude,
-                latitude, longitude
-              );
-              if (dist < CONFIG.distanceFilter / 1000) return;
-            }
-
-            this.routePoints.push(point);
-            if (this.routePoints.length > 500) this.routePoints.shift();
-
-            this.notifyListeners(point);
-            if (__DEV__) console.log('[Location] Route point:', this.routePoints.length);
-          } catch (err) {
-            console.error('[Location] Point error:', err);
-          }
-        },
-        (error) => {
-          console.error('[Location] Watch error:', error.code);
-        },
-        {
-          enableHighAccuracy: true,
-          distanceFilter: CONFIG.distanceFilter,
-          interval: CONFIG.trackingInterval,
-          fastestInterval: CONFIG.trackingInterval / 2,
-        }
-      );
-
-      this.isTracking = true;
-      if (__DEV__) console.log('[Location] Tracking started');
-      return { success: true };
-    } catch (err) {
-      console.error('[Location] Start tracking failed:', err);
-      return { success: false, error: err.message };
-    }
+    this.isTracking = false;
+    return { success: true, retired: true };
   }
 
   static stopTracking() {
     try {
+      // Defensive: if a build from before the retirement is somehow still
+      // running, clear any watcher it left behind.
       if (this.watchId !== null) {
         Geolocation.clearWatch(this.watchId);
         this.watchId = null;
       }
       this.isTracking = false;
-      if (__DEV__) console.log('[Location] Tracking stopped');
+      this.routePoints = [];
     } catch (err) {
       console.error('[Location] Stop tracking error:', err);
       this.watchId = null;
@@ -577,16 +531,19 @@ class LocationService {
     return deg * (Math.PI / 180);
   }
 
-  static getTotalDistance() {
-    let total = this.baseDistanceKm;
-    if (this.routePoints.length < 2) return total;
-    for (let i = 1; i < this.routePoints.length; i++) {
-      total += this.calcDistance(
-        this.routePoints[i - 1].latitude, this.routePoints[i - 1].longitude,
-        this.routePoints[i].latitude, this.routePoints[i].longitude
-      );
-    }
-    return total;
+  /**
+   * RETIRED. There is no client-side distance chain any more.
+   *
+   * The official distance for a shift is the backend's trusted route distance,
+   * measured along the road-matched geometry the Route Map draws. This local
+   * sum is kept only so an old call site cannot silently show a second, wrong
+   * number for the same shift: it always returns the value the caller was
+   * given, never a locally accumulated one.
+   *
+   * @param {number} [km]  the server's trusted distance, if the caller has it
+   */
+  static getTotalDistance(km) {
+    return typeof km === 'number' && Number.isFinite(km) ? km : 0;
   }
 
   static setBaseDistance(km) {
@@ -630,7 +587,9 @@ class LocationService {
     return {
       isTracking: this.isTracking,
       pointsCount: this.routePoints.length,
-      totalDistance: this.getTotalDistance(),
+      // No local total: the official distance is the server's trusted route
+      // figure. See getTotalDistance().
+      totalDistance: null,
       isMock: CONFIG.mockEnabled,
     };
   }

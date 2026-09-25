@@ -25,17 +25,22 @@ export const DOC_LABEL = {
     LOCATION_TRACKING: 'Location & Tracking Notice',
 };
 
-// Exact per-document acknowledgement labels (§7). Never preselect any of them.
+// Exact per-document acknowledgement labels (§3/§4). Never preselect any of them.
 export const CHECK_TEXT = {
-    TERMS: 'I have read and agree to the Terms & Conditions.',
-    PRIVACY: 'I acknowledge the Privacy Policy.',
-    LOCATION_TRACKING: 'I acknowledge the Location & Tracking Notice.',
+    TERMS: 'I have read and accept the Terms & Conditions',
+    PRIVACY: 'I have read and accept the Privacy Policy',
+    LOCATION_TRACKING: 'I have read and accept the Location & Tracking Notice',
 };
 
-export const GATE_TITLE = 'Legal & Privacy Acknowledgement';
+export const GATE_TITLE = 'Legal & Privacy';
 export const GATE_SUBTITLE =
-    'Before continuing, please review and acknowledge the following mandatory documents.';
+    'Please review and accept the following documents before continuing.';
+// Shown when the employee already acknowledged older versions (§15).
+export const NEW_DOCS_SUBTITLE =
+    'New Legal & Privacy documents require your acknowledgement.';
 export const ACCEPT_LABEL = 'Accept & Continue';
+export const SUCCESS_MESSAGE = 'Legal & Privacy consent recorded successfully.';
+export const SUBMIT_ERROR_MESSAGE = 'Unable to record your consent. Please try again.';
 
 export const DocumentText = ({ doc }) => (
     <View>
@@ -146,6 +151,9 @@ const LegalGate = ({ children }) => {
         () => docs.filter((d) => !d.mandatory && !d.acknowledged),
         [docs]
     );
+    // §15: employees who accepted older versions get the "new documents" wording.
+    const subtitle = (pending || []).length > 0 && alreadyAcked.length > 0
+        ? NEW_DOCS_SUBTITLE : GATE_SUBTITLE;
 
     const allChecked = (pending || []).length > 0 && (pending || []).every((d) => checked[d.id]);
 
@@ -166,25 +174,19 @@ const LegalGate = ({ children }) => {
             // nothing is pending anymore (never trust local state alone).
             if (payload?.requires_acknowledgement) {
                 applyStatus(payload);
-                setError(
-                    Array.isArray(payload?.pending) && payload.pending.length
-                        ? 'Some documents still require acknowledgement. Please try again.'
-                        : 'Some documents still require acknowledgement. Please try again.'
-                );
+                setError('Some documents still require acknowledgement. Please try again.');
                 return;
             }
             applyStatus({ pending: [], documents: payload?.documents || docs });
             setAccepted(true);
             AccessibilityInfo.announceForAccessibility?.(
-                'Legal documents acknowledged. Opening the application.'
+                'Legal & Privacy consent recorded successfully.'
             );
-            setTimeout(() => { if (mountedRef.current) setAccepted(false); }, 700);
+            setTimeout(() => { if (mountedRef.current) setAccepted(false); }, 1500);
         } catch (e) {
             if (!mountedRef.current) return;
-            setError(
-                e?.response?.data?.error ||
-                'Could not save your acknowledgement. Check your connection and try again.'
-            );
+            // §12: never enter on failure, keep the ticked boxes, say exactly why.
+            setError(e?.response?.data?.error || SUBMIT_ERROR_MESSAGE);
         } finally {
             if (mountedRef.current) setSaving(false);
         }
@@ -200,9 +202,14 @@ const LegalGate = ({ children }) => {
                     size={20}
                     color={colors.primary}
                 />
-                <Text style={styles.cardTitle}>
-                    {DOC_LABEL[doc.doc_type] || doc.title} (v{doc.version})
-                </Text>
+                {/* §3/§5: the document name itself opens the published text. */}
+                <TouchableOpacity onPress={() => setViewing(doc)} accessibilityRole="link"
+                    accessibilityLabel={`Open ${DOC_LABEL[doc.doc_type] || doc.title}`}
+                    style={styles.cardTitleBtn}>
+                    <Text style={[styles.cardTitle, styles.cardTitleLink]}>
+                        {DOC_LABEL[doc.doc_type] || doc.title} (v{doc.version})
+                    </Text>
+                </TouchableOpacity>
                 {doc.acknowledged ? (
                     <View style={styles.badge}>
                         <Icon name="check-circle" size={12} color={colors.success || '#059669'} />
@@ -265,13 +272,13 @@ const LegalGate = ({ children }) => {
                 <View style={styles.header}>
                     <Icon name="file-text" size={28} color={colors.primary} />
                     <Text style={styles.title} accessibilityRole="header">{GATE_TITLE}</Text>
-                    <Text style={styles.sub}>{GATE_SUBTITLE}</Text>
+                    <Text style={styles.sub}>{subtitle}</Text>
                 </View>
 
                 {accepted ? (
                     <View style={styles.successBox}>
                         <Icon name="check-circle" size={30} color={colors.success || '#059669'} />
-                        <Text style={styles.successText}>All required documents acknowledged.</Text>
+                        <Text style={styles.successText}>{SUCCESS_MESSAGE}</Text>
                     </View>
                 ) : null}
 
@@ -331,6 +338,8 @@ const styles = StyleSheet.create({
     card: { backgroundColor: '#fff', borderRadius: 14, padding: spacing.md, marginBottom: spacing.md, borderWidth: 1, borderColor: '#E2E8F0' },
     cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     cardTitle: { flex: 1, fontWeight: '700', color: colors.textPrimary, fontSize: 15 },
+    cardTitleBtn: { flex: 1 },
+    cardTitleLink: { textDecorationLine: 'underline' },
     badge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     badgeText: { color: colors.success || '#059669', fontSize: 11, fontWeight: '700' },
     checkRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: spacing.md, gap: spacing.sm },
