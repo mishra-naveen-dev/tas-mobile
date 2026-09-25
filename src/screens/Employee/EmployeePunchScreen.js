@@ -742,7 +742,13 @@ const EmployeePunchScreen = ({ navigation }) => {
         updated.amount = '';
         updated.payment_mode = '';
         updated.upi_ref = '';
-        updated.status = '';
+        // Mirrors CollectionVisitScreen's selectReasonBucket(): a Visit
+        // (Home/OD/Other) is never shown a status picker, but the backend's
+        // CompleteVisitSerializer.status is a required field — 'VISITED' is
+        // its only valid value for this reason, same as the other screen.
+        // Omitting this caused every non-Collection visit punch to fail with
+        // "status: This field is required."
+        updated.status = value === 'Visit' ? 'VISITED' : '';
         updated.collected_amount = '';
         updated.remarks = '';
         updated.promise_date = null;
