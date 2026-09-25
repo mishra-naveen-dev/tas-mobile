@@ -38,6 +38,10 @@
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>TAS needs microphone access to record a voice note during a Collection Visit.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>TAS needs camera access to take photos as proof for visits, collections and punches.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TAS needs photo library access to attach an existing photo as proof for visits, collections and punches.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

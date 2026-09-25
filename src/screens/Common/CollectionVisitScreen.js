@@ -5,7 +5,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import {
+  capturePhotoFromCamera, pickPhotoFromGallery, STANDARD_PHOTO_OPTIONS,
+} from '../../services/PhotoCapture';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
@@ -346,12 +348,16 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     ]);
   };
 
+  // Camera path goes through PhotoCapture (CAMERA runtime permission is
+  // requested there; denied/blocked states get a clear alert + Settings
+  // link) — launching directly used to fail silently, because the manifest
+  // declares CAMERA and the library refuses to open the intent until it is
+  // actually granted.
   const pickPhoto = async (kind, fromCamera) => {
-    const options = { mediaType: 'photo', quality: 0.7, maxWidth: 1600, maxHeight: 1600, saveToPhotos: false };
-    const result = fromCamera ? await launchCamera(options) : await launchImageLibrary(options);
-    if (result.didCancel || result.errorCode) return;
-    const asset = result.assets?.[0];
-    if (!asset?.uri) return;
+    const asset = fromCamera
+      ? await capturePhotoFromCamera(STANDARD_PHOTO_OPTIONS)
+      : await pickPhotoFromGallery(STANDARD_PHOTO_OPTIONS);
+    if (!asset) return;
     setPhotos((prev) => [...prev, {
       uri: asset.uri,
       fileName: asset.fileName || `photo_${Date.now()}.jpg`,
@@ -377,11 +383,10 @@ const CollectionVisitScreen = ({ navigation, route }) => {
   };
 
   const pickSingleImage = async (setter, fromCamera) => {
-    const options = { mediaType: 'photo', quality: 0.7, maxWidth: 1600, maxHeight: 1600, saveToPhotos: false };
-    const result = fromCamera ? await launchCamera(options) : await launchImageLibrary(options);
-    if (result.didCancel || result.errorCode) return;
-    const asset = result.assets?.[0];
-    if (!asset?.uri) return;
+    const asset = fromCamera
+      ? await capturePhotoFromCamera(STANDARD_PHOTO_OPTIONS)
+      : await pickPhotoFromGallery(STANDARD_PHOTO_OPTIONS);
+    if (!asset) return;
     setter({ uri: asset.uri, fileName: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.type || 'image/jpeg' });
   };
 
