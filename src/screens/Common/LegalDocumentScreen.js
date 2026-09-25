@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import api from '../../api/api';
 import ScreenHeader from '../../components/ScreenHeader';
@@ -15,6 +15,8 @@ const LegalDocumentScreen = ({ navigation, route }) => {
     const docType = route?.params?.docType;
     const [data, setData] = useState(null);
     const [failed, setFailed] = useState(false);
+    // §14: open the exact document version that was acknowledged (may be superseded).
+    const [openAck, setOpenAck] = useState(null);
 
     useEffect(() => {
         const call = docType === 'MY' ? api.getMyAcknowledgements() : api.getLegalDocuments();
@@ -36,9 +38,21 @@ const LegalDocumentScreen = ({ navigation, route }) => {
                         : data.map((a, i) => (
                             <View key={i} style={styles.card}>
                                 <Text style={styles.name}>{DOC_LABEL[a.doc_type] || a.doc_type}</Text>
-                                <Text style={styles.muted}>Version {a.version}</Text>
-                                <Text style={styles.muted}>Accepted {fmt(a.accepted_at)}</Text>
-                                <Text style={styles.muted}>App version {a.app_version || '—'}</Text>
+                                <Text style={styles.muted}>v{a.version} · Accepted {fmt(a.accepted_at)}</Text>
+                                <Text style={styles.muted}>
+                                    {a.is_current === false ? 'Accepted · superseded' : 'Accepted'}
+                                    {a.app_version ? ` · ${a.platform || ''} ${a.app_version}`.trim() : ''}
+                                </Text>
+                                <TouchableOpacity style={styles.viewBtn} onPress={() => setOpenAck(openAck === i ? null : i)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`View ${DOC_LABEL[a.doc_type] || a.doc_type} v${a.version}`}>
+                                    <Text style={styles.viewText}>{openAck === i ? 'Hide document' : 'View document'}</Text>
+                                </TouchableOpacity>
+                                {openAck === i && (
+                                    <View style={styles.ackedBody}>
+                                        <DocumentText doc={a} />
+                                    </View>
+                                )}
                             </View>
                         )))}
                 </ScrollView>
@@ -54,4 +68,7 @@ const styles = StyleSheet.create({
     card: { backgroundColor: '#fff', borderRadius: 12, padding: spacing.md, marginBottom: spacing.sm },
     name: { fontWeight: '700', color: colors.textPrimary, marginBottom: 2 },
     muted: { color: colors.textMuted },
+    viewBtn: { marginTop: spacing.sm },
+    viewText: { color: colors.primary, fontWeight: '600' },
+    ackedBody: { marginTop: spacing.sm, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: spacing.sm },
 });
