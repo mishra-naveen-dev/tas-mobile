@@ -54,7 +54,7 @@ const AdminApprovalsScreen = ({ navigation }) => {
             const [correctionRes, allowanceRes, deviceRes, profileRes] = await Promise.allSettled([
                 api.get('/attendance/correction-requests/'),
                 api.getAllowanceRequests(),
-                api.get('/organization/devices/'),
+                api.getAllDevices(),
                 api.getProfileUpdateRequests(),
             ]);
 
