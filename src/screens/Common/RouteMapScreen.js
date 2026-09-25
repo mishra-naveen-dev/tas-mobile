@@ -14,7 +14,8 @@ import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-nativ
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
-import { filterGpsOutliers, buildAcceptedRoute, routeSegmentsFrom, segmentCoords } from '../../utils/gpsUtils';
+import { routeSegmentsFrom, routeQualityFrom } from '../../utils/gpsUtils';
+import { istDateStr } from '../../utils/businessDate';
 
 const { height } = Dimensions.get('window');
 
@@ -40,12 +41,12 @@ const getStatusConfig = (status) => {
 const ACTIVITY_CONFIG = (type) => ACTIVITY_TYPES[type] || { icon: 'map-pin', color: '#9CA3AF', label: type || 'Activity', bgColor: '#F3F4F6' };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const toDateStr = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-};
+// The business date is the IST (Asia/Kolkata) calendar day - the exact day the
+// backend buckets LiveSession rows into. Deriving it from the phone's local
+// timezone would ask for the previous day's route (or tomorrow's) for the first
+// and last few hours of the IST day whenever the device is set to another zone
+// or has the wrong clock.
+const toDateStr = (d) => istDateStr(d);
 
 const formatTime = (ts) =>
     ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
@@ -249,9 +250,8 @@ const RouteMapScreen = ({ navigation, route }) => {
     const [activeDate, setActiveDate] = useState(initialDate);
     const [allPunches, setAllPunches] = useState([]);
     const [allCollectionUpdates, setAllCollectionUpdates] = useState([]);
-    const [gpsRoute, setGpsRoute] = useState([]);
-    const [gpsSegments, setGpsSegments] = useState([]);   // coord runs — one Polyline each (§9)
-    const [dailySummary, setDailySummary] = useState(null);
+    const [gpsSegments, setGpsSegments] = useState([]);   // trusted coord runs — one Polyline each
+    const [routeQuality, setRouteQuality] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [selectedActivity, setSelectedActivity] = useState(null);
@@ -263,6 +263,11 @@ const RouteMapScreen = ({ navigation, route }) => {
     const fetchData = useCallback(async () => {
         setLoading(true);
         setError(null);
+        // Clear the previous journey's route BEFORE requesting the new one, so
+        // switching date/employee can never leave the old trajectory on screen
+        // under the new day's heading.
+        setGpsSegments([]);
+        setRouteQuality(null);
         try {
             const dateStr = toDateStr(activeDate);
             const punchParams = { date_from: dateStr, date_to: dateStr };
@@ -274,13 +279,15 @@ const RouteMapScreen = ({ navigation, route }) => {
             const collParams = { date_from: dateStr, date_to: dateStr };
             if (employeeId) collParams.updated_by = employeeId;
 
-            const summaryParams = { date: dateStr };
-
-            const [punchRes, liveRes, collRes, summaryRes] = await Promise.allSettled([
+            // The daily-summary call used to supply the distance shown on this
+            // screen. That produced a SECOND, different number for the same
+            // shift (the app's own GPS chain on the dashboard, the server's on
+            // the map). The distance now comes from the same backend figure the
+            // route geometry comes from, so there is exactly one truth.
+            const [punchRes, liveRes, collRes] = await Promise.allSettled([
                 api.get('/attendance/punches/', { params: punchParams }),
                 api.getLiveDailyRoute(liveParams),
                 api.getCollectionUpdates(collParams),
-                api.get('/attendance/punches/daily_summary/', { params: summaryParams }),
             ]);
 
             // Punch records
@@ -295,34 +302,19 @@ const RouteMapScreen = ({ navigation, route }) => {
                 );
             }
 
-            // GPS track — polyline from ACCEPTED route points only, never raw.
-            // Prefers the backend's accepted_route (authoritative, same rule
-            // as ingest); falls back to the identical local buildAcceptedRoute
-            // rule for responses predating that field. Raw records stay on
-            // the server for audit — they are simply not drawn.
-            //
-            // §9: the DRAWN track is one Polyline per continuous run — prefer
-            // the backend's route_segments (validated, split at session
-            // boundaries and > max_gap_minutes gaps), else split locally on
-            // the same threshold. Never one flat line across a gap.
+            // THE ROUTE: the backend's trusted, road-matched geometry - the
+            // same stored segments the web Daily Route draws. One Polyline per
+            // continuous run, and NOTHING else. There is no client-side route
+            // builder and no raw-GPS fallback: the previous fallback rebuilt a
+            // line on-device out of raw vertices, and its segment filter could
+            // then re-join the survivors across session boundaries and gaps,
+            // which is exactly the diagonal-line defect being fixed.
             if (liveRes.status === 'fulfilled') {
                 const data = liveRes.value.data || {};
-                const serverAccepted = Array.isArray(data.accepted_route) ? data.accepted_route : null;
-                let chosen;
-                if (serverAccepted) {
-                    chosen = serverAccepted;
-                } else {
-                    const rawPoints = data.route || [];
-                    let clean = rawPoints;
-                    try {
-                        clean = buildAcceptedRoute(rawPoints).accepted;
-                    } catch {
-                        clean = filterGpsOutliers(rawPoints);
-                    }
-                    chosen = clean;
-                }
-                setGpsRoute(chosen);
-                setGpsSegments(routeSegmentsFrom(data, chosen));
+                setGpsSegments(routeSegmentsFrom(data));
+                setRouteQuality(routeQualityFrom(data));
+            } else {
+                setError('Failed to load the route for this day. Pull down to retry.');
             }
 
             // Collection updates
@@ -333,11 +325,6 @@ const RouteMapScreen = ({ navigation, route }) => {
                     ? collRes.value.data.results
                     : [];
                 setAllCollectionUpdates(raw);
-            }
-
-            // Daily summary (authoritative distance)
-            if (summaryRes.status === 'fulfilled') {
-                setDailySummary(summaryRes.value.data);
             }
         } catch {
             setError('Failed to load route data. Pull down to retry.');
@@ -502,24 +489,29 @@ const RouteMapScreen = ({ navigation, route }) => {
     );
 
     // ── GPS polyline coordinates (flat: fit-to / latest point only) ──────────
-    const gpsCoordinates = useMemo(() =>
-        gpsRoute.map((p) => ({ latitude: Number(p.lat ?? p.latitude), longitude: Number(p.lon ?? p.lng ?? p.longitude) })),
-        [gpsRoute]
-    );
-
-    // ── What's DRAWN: one Polyline per continuous run (§9) ───────────────────
-    const gpsSegmentCoords = useMemo(
-        () => gpsSegments.map(segmentCoords).filter((c) => c.length > 1),
+    // Derived from the TRUSTED runs that are actually drawn, so the viewport
+    // frames the route on screen. Never a separate, differently-filtered list.
+    const gpsCoordinates = useMemo(
+        () => gpsSegments.flat(),
         [gpsSegments]
     );
 
-    // ── Authoritative distance (from daily_summary, same source as Home) ──────
+    // ── What's DRAWN: one Polyline per continuous piece of road ──────────────
+    // `gpsSegments` already holds coordinate runs; nothing is re-derived here.
+    const gpsSegmentCoords = useMemo(
+        () => gpsSegments.filter((c) => c.length > 1),
+        [gpsSegments]
+    );
+
+    // ── Authoritative distance ────────────────────────────────────────────────
+    // The backend's distance measured along the very geometry drawn above -
+    // the same number the web Daily Route shows. Null when any segment could
+    // not be matched: the stat card then says "Unavailable" rather than
+    // displaying a number that is not the route.
     const totalDistance = useMemo(() => {
-        if (dailySummary?.total_distance_today != null) {
-            return parseFloat(dailySummary.total_distance_today);
-        }
-        return null;
-    }, [dailySummary]);
+        const km = routeQuality?.trustedDistanceKm;
+        return typeof km === 'number' && Number.isFinite(km) ? km : null;
+    }, [routeQuality]);
 
     // ── Stats from merged activities ──────────────────────────────────────────
     const stats = useMemo(() => {
@@ -650,37 +642,37 @@ const RouteMapScreen = ({ navigation, route }) => {
                         }
                     }}
                 >
-                    {/* GPS track — one Polyline per continuous segment so a gap
-                        (session boundary / > max_gap_minutes) is a visible break,
-                        never a bridging line (§9). Flat fallback only when no
-                        runs resolved (legacy responses). */}
-                    {gpsSegmentCoords.length > 0 ? (
-                        gpsSegmentCoords.map((coords, idx) => (
-                            <Polyline
-                                key={`gps-seg-${idx}`}
-                                coordinates={coords}
-                                strokeColor={colors.primary}
-                                strokeWidth={3}
-                                lineDashPattern={undefined}
-                            />
-                        ))
-                    ) : gpsCoordinates.length > 1 ? (
+                    {/* THE ROUTE — one Polyline per continuous piece of the
+                        backend's trusted, road-matched geometry. 16 segments
+                        with 15 gaps render 16 independent lines and no line
+                        anywhere between them.
+
+                        There is deliberately NO fallback here. The previous
+                        screen drew a single flat line through the raw GPS
+                        vertices, and a second "fallback" dashed line through
+                        the punch locations - both are straight lines between
+                        observations with no evidence of the road in between,
+                        which is exactly the reported defect. When the road
+                        network cannot be matched, no path is drawn and the
+                        quality panel below says so. */}
+                    {gpsSegmentCoords.map((coords, idx) => (
                         <Polyline
-                            coordinates={gpsCoordinates}
+                            key={`gps-seg-${idx}`}
+                            coordinates={coords}
                             strokeColor={colors.primary}
                             strokeWidth={3}
                             lineDashPattern={undefined}
                         />
-                    ) : null}
+                    ))}
 
-                    {/* Fallback: dashed activity path when GPS track unavailable */}
-                    {gpsSegmentCoords.length === 0 && gpsCoordinates.length < 2 && punchCoordinates.length > 1 && (
-                        <Polyline
-                            coordinates={punchCoordinates}
-                            strokeColor={colors.primary}
-                            strokeWidth={2}
-                            lineDashPattern={[6, 4]}
-                        />
+                    {gpsSegmentCoords.length === 0 && routeQuality?.hasRawEvidence && (
+                        <View style={styles.routeUnavailable}>
+                            <Icon name="alert-triangle" size={16} color={colors.warning} />
+                            <Text style={styles.routeUnavailableText}>
+                                Road geometry unavailable — no path drawn. The GPS evidence
+                                for this day is still counted below.
+                            </Text>
+                        </View>
                     )}
 
                     {/* Activity markers */}
@@ -790,9 +782,62 @@ const RouteMapScreen = ({ navigation, route }) => {
                         <Text style={[styles.statVal, { color: '#7b1fa2', fontSize: 14 }]}>
                             {totalDistance != null ? `${totalDistance}` : '—'}
                         </Text>
-                        <Text style={styles.statLbl}>km</Text>
+                        <Text style={styles.statLbl}>
+                            {totalDistance != null ? 'km (trusted)' : 'km (unavailable)'}
+                        </Text>
                     </View>
                 </View>
+
+                {/* Route quality. A route is never hidden by simply removing
+                    its polyline — the figures that describe the day are always
+                    on screen, read straight from the backend. */}
+                {routeQuality && (routeQuality.rawPoints > 0 || routeQuality.rejectedCount > 0) && (
+                    <View style={styles.qualityBox}>
+                        <View style={styles.qualityHeaderRow}>
+                            <Icon
+                                name={routeQuality.geometryStatus === 'COMPLETE' ? 'check-circle' : 'alert-triangle'}
+                                size={15}
+                                color={routeQuality.geometryStatus === 'COMPLETE' ? colors.success : colors.warning}
+                            />
+                            <Text style={styles.qualityHeader}>
+                                {routeQuality.geometryStatus === 'COMPLETE'
+                                    ? 'Route matched to real roads'
+                                    : 'Road geometry unavailable — route not drawn'}
+                            </Text>
+                        </View>
+                        <View style={styles.qualityGrid}>
+                            <Text style={styles.qualityItem}>Raw GPS points: {routeQuality.rawPoints}</Text>
+                            {routeQuality.validPoints != null && (
+                                <Text style={styles.qualityItem}>Valid points: {routeQuality.validPoints}</Text>
+                            )}
+                            <Text style={styles.qualityItem}>Segments: {routeQuality.segmentCount}</Text>
+                            <Text style={styles.qualityItem}>GPS gaps: {routeQuality.gapCount}</Text>
+                            {routeQuality.rejectedCount > 0 && (
+                                <Text style={styles.qualityItem}>Rejected: {routeQuality.rejectedCount}</Text>
+                            )}
+                            {routeQuality.lowAccuracyCount > 0 && (
+                                <Text style={styles.qualityItem}>Low accuracy: {routeQuality.lowAccuracyCount}</Text>
+                            )}
+                            {routeQuality.duplicatePoints > 0 && (
+                                <Text style={styles.qualityItem}>Duplicates: {routeQuality.duplicatePoints}</Text>
+                            )}
+                            {routeQuality.lastGpsUpdate && (
+                                <Text style={styles.qualityItem}>
+                                    Last GPS: {new Date(routeQuality.lastGpsUpdate).toLocaleString()}
+                                </Text>
+                            )}
+                            {routeQuality.trackingStatus && (
+                                <Text style={styles.qualityItem}>Tracking: {routeQuality.trackingStatus}</Text>
+                            )}
+                        </View>
+                        {Object.keys(routeQuality.filterReasonCounts).length > 0 && (
+                            <Text style={styles.qualityReasons}>
+                                Filtered / broken: {Object.entries(routeQuality.filterReasonCounts)
+                                    .map(([k, v]) => `${k} (${v})`).join(', ')}
+                            </Text>
+                        )}
+                    </View>
+                )}
 
                 {error ? (
                     <View style={styles.errorRow}>
@@ -1020,6 +1065,27 @@ const styles = StyleSheet.create({
     statDivider: { borderLeftWidth: 1, borderLeftColor: colors.border },
     statVal: { fontSize: typography.sizes.lg, fontWeight: typography.weights.bold, color: colors.textDark },
     statLbl: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
+
+    // Route quality — the figures that describe the day, always on screen.
+    routeUnavailable: {
+        position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        backgroundColor: colors.warningLight, borderRadius: 8,
+        padding: spacing.sm, borderWidth: 1, borderColor: `${colors.warning}44`,
+    },
+    routeUnavailableText: {
+        flex: 1, fontSize: typography.sizes.xs, color: colors.textDark, lineHeight: 15,
+    },
+    qualityBox: {
+        backgroundColor: '#F8FAFC', borderRadius: 10, padding: spacing.md,
+        marginHorizontal: spacing.md, marginBottom: spacing.md, gap: 6,
+        borderWidth: 1, borderColor: colors.border,
+    },
+    qualityHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    qualityHeader: { fontSize: typography.sizes.sm, fontWeight: typography.weights.semibold, color: colors.textDark, flex: 1 },
+    qualityGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    qualityItem: { fontSize: typography.sizes.xs, color: colors.textMuted },
+    qualityReasons: { fontSize: typography.sizes.xs, color: colors.textMuted, fontStyle: 'italic' },
 
     // Error / empty
     errorRow: {

@@ -7,6 +7,7 @@ import GeocodingService from '../services/GeocodingService';
 import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
 import { enqueue, isNetworkError, registerReplayer, generateTransactionId } from '../services/OfflineQueue';
+import { istDateStr } from '../utils/businessDate';
 
 const IS_DEV = __DEV__;
 const GEOCODE_TIMEOUT_MS = 6000;
@@ -79,6 +80,27 @@ export const PunchProvider = ({ children }) => {
   // and are re-seeded from the server on every punch-state restore, so an
   // app restart never creates a new start time.
   const [trackingMarks, setTrackingMarks] = useState(null);
+
+  // The OFFICIAL distance for today, straight from the backend's trusted
+  // route. Null means "the server has no complete answer yet" (still
+  // uploading, offline, or part of the route could not be road-matched) — the
+  // screens then show '—' rather than a locally-reconstructed number that
+  // would disagree with the Route Map.
+  const [trustedDistanceKm, setTrustedDistanceKm] = useState(null);
+  const [trustedRouteStatus, setTrustedRouteStatus] = useState(null);
+
+  const refreshTrustedDistance = useCallback(async () => {
+    try {
+      const res = await api.getLiveDailyRoute({ date: istDateStr() });
+      const data = res?.data || {};
+      const km = data.trusted_distance_km;
+      setTrustedDistanceKm(typeof km === 'number' && Number.isFinite(km) ? km : null);
+      setTrustedRouteStatus(data.geometry_status || null);
+    } catch {
+      // Offline, or the route has not been built yet. Leave the last known
+      // value alone rather than replacing it with a guess.
+    }
+  }, []);
 
   const fetchTodayPunches = useCallback(async () => {
     try {
@@ -333,15 +355,15 @@ export const PunchProvider = ({ children }) => {
       trackingStartTime.current = Date.now();
       routePoints.current = [];
 
-      // Lightweight, foreground-only live-distance counter powering the "Live
-      // Stats" card on screen (getTotalDistance() below) — independent of the
-      // server-orchestrated tracking engine, which is what actually keeps
-      // recording once the app is backgrounded/killed (see LiveTrackingService
-      // below). Not battery-critical since it only runs while this screen is
-      // open, so a plain JS watch is fine here.
-      LocationService.startTracking().catch((e) => {
-        if (IS_DEV) console.warn('[Punch] Local distance tracking error:', e.message);
-      });
+      // The distance this shift shows comes from the SERVER's trusted route
+      // (see refreshTrustedDistance below) - the same road-matched figure the
+      // Route Map draws. A local, second watchPosition counter used to run
+      // alongside the live-tracking engine purely to fill the "Live Stats"
+      // card. It produced a DIFFERENT number for the same shift: a raw
+      // point-to-point chain that knew nothing about GPS gaps, rejected
+      // outliers or the road network, and it doubled the high-accuracy GPS
+      // listeners for no capture benefit (it never uploaded anything). One
+      // engine, one number.
 
       // Server-orchestrated GPS tracking engine (Milestone 1): the backend
       // already opened this employee's LiveSession as part of the punch-in
@@ -506,9 +528,10 @@ export const PunchProvider = ({ children }) => {
 
       if (IS_DEV) console.log('[Punch] Submitting punch out:', JSON.stringify(payload, null, 2));
 
-      // Stop the local distance-stat tracker. Synchronous (not Promise-based)
-      // — it already catches its own errors internally and never throws, so
-      // no .catch() here (chaining one on a non-Promise return value throws
+      // Stop the local distance-stat tracker (now a no-op that only clears the
+      // retired local counters - see the note at punch-in). Synchronous, not
+      // Promise-based: it catches its own errors and never throws, so no
+      // .catch() here (chaining one on a non-Promise return value throws
       // "Cannot read property 'catch' of undefined" on every call).
       LocationService.stopTracking();
 
@@ -577,8 +600,13 @@ export const PunchProvider = ({ children }) => {
   }, []);
 
   const getTotalDistance = useCallback(() => {
-    return LocationService.getTotalDistance();
-  }, []);
+    // The OFFICIAL distance for the current shift: the backend's trusted
+    // route distance, measured along the road-matched geometry the Route Map
+    // draws. Null until the server has a complete answer - and null when it
+    // could not match part of the route, because a number that disagrees with
+    // the map is worse than no number.
+    return trustedDistanceKm;
+  }, [trustedDistanceKm]);
 
   const getTrackingDuration = useCallback(() => {
     if (!trackingStartTime.current) return 0;
@@ -590,6 +618,22 @@ export const PunchProvider = ({ children }) => {
     fetchTodayPunches();
     checkPendingAutoClosure();
   }, [fetchTodayPunches, checkPendingAutoClosure]);
+
+  // Keep the official distance current. The backend rebuilds the day's trusted
+  // route as fixes arrive, so this converges on the same figure the Route Map
+  // shows. Polled only while a shift is running - on a fixed interval, and not
+  // at all when offline, because the request is uncacheable by design and
+  // hammering it in the background would drain the battery for a number that
+  // only changes when a batch is flushed.
+  useEffect(() => {
+    refreshTrustedDistance();
+    if (!isActive) return undefined;
+    // A failed request is a no-op that keeps the last good value, so a briefly
+    // offline phone does not need a connectivity guard here - it simply costs
+    // one failed request per interval.
+    const timer = setInterval(refreshTrustedDistance, 60000);
+    return () => clearInterval(timer);
+  }, [isActive, refreshTrustedDistance]);
 
   const value = useMemo(() => ({
     punches,
@@ -616,6 +660,8 @@ export const PunchProvider = ({ children }) => {
     clearError,
     getTotalDistance,
     getTrackingDuration,
+    trustedRouteStatus,
+    refreshTrustedDistance,
     LocationService,
     trackingMarks,
     pendingAutoClosure,
@@ -625,6 +671,7 @@ export const PunchProvider = ({ children }) => {
     punches, loading, error, errorMessage, success, punchState, isActive,
     isMockLocation, capturedLocation, initialFetchDone, fetchTodayPunches, punchIn, punchOut, registerExternalPunchIn,
     fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration,
+    trustedRouteStatus, refreshTrustedDistance,
     trackingMarks, pendingAutoClosure, checkPendingAutoClosure, submitForgotPunchRequest,
   ]);
 
@@ -660,6 +707,8 @@ export const usePunch = () => {
       clearError: () => {},
       getTotalDistance: () => 0,
       getTrackingDuration: () => 0,
+      trustedRouteStatus: null,
+      refreshTrustedDistance: () => {},
       LocationService: null,
       trackingMarks: null,
       pendingAutoClosure: null,

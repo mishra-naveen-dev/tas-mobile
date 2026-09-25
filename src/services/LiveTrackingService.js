@@ -55,8 +55,16 @@ const DEFAULT_CONFIG = {
   stationary_window_s: 60,
 };
 
+// The offline GPS queue. Scoped by the AUTHENTICATED USER as well as the
+// session inside the value: on a shared device, a second employee signing in
+// must never inherit the first employee's captured-but-unuploaded fixes, which
+// the server would then attribute to their own tracking session.
 const QUEUE_KEY = '@tas_live_tracking_queue';
 const CONFIG_CACHE_KEY = '@tas_tracking_config';
+
+function _queueKey() {
+  return `${QUEUE_KEY}:${LiveTrackingService._ownerId || 'anonymous'}`;
+}
 
 // Haversine distance between two coordinates in metres (client-side copy)
 function _distanceM(lat1, lng1, lat2, lng2) {
@@ -147,6 +155,20 @@ class LiveTrackingService {
     this.lastBattery = battery_level;
     this.sessionId = sessionId;
 
+    // Scope the offline queue to the signed-in employee. Read from the same
+    // secure token store the API uses, so a second employee on a shared device
+    // never loads the first employee's un-uploaded fixes into their own
+    // tracking session (which would splice someone else's journey into this
+    // route). A failure here is not fatal: the anonymous key simply means the
+    // queue starts empty, and the session-mismatch guard below still applies.
+    try {
+      const user = await secureGetItem('user');
+      const ownerId = user?.employee_id ?? user?.id ?? user?.pk ?? null;
+      this._ownerId = ownerId != null ? String(ownerId) : null;
+    } catch {
+      this._ownerId = null;
+    }
+
     // Restore any pings left over from a previous crash/kill.
     await this._loadQueue();
 
@@ -217,12 +239,17 @@ class LiveTrackingService {
 
     this.sessionId = null;
     this.queue     = [];
+    // The sequence counter is per SESSION, not per device: a new tracking
+    // session restarts at 1, and the server's (session, sequence_no) key keeps
+    // the two spaces independent. Carrying yesterday's counter forward would
+    // just push every new fix past a number the server has never seen.
+    this._sequence = 0;
     this.usingJsFallback = false;
     this._lastQueuedLat       = null;
     this._lastQueuedLng       = null;
     this._lastQueuedTs        = null;
     this._lastStationaryKeepTs = null;
-    try { await AsyncStorage.removeItem(QUEUE_KEY); } catch {}
+    try { await AsyncStorage.removeItem(_queueKey()); } catch {}
 
     if (IS_DEV) console.log('[Live] Detached');
     return { success: true };
@@ -330,6 +357,11 @@ class LiveTrackingService {
       // Idempotency key (Milestone 1) — lets the server dedup a batch that
       // gets resent after its HTTP response was lost in transit.
       client_point_id: _uuid(),
+      // Per-session monotonic counter. The server's second idempotency axis:
+      // (session, sequence_no) is unique, so a retry whose client_point_ids
+      // were lost or mangled still cannot double-insert. It is also the
+      // device's own durable record of the order it captured fixes in.
+      sequence: (this._sequence = (this._sequence || 0) + 1),
     });
 
     const maxQueueRetained = 2000;
@@ -379,20 +411,51 @@ class LiveTrackingService {
   static async _saveQueue() {
     try {
       await AsyncStorage.setItem(
-        QUEUE_KEY,
-        JSON.stringify({ sessionId: this.sessionId, points: this.queue })
+        _queueKey(),
+        JSON.stringify({
+          sessionId: this.sessionId,
+          points: this.queue,
+          sequence: this._sequence || 0,
+        })
       );
     } catch {}
   }
 
   static async _loadQueue() {
     try {
-      const raw = await AsyncStorage.getItem(QUEUE_KEY);
+      const raw = await AsyncStorage.getItem(_queueKey());
       if (!raw) return;
-      const { sessionId, points } = JSON.parse(raw);
+      const { sessionId, points, sequence } = JSON.parse(raw);
+
+      // A queued point belongs to the session that captured it. If the queue
+      // was written by a PREVIOUS session (the app was killed, the punch-out
+      // never reached detach(), and the user punched in again), those points
+      // must never be replayed into the new session: the server would place a
+      // yesterday-evening journey inside today's route, producing a segment
+      // that crosses a session boundary it does not belong to.
+      // They are dropped. They were never acknowledged, so they cannot be
+      // re-attributed safely, and the server keeps the authoritative count.
+      if (sessionId != null && this.sessionId != null && sessionId !== this.sessionId) {
+        if (IS_DEV) {
+          console.warn('[Live] Dropping', points?.length || 0,
+            'queued pings from a previous session', sessionId, '->', this.sessionId);
+        }
+        await AsyncStorage.removeItem(_queueKey());
+        this.queue = [];
+        return;
+      }
+
       if (points?.length) {
         this.queue = points;
         if (!this.sessionId && sessionId) this.sessionId = sessionId;
+        // Resume the sequence counter past everything already queued, so a new
+        // fix can never reuse a sequence number the server has already seen
+        // (which would be silently deduped as a duplicate and the fix lost).
+        const highest = points.reduce(
+            (max, p) => (typeof p.sequence === 'number' && p.sequence > max ? p.sequence : max),
+            0,
+        );
+        this._sequence = Math.max(this._sequence || 0, highest, sequence || 0);
         if (IS_DEV) console.log('[Live] Restored', points.length, 'offline pings');
       }
     } catch {}

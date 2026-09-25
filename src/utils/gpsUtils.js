@@ -280,10 +280,25 @@ export function safeDistanceKm(rawPoints, maxSpeedKmh = MAX_SPEED_KMH) {
     return calcTotalDistanceKm(filterGpsOutliers(rawPoints, maxSpeedKmh));
 }
 
-// ─── Gap/session-aware route segments (display) ─────────────────────────────
-// Mirrors backend build_accepted_route's `segments`: ONE inner array per
-// continuous run — render one Polyline per entry and never a single flat
-// line across a gap (no GPS evidence exists for what happened in between).
+// ─── Trusted route geometry (display) ────────────────────────────────────────
+//
+// THE PHONE DOES NOT DECIDE THE ROUTE. The backend segments the day's GPS at
+// every gap, map-matches each continuous segment onto real roads, and stores
+// the result; this app reads that same stored result the web dashboard reads.
+// There is deliberately no client-side route builder here any more.
+//
+// Why the old client-side fallback was removed: it filled in for the backend
+// whenever the response lacked segments, and its output was straight lines
+// between raw GPS vertices. That is the same shape as the raw accepted
+// segments it replaced, so the screen could still draw diagonals - and the
+// fallback that filtered out one-point segments then re-drew the survivors as
+// ONE continuous line, which bridged every session boundary and every gap in
+// between. The app also had its own distance chain (a second number for the
+// same shift) that never matched the server's.
+//
+// A segment the matcher split further is returned as SEVERAL geometry runs
+// and each must be rendered as its own Polyline. Concatenating them is the
+// same defect one level up.
 
 /** {lat|latitude, lng|lon|longitude} → {latitude, longitude}, or null. */
 export function pointCoords(p) {
@@ -302,47 +317,62 @@ export function segmentCoords(seg) {
 }
 
 /**
- * Coordinate runs for a daily-route response (§9).
- * PREFER the backend's `route_segments` (validated, split at session
- * boundaries and > max_gap_minutes gaps); fall back to a client-side gap
- * split over `fallback` points on the SAME configured threshold (backend
- * response's max_gap_minutes, else 15 = module default).
+ * The draw list for the Route Map, taken from the backend's trusted geometry.
  *
- * @param {object|null} data       daily-route response
- * @param {Array}       [fallback] points to split when route_segments absent
- * @returns {Array<Array<{latitude, longitude}>>} chronological coord runs
+ * @param {object|null} data  a /livetracking/daily/ (or route-detail) response
+ * @returns {Array<Array<{latitude, longitude}>>} one coord run per continuous
+ *          piece of road. A run of fewer than two vertices is dropped: a single
+ *          fix cannot be a line, and keeping it would invite a caller to join
+ *          it to a neighbouring run.
+ *
+ * Returns an EMPTY list — never raw GPS — when the backend could not produce
+ * trusted geometry. The screen then shows the quality figures instead of a
+ * path nobody measured.
  */
-export function routeSegmentsFrom(data, fallback) {
-    if (Array.isArray(data?.route_segments) && data.route_segments.length > 0) {
-        return data.route_segments.map(segmentCoords).filter(c => c.length > 0);
-    }
-    const src = Array.isArray(fallback) ? fallback : [];
-    if (src.length === 0) return [];
-
-    const getTs = (p) => {
-        const v = p?.timestamp ?? p?.captured_at ?? p?.punched_at ?? null;
-        if (v == null) return null;
-        if (typeof v === 'number') return v > 1e12 ? v : v * 1000;
-        const t = new Date(v).getTime();
-        return Number.isNaN(t) ? null : t;
-    };
-
-    const gapMs = (Number(data?.max_gap_minutes) > 0 ? Number(data.max_gap_minutes) : 15) * 60000;
-    const sorted = [...src].sort((a, b) => (getTs(a) ?? 0) - (getTs(b) ?? 0));
+export function routeSegmentsFrom(data) {
+    const segments = Array.isArray(data?.trusted_route_segments)
+        ? data.trusted_route_segments
+        : null;
+    if (!segments || segments.length === 0) return [];
 
     const runs = [];
-    let current = [];
-    let prevT = null;
-    for (const p of sorted) {
-        const t = getTs(p);
-        if (current.length > 0 && t != null && prevT != null && t - prevT > gapMs) {
-            if (current.length) runs.push(current);
-            current = [];
-        }
-        const c = pointCoords(p);
-        if (c) current.push(c);
-        if (t != null) prevT = t;
-    }
-    if (current.length) runs.push(current);
+    segments.forEach((segment) => {
+        const geometry = Array.isArray(segment?.geometry_runs) && segment.geometry_runs.length > 0
+            ? segment.geometry_runs
+            // `points` is only ever populated for a single-run segment, so
+            // reading it can never join two pieces of road.
+            : (Array.isArray(segment?.points) && segment.points.length > 1
+                ? [segment.points]
+                : []);
+        geometry.forEach((run) => {
+            const coords = segmentCoords(run);
+            if (coords.length > 1) runs.push(coords);
+        });
+    });
     return runs;
+}
+
+/**
+ * The quality picture the Route Map shows alongside (or instead of) the route.
+ * Every value is read straight off the backend response - the app computes
+ * none of it.
+ */
+export function routeQualityFrom(data) {
+    const segments = Array.isArray(data?.trusted_route_segments)
+        ? data.trusted_route_segments : [];
+    return {
+        geometryStatus: data?.geometry_status || 'UNKNOWN',
+        trustedDistanceKm: data?.trusted_distance_km ?? null,
+        validPoints: data?.valid_points ?? null,
+        rawPoints: data?.raw_points_count ?? data?.total_points ?? 0,
+        rejectedCount: data?.rejected_count ?? 0,
+        lowAccuracyCount: data?.low_accuracy_count ?? 0,
+        duplicatePoints: data?.duplicate_points ?? 0,
+        gapCount: data?.gps_gaps ?? data?.gap_count ?? 0,
+        segmentCount: segments.length,
+        filterReasonCounts: data?.filter_reason_counts || {},
+        lastGpsUpdate: data?.last_gps_update ?? null,
+        trackingStatus: data?.tracking_status ?? null,
+        hasRawEvidence: (data?.route?.length ?? 0) > 0,
+    };
 }

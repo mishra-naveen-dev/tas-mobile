@@ -234,7 +234,21 @@ export const resetSessionHandler = () => {
 // /legal/status/ is excluded for a security reason: it is an authorisation
 // decision that must never be replayed from cache (a stale "pending: []"
 // would open the gate while the server still requires acknowledgement).
-const UNCACHEABLE_GET_PATTERNS = [/\/map_markers\//, /\/map_search\//, /\/legal\/status\//];
+//
+// ROUTE ENDPOINTS ARE EXCLUDED FOR A CORRECTNESS REASON, not a performance
+// one. A route is scoped to one employee + one business date + one session.
+// Replaying a stored response after the user changed the date, or logged in
+// as someone else on a shared device, draws a journey that belongs to a
+// different person or a different day - and it looks like a real route. A
+// route that is genuinely unavailable must say so.
+const UNCACHEABLE_GET_PATTERNS = [
+    /\/map_markers\//,
+    /\/map_search\//,
+    /\/legal\/status\//,
+    /\/livetracking\/daily\//,
+    /\/tracking\/routes\/detail\//,
+    /\/tracking\/routes\/daily\//,
+];
 
 api.interceptors.response.use(
     async (response) => {
@@ -579,9 +593,16 @@ api.getTrackingConfig = () =>
 api.sendTrackingHeartbeat = (data) =>
     api.post('/livetracking/heartbeat/', data);
 
-// Coordinates for one day. Pass { date, employee_id? }.
+// The backend's trusted route for one day: GPS segmented at every gap, each
+// continuous segment map-matched onto real roads, and the distance measured
+// along that same geometry. The app renders this and nothing else - it never
+// rebuilds a route on-device.
+//
+// `map_matched` is sent explicitly so the intent is visible at the call site;
+// the client is not choosing between "matched" and "raw" any more, because
+// raw geometry is not a route.
 api.getLiveDailyRoute = (params = {}) =>
-    api.get('/livetracking/daily/', { params });
+    api.get('/livetracking/daily/', { params: { map_matched: '1', ...params } });
 
 // The employee's most recent auto-closed session with no review request yet
 // (Milestone 2a) — PunchContext polls this to decide whether to show a
@@ -627,9 +648,31 @@ api.getAllEmployees = (params = {}) => {
     return api.get('/organization/users/', { params });
 };
 
-api.getDevices = (params = {}) => {
-    return api.get('/organization/devices/', { params });
+const getAllDevicePages = async (params = {}) => {
+    let nextUrl = '/organization/devices/';
+    const requestParams = { page_size: 100, ...params };
+    let nextPageParams = requestParams;
+    const rows = [];
+    const visitedUrls = new Set();
+
+    while (nextUrl && !visitedUrls.has(nextUrl)) {
+        visitedUrls.add(nextUrl);
+        const response = await api.get(nextUrl, { params: nextPageParams });
+        const data = response.data;
+
+        // Backward compatibility with an older unpaginated backend.
+        if (Array.isArray(data)) return { data };
+
+        rows.push(...(Array.isArray(data?.results) ? data.results : []));
+        nextUrl = data?.next || null;
+        nextPageParams = undefined;
+    }
+
+    return { data: rows };
 };
+
+api.getAllDevices = getAllDevicePages;
+api.getDevices = getAllDevicePages;
 
 api.approveDevice = (id) => api.post(`/organization/devices/${id}/approve/`);
 api.rejectDevice = (id) => api.post(`/organization/devices/${id}/reject/`);

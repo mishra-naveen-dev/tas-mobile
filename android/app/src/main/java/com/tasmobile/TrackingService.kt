@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
@@ -99,6 +100,7 @@ class TrackingService : Service() {
         const val BUFFER_CAP = 600              // drop oldest beyond this if server is down
 
         private const val PREFS = "tas_tracking_prefs"
+        private const val KEY_SEQUENCE = "sequence_no"
     }
 
     private var fused: FusedLocationProviderClient? = null
@@ -109,6 +111,10 @@ class TrackingService : Service() {
     private var baseUrl: String = ""
     private var token: String = ""
     private var sessionId: Int = -1
+
+    private companion object {
+        const val TAG = "TasTracking"
+    }
 
     // Config-driven intervals (seconds) — see companion defaults above.
     private var intervalMovingS = DEFAULT_INTERVAL_MOVING_S
@@ -121,6 +127,12 @@ class TrackingService : Service() {
     // Buffer of captured fixes, uploaded in batches to keep server load low.
     private val buffer = ArrayList<JSONObject>()
     private val bufferLock = Any()
+
+    // Per-session sequence counter for the (session, sequence_no) idempotency
+    // key. -1 means "not loaded yet"; it is persisted so it survives the OS
+    // killing the service, and reset whenever a new session is attached.
+    private val sequenceLock = Any()
+    @Volatile private var sequenceNo: Int = -1
     private val flushHandler = Handler(Looper.getMainLooper())
     private val flushRunnable = object : Runnable {
         override fun run() {
@@ -148,7 +160,21 @@ class TrackingService : Service() {
             ACTION_START_LIVE -> {
                 baseUrl = intent.getStringExtra(EXTRA_BASE_URL) ?: ""
                 token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
-                sessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
+                val newSessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
+                if (newSessionId != sessionId) {
+                    // A different tracking session. The sequence counter is
+                    // scoped to (session, sequence_no) on the server, so it
+                    // restarts; anything still buffered belongs to the previous
+                    // session and is dropped rather than replayed into this one
+                    // (which would splice two journeys into one route).
+                    synchronized(bufferLock) { if (buffer.isNotEmpty()) {
+                        Log.w(TAG, "Dropping ${buffer.size} buffered fix(es) from the previous session.")
+                        buffer.clear()
+                    } }
+                    synchronized(sequenceLock) { sequenceNo = 1 }
+                    prefs().edit().putInt(KEY_SEQUENCE, 1).apply()
+                }
+                sessionId = newSessionId
                 applyConfigExtras(intent)
                 persistParams()
                 startForegroundTracking()
@@ -323,14 +349,57 @@ class TrackingService : Service() {
             // Idempotency key (Milestone 1) — lets the server dedup a batch
             // that gets resent after its HTTP response was lost in transit.
             put("client_point_id", UUID.randomUUID().toString())
+            // Per-session monotonic counter: the server's second idempotency
+            // axis, (session, sequence_no) is unique. A retry whose
+            // client_point_ids were lost or mangled still cannot double-insert,
+            // so an offline backlog replayed after a crash cannot double a
+            // stretch of the route and distort its distance.
+            put("sequence", nextSequence())
         }
         val shouldFlush: Boolean
         synchronized(bufferLock) {
             buffer.add(point)
-            while (buffer.size > BUFFER_CAP) buffer.removeAt(0)
+            // Overflow drops the OLDEST buffered fix, but never silently: the
+            // first fix of a new upload window has to start where the previous
+            // upload left off, or the route is drawn as if the employee jumped
+            // from the end of the last flush straight to here - a line across
+            // road nobody observed. See flush() for the boundary marker.
+            if (buffer.size > BUFFER_CAP) {
+                buffer.removeAt(0)
+                Log.w(TAG, "GPS buffer full (${BUFFER_CAP}); dropped the oldest unsent fix - " +
+                    "the route will show a gap there, which is honest: those fixes were never uploaded.")
+            }
             shouldFlush = buffer.size >= BATCH_MAX
         }
         if (shouldFlush) flush()
+    }
+
+    /**
+     * The next per-session sequence number, persisted so it survives the
+     * service being killed. Resume from the value the server reports after a
+     * successful upload, so a client that lost its counter (clear-data, restore
+     * to a new device) steps past what is already stored instead of having its
+     * next fixes silently deduped away.
+     */
+    private fun nextSequence(): Int {
+        synchronized(sequenceLock) {
+            if (sequenceNo < 0) {
+                sequenceNo = prefs().getInt(KEY_SEQUENCE, 1)
+                if (sequenceNo < 1) sequenceNo = 1
+            }
+            val value = sequenceNo
+            sequenceNo += 1
+            return value
+        }
+    }
+
+    /** Called with the server's `max_sequence` after each successful upload. */
+    private fun noteServerMaxSequence(serverMax: Int) {
+        if (serverMax < 1) return
+        synchronized(sequenceLock) {
+            if (serverMax >= sequenceNo) sequenceNo = serverMax + 1
+            prefs().edit().putInt(KEY_SEQUENCE, sequenceNo).apply()
+        }
     }
 
     /** POST all buffered fixes as one batch. Re-queues them on failure. */
@@ -377,15 +446,26 @@ class TrackingService : Service() {
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val code = conn.responseCode
                 if (code !in 200..299) throw RuntimeException("HTTP $code")
+                // Step the local counter past whatever the server now holds, so
+                // a counter lost with the process cannot make every subsequent
+                // fix look like a duplicate of one already stored.
+                (conn.inputStream.bufferedReader().use { it.readText() }).let { response ->
+                    try { noteServerMaxSequence(JSONObject(response).optInt("max_sequence", 0)) }
+                    catch (e: Exception) { /* response shape changed; keep local counter */ }
+                }
             } catch (e: Exception) {
                 // Re-queue the batch (oldest first) so it retries on the next
-                // flush. Each point kept its client_point_id, so if the earlier
-                // POST actually succeeded server-side before this exception
-                // (e.g. the response itself was lost), the retry is a safe
-                // no-op for those points instead of creating duplicates.
+                // flush. Each point kept its client_point_id AND its sequence
+                // number, so if the earlier POST actually succeeded server-side
+                // before this exception (e.g. the response itself was lost), the
+                // retry is a safe no-op for those points instead of creating
+                // duplicates.
                 synchronized(bufferLock) {
                     buffer.addAll(0, batch)
-                    while (buffer.size > BUFFER_CAP) buffer.removeAt(0)
+                    if (buffer.size > BUFFER_CAP) {
+                        buffer.removeAt(0)
+                        Log.w(TAG, "GPS buffer overflowed on retry; dropped the oldest unsent fix.")
+                    }
                 }
             } finally {
                 conn?.disconnect()
@@ -430,8 +510,10 @@ class TrackingService : Service() {
 
     // ---- params persistence (survive process death / START_STICKY restart) ----
 
+    private fun prefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
+
     private fun persistParams() {
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+        prefs().edit()
             .putString(EXTRA_BASE_URL, baseUrl)
             .putString(EXTRA_TOKEN, token)
             .putInt(EXTRA_SESSION_ID, sessionId)

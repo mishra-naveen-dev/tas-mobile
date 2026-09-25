@@ -1,77 +1,149 @@
-import { routeSegmentsFrom, segmentCoords, pointCoords } from '../src/utils/gpsUtils';
+import { routeSegmentsFrom, routeQualityFrom } from '../src/utils/gpsUtils';
 
-// §9: the drawn track is ONE Polyline per continuous run — a gap (session
-// boundary / > max_gap_minutes) is a visible break, never a bridging line.
+// The Route Map draws the BACKEND's trusted geometry and nothing else. These
+// tests pin that contract, because the previous implementation rebuilt a line
+// on-device: it filtered out one-point segments and then drew the survivors as
+// ONE continuous line, which bridged every session boundary and every gap
+// between them - the diagonal-line defect.
+
+const run = (id, lats) => ({
+    segment_id: id,
+    geometry_runs: [lats.map((lat) => ({ lat, lng: 72.0 }))],
+    points: lats.map((lat) => ({ lat, lng: 72.0 })),
+});
+
 describe('routeSegmentsFrom', () => {
-  test('prefers backend route_segments as-is (validated, already split)', () => {
-    const data = {
-      route_segments: [
-        [{ lat: 23.0, lng: 72.0 }, { lat: 23.01, lng: 72.0 }],
-        [{ lat: 23.05, lng: 72.0 }],
-      ],
-    };
-    const runs = routeSegmentsFrom(data, [{ lat: 9, lng: 9 }]);
-    expect(runs.length).toBe(2);
-    expect(runs[0]).toEqual([
-      { latitude: 23.0, longitude: 72.0 },
-      { latitude: 23.01, longitude: 72.0 },
-    ]);
-    expect(runs[1]).toEqual([{ latitude: 23.05, longitude: 72.0 }]);
-  });
+    test('returns one run per continuous piece of road, never a joined list', () => {
+        const data = {
+            trusted_route_segments: [run(1, [23.0, 23.01]), run(2, [23.2, 23.21])],
+        };
+        const runs = routeSegmentsFrom(data);
+        expect(runs).toHaveLength(2);
+        expect(runs[0].map((p) => p.latitude)).toEqual([23.0, 23.01]);
+        expect(runs[1].map((p) => p.latitude)).toEqual([23.2, 23.21]);
+    });
 
-  test('fallback splits at > 15 min — never one flat line across the gap', () => {
-    const base = Date.now() - 6 * 3600 * 1000;
-    const pts = [
-      { lat: 23.0, lng: 72.0, timestamp: base },
-      { lat: 23.01, lng: 72.0, timestamp: base + 5 * 60000 },
-      // 3-hour GPS gap — must become a segment boundary
-      { lat: 23.05, lng: 72.0, timestamp: base + 185 * 60000 },
-      { lat: 23.06, lng: 72.0, timestamp: base + 190 * 60000 },
-    ];
-    const runs = routeSegmentsFrom(null, pts);
-    expect(runs.length).toBe(2);
-    expect(runs[0].length).toBe(2);
-    expect(runs[1].length).toBe(2);
-  });
+    test('16 segments and 15 gaps render 16 lines with no shared vertex', () => {
+        const segments = Array.from({ length: 16 }, (_, i) => run(i + 1, [23 + i, 23.01 + i]));
+        const runs = routeSegmentsFrom({ trusted_route_segments: segments });
+        expect(runs).toHaveLength(16);
+        for (let i = 0; i < runs.length - 1; i += 1) {
+            const here = runs[i].map((p) => p.latitude);
+            const next = runs[i + 1].map((p) => p.latitude);
+            // Not one vertex is shared: a shared vertex is a drawn connection.
+            expect(here.some((lat) => next.includes(lat))).toBe(false);
+        }
+    });
 
-  test('honors max_gap_minutes from the response', () => {
-    const base = Date.now() - 3 * 3600 * 1000;
-    const pts = [
-      { lat: 23.0, lng: 72.0, timestamp: base },
-      { lat: 23.01, lng: 72.0, timestamp: base + 30 * 60000 },   // 30 min apart
-    ];
-    expect(routeSegmentsFrom({ max_gap_minutes: 15 }, pts).length).toBe(2);
-    expect(routeSegmentsFrom({ max_gap_minutes: 60 }, pts).length).toBe(1);
-  });
+    test('a segment the matcher split further stays several runs', () => {
+        const data = {
+            trusted_route_segments: [{
+                segment_id: 1,
+                geometry_runs: [
+                    [{ lat: 23.0, lng: 72.0 }, { lat: 23.1, lng: 72.0 }],
+                    [{ lat: 24.0, lng: 73.0 }, { lat: 24.1, lng: 73.0 }],
+                ],
+                points: [],
+            }],
+        };
+        const runs = routeSegmentsFrom(data);
+        expect(runs).toHaveLength(2);
+        expect(runs[0].map((p) => p.latitude)).toEqual([23.0, 23.1]);
+        expect(runs[1].map((p) => p.latitude)).toEqual([24.0, 24.1]);
+    });
 
-  test('sorts newest-first input chronologically before splitting', () => {
-    const base = Date.now() - 3 * 3600 * 1000;
-    const desc = [
-      { lat: 23.02, lng: 72.0, timestamp: base + 20 * 60000 },
-      { lat: 23.0, lng: 72.0, timestamp: base },
-      { lat: 23.01, lng: 72.0, timestamp: base + 10 * 60000 },
-    ];
-    const runs = routeSegmentsFrom(null, desc);
-    expect(runs.length).toBe(1);
-    expect(runs[0].map(p => p.latitude)).toEqual([23.0, 23.01, 23.02]);
-  });
+    test('draws nothing when the backend could not match the road network', () => {
+        // The old fallback answered this case with raw GPS vertices joined by
+        // straight lines. An honest "no geometry" is the correct answer.
+        const data = {
+            geometry_status: 'UNAVAILABLE',
+            trusted_route_segments: [{
+                segment_id: 1, match_status: 'UNAVAILABLE', points: [], geometry_runs: [],
+            }],
+            route: [
+                { lat: 23.0, lng: 72.0 }, { lat: 23.5, lng: 72.5 },
+                { lat: 24.0, lng: 73.0 },
+            ],
+        };
+        expect(routeSegmentsFrom(data)).toEqual([]);
+    });
 
-  test('drops unusable rows; empty input → []', () => {
-    expect(routeSegmentsFrom(null, [])).toEqual([]);
-    const runs = routeSegmentsFrom(null, [
-      { lat: 23.0, lng: 72.0, timestamp: Date.now() },
-      { lat: null, lng: null, timestamp: Date.now() },
-      { lat: 0, lng: 0, timestamp: Date.now() },
-    ]);
-    expect(runs).toEqual([[{ latitude: 23.0, longitude: 72.0 }]]);
-  });
+    test('draws nothing for a legacy response with no trusted geometry', () => {
+        // Even though it carries raw points and accepted segments, this app
+        // must not reconstruct a route: only the backend decides the geometry.
+        expect(routeSegmentsFrom({
+            route: [{ lat: 23.0, lng: 72.0 }, { lat: 23.1, lng: 72.0 }],
+            route_segments: [[{ lat: 23.0, lng: 72.0 }, { lat: 23.1, lng: 72.0 }]],
+        })).toEqual([]);
+        expect(routeSegmentsFrom(null)).toEqual([]);
+    });
 
-  test('segmentCoords / pointCoords handle every key shape', () => {
-    expect(segmentCoords([{ latitude: '23.5', longitude: '72.5' }])).toEqual([
-      { latitude: 23.5, longitude: 72.5 },
-    ]);
-    expect(pointCoords({ lat: 999, lng: 0 })).toBeNull();   // out of range
-    expect(pointCoords({ lat: 0, lng: 0 })).toBeNull();      // null island
-    expect(pointCoords(null)).toBeNull();
-  });
+    test('a single-fix segment draws no line and is not joined to a neighbour', () => {
+        const data = {
+            trusted_route_segments: [
+                { segment_id: 1, geometry_runs: [[{ lat: 23.0, lng: 72.0 }]], points: [] },
+                run(2, [23.5, 23.51]),
+            ],
+        };
+        const runs = routeSegmentsFrom(data);
+        expect(runs).toHaveLength(1);
+        expect(runs[0].map((p) => p.latitude)).toEqual([23.5, 23.51]);
+    });
+
+    test('unusable coordinates inside a run are dropped, not drawn as zero', () => {
+        const data = {
+            trusted_route_segments: [{
+                segment_id: 1,
+                geometry_runs: [[
+                    { lat: 23.0, lng: 72.0 },
+                    { lat: 0, lng: 0 },              // null island
+                    { lat: 91, lng: 72.0 },          // out of range
+                    { lat: 23.1, lng: 72.0 },
+                ]],
+                points: [],
+            }],
+        };
+        const runs = routeSegmentsFrom(data);
+        expect(runs[0].map((p) => p.latitude)).toEqual([23.0, 23.1]);
+    });
+});
+
+describe('routeQualityFrom', () => {
+    test('reads the backend figures and computes none of them', () => {
+        const q = routeQualityFrom({
+            geometry_status: 'PARTIAL',
+            trusted_distance_km: 1.42,
+            valid_points: 234,
+            raw_points_count: 240,
+            gps_gaps: 15,
+            rejected_count: 3,
+            low_accuracy_count: 2,
+            duplicate_points: 1,
+            last_gps_update: '2026-09-25T10:00:00Z',
+            tracking_status: 'STALE',
+            filter_reason_counts: { LOW_ACCURACY: 2, STATIONARY_NOISE: 4 },
+            route: [{}, {}],
+            trusted_route_segments: [run(1, [23, 23.01])],
+        });
+        expect(q).toMatchObject({
+            geometryStatus: 'PARTIAL',
+            trustedDistanceKm: 1.42,
+            validPoints: 234,
+            rawPoints: 240,
+            gapCount: 15,
+            rejectedCount: 3,
+            lowAccuracyCount: 2,
+            duplicatePoints: 1,
+            segmentCount: 1,
+            lastGpsUpdate: '2026-09-25T10:00:00Z',
+            trackingStatus: 'STALE',
+            hasRawEvidence: true,
+        });
+        expect(q.filterReasonCounts).toEqual({ LOW_ACCURACY: 2, STATIONARY_NOISE: 4 });
+    });
+
+    test('a withheld distance stays null rather than falling back to a guess', () => {
+        const q = routeQualityFrom({ geometry_status: 'UNAVAILABLE', trusted_distance_km: null });
+        expect(q.trustedDistanceKm).toBeNull();
+    });
 });
