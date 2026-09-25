@@ -81,26 +81,108 @@ export const PunchProvider = ({ children }) => {
   // app restart never creates a new start time.
   const [trackingMarks, setTrackingMarks] = useState(null);
 
-  // The OFFICIAL distance for today, straight from the backend's trusted
-  // route. Null means "the server has no complete answer yet" (still
-  // uploading, offline, or part of the route could not be road-matched) — the
-  // screens then show '—' rather than a locally-reconstructed number that
-  // would disagree with the Route Map.
-  const [trustedDistanceKm, setTrustedDistanceKm] = useState(null);
-  const [trustedRouteStatus, setTrustedRouteStatus] = useState(null);
+  // The OFFICIAL distance for today. ONE source, read from the backend's
+  // authoritative daily summary - never a local accumulation, never the raw
+  // GPS chain, never a second endpoint.
+  //
+  // Null means "the server has no answer yet" (still uploading, offline, or no
+  // tracking session that day). The screens show an em dash rather than a
+  // guess: a number that is not the route is worse than no number.
+  const [dailySummary, setDailySummary] = useState(null);
+  const trustedDistanceKm = dailySummary?.distance?.kilometers ?? null;
+  const trustedRouteStatus = dailySummary?.tracking_status ?? null;
+  // Declared before refreshTrustedDistance/the reset effect below — both
+  // reference it in their useCallback/useEffect dependency arrays, which are
+  // evaluated synchronously during this render, so businessDate must already
+  // be initialized by then (a `const` declared later in the same scope is in
+  // its temporal dead zone until its own line runs).
+  const businessDate = istDateStr();
+
+  // Refresh can be triggered from several places at once: the 60s interval, a
+  // pull-to-refresh, a focus event, an AppState change back to foreground. Two
+  // overlapping requests can complete out of order, and the slower one would
+  // then overwrite a newer answer - which is one of the ways a distance appeared
+  // to move backwards. Only the newest request is allowed to write.
+  const requestSeq = useRef(0);
+  const lastWrittenRevision = useRef(null);
+  const lastWrittenRecalcs = useRef(null);
+  // Mirror of the accepted payload, so a comparison against the currently
+  // displayed value does not need the callback to depend on state (which
+  // would re-create it on every update and restart the poll).
+  const dailySummaryRef = useRef(null);
+  useEffect(() => { dailySummaryRef.current = dailySummary; }, [dailySummary]);
 
   const refreshTrustedDistance = useCallback(async () => {
+    const seq = ++requestSeq.current;
     try {
-      const res = await api.getLiveDailyRoute({ date: istDateStr() });
-      const data = res?.data || {};
-      const km = data.trusted_distance_km;
-      setTrustedDistanceKm(typeof km === 'number' && Number.isFinite(km) ? km : null);
-      setTrustedRouteStatus(data.geometry_status || null);
+      const res = await api.getTrackingDailySummary({ date: businessDate });
+      // A response that a newer request has already superseded is discarded.
+      if (seq !== requestSeq.current) return;
+      const data = res?.data || null;
+      if (!data) return;
+
+      // A response carrying an OLDER revision than the one already on screen is
+      // a stale replay (cache, out-of-order request) and is ignored.
+      const revision = data.distance_revision ?? null;
+      if (
+        revision != null
+        && lastWrittenRevision.current != null
+        && revision < lastWrittenRevision.current
+      ) {
+        if (IS_DEV) {
+          console.warn('[Punch] Ignoring stale daily summary revision',
+            revision, '<', lastWrittenRevision.current);
+        }
+        return;
+      }
+
+      // Defence in depth. The backend already refuses to publish a lower
+      // distance during normal operation, so a decrease should not arrive at
+      // all - but a cumulative distance that visibly goes backwards because a
+      // screen refreshed is indefensible regardless of whose bug it is. It is
+      // only accepted when the backend says it deliberately recalculated the
+      // value (recalculation_count advanced), which is the one legitimate
+      // reason a day's total can be revised.
+      const km = data.distance?.kilometers;
+      const previous = dailySummaryRef.current?.distance?.kilometers ?? null;
+      const recalcs = data.recalculation_count ?? null;
+      const explicitCorrection = recalcs != null
+        && lastWrittenRecalcs.current != null
+        && recalcs > lastWrittenRecalcs.current;
+
+      if (
+        typeof km === 'number'
+        && previous != null
+        && km < previous
+        && !explicitCorrection
+      ) {
+        if (IS_DEV) {
+          console.warn('[Punch] Refusing a lower daily distance',
+            km, '<', previous, '- keeping', previous);
+        }
+        return;
+      }
+
+      lastWrittenRevision.current = revision;
+      lastWrittenRecalcs.current = recalcs;
+      setDailySummary(data);
     } catch {
-      // Offline, or the route has not been built yet. Leave the last known
+      // Offline, or the summary has not been built yet. Leave the last known
       // value alone rather than replacing it with a guess.
     }
-  }, []);
+  }, [businessDate]);
+
+  // A new business date is a different journey: the previous day's distance
+  // must not survive into it, or the Home card would open on a stale number.
+  // This is also what makes the app correct across midnight IST - at 00:00 the
+  // key changes, the stale value is dropped, and the next refresh fetches the
+  // new day's distance.
+  useEffect(() => {
+    lastWrittenRevision.current = null;
+    lastWrittenRecalcs.current = null;
+    dailySummaryRef.current = null;
+    setDailySummary(null);
+  }, [businessDate]);
 
   const fetchTodayPunches = useCallback(async () => {
     try {
@@ -660,7 +742,9 @@ export const PunchProvider = ({ children }) => {
     clearError,
     getTotalDistance,
     getTrackingDuration,
-    trustedRouteStatus,
+    dailySummary,
+    distanceKm: trustedDistanceKm,
+    trackingStatus: trustedRouteStatus,
     refreshTrustedDistance,
     LocationService,
     trackingMarks,
@@ -671,7 +755,7 @@ export const PunchProvider = ({ children }) => {
     punches, loading, error, errorMessage, success, punchState, isActive,
     isMockLocation, capturedLocation, initialFetchDone, fetchTodayPunches, punchIn, punchOut, registerExternalPunchIn,
     fetchLocation, resetForm, dismissError, clearError, getTotalDistance, getTrackingDuration,
-    trustedRouteStatus, refreshTrustedDistance,
+    dailySummary, trustedDistanceKm, trustedRouteStatus, refreshTrustedDistance,
     trackingMarks, pendingAutoClosure, checkPendingAutoClosure, submitForgotPunchRequest,
   ]);
 
@@ -707,7 +791,9 @@ export const usePunch = () => {
       clearError: () => {},
       getTotalDistance: () => 0,
       getTrackingDuration: () => 0,
-      trustedRouteStatus: null,
+      dailySummary: null,
+      distanceKm: null,
+      trackingStatus: null,
       refreshTrustedDistance: () => {},
       LocationService: null,
       trackingMarks: null,

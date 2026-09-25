@@ -246,8 +246,14 @@ const UNCACHEABLE_GET_PATTERNS = [
     /\/map_search\//,
     /\/legal\/status\//,
     /\/livetracking\/daily\//,
+    /\/livetracking\/daily-summary\//,
     /\/tracking\/routes\/detail\//,
     /\/tracking\/routes\/daily\//,
+    // The attendance daily_summary carries a distance built from a raw GPS
+    // chain. It is no longer the app's distance source (see
+    // getTrackingDailySummary), and replaying a stale copy of it is exactly
+    // what made the Home card jump between two disagreeing numbers.
+    /\/attendance\/punches\/daily_summary\//,
 ];
 
 api.interceptors.response.use(
@@ -592,6 +598,20 @@ api.getTrackingConfig = () =>
 // exactly like a real GPS point does.
 api.sendTrackingHeartbeat = (data) =>
     api.post('/livetracking/heartbeat/', data);
+
+/**
+ * The ONE authoritative daily distance for the signed-in employee.
+ *
+ * Deliberately the only distance source the app uses. It is cheap (a few
+ * integers, no GPS payload), it is scoped by the caller and business date, and
+ * the backend accumulates it incrementally so it never goes backwards just
+ * because a screen refreshed.
+ *
+ * Pass `date` as the IST business date (see utils/businessDate) - the same day
+ * the backend buckets tracking sessions into.
+ */
+api.getTrackingDailySummary = (params = {}) =>
+    api.get('/livetracking/daily-summary/', { params });
 
 // The backend's trusted route for one day: GPS segmented at every gap, each
 // continuous segment map-matched onto real roads, and the distance measured

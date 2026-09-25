@@ -440,7 +440,6 @@ const EmployeeHomeScreen = ({ navigation }) => {
         punchState = STATES.IDLE,
     } = punchCtx;
 
-    const getTotalDistance = punchCtx.getTotalDistance || (() => 0);
     const getTrackingDuration = punchCtx.getTrackingDuration || (() => 0);
     const refreshPunches = punchCtx.fetchTodayPunches || (() => {});
     const punchOut = punchCtx.punchOut || (async () => ({ success: false, error: 'Not available' }));
@@ -463,7 +462,17 @@ const EmployeeHomeScreen = ({ navigation }) => {
     // way the old Promise.all did, but each caches/revalidates on its own,
     // and the screen shows the last-known page instantly instead of blank
     // while useFocusEffect's refetch (below) is in flight.
-    const summaryQuery = useApiQuery(['homeDailySummary'], () => api.get('/attendance/punches/daily_summary/'));
+    //
+    // The distance is NOT one of these. It comes from PunchContext, which reads
+    // the authoritative daily summary; this query remains for punch count,
+    // duration and collection totals. Its `total_distance_today` is a raw GPS
+    // chain and is deliberately not used for display.
+    const summaryQuery = useApiQuery(
+        // Scoped by business date: an unscoped key let yesterday's summary be
+        // replayed from the persisted query cache on the next launch.
+        ['homeDailySummary', todayStr],
+        () => api.get('/attendance/punches/daily_summary/', { params: { date: todayStr } }),
+    );
     const todayPunchesApiQuery = useApiQuery(
         ['homeTodayPunchesApi', todayStr],
         () => api.get('/attendance/punches/today_punches/'),
@@ -614,6 +623,12 @@ const EmployeeHomeScreen = ({ navigation }) => {
         visitSummaryQuery.refetch();
         refetchMonthlyTarget();
         refreshPunches();
+        // The distance lives in PunchContext, so it needs its own refetch here -
+        // otherwise focusing the screen would leave the distance showing the
+        // value from the last visit, which is a stale reading presented as
+        // current. The request is sequenced there, so firing it alongside the
+        // others cannot land out of order.
+        punchCtx?.refreshTrustedDistance?.();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [refreshPunches]));
 
@@ -638,6 +653,10 @@ const EmployeeHomeScreen = ({ navigation }) => {
         visitSummaryQuery.refetch();
         refetchMonthlyTarget();
         refreshPunches();
+        // Pull-to-refresh must re-read the authoritative distance too, or the
+        // user pulls to refresh and the distance does not change while every
+        // other number on the screen does.
+        punchCtx?.refreshTrustedDistance?.();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [refreshPunches]);
 
@@ -686,25 +705,37 @@ const EmployeeHomeScreen = ({ navigation }) => {
         );
     }, [auth, logout, navigation]);
 
-    // Live distance — polls LocationService every 3 s while tracking is active
-    const [liveDistance, setLiveDistance] = useState(() => getTotalDistance());
-    useEffect(() => {
-        const d = getTotalDistance();
-        setLiveDistance(d);
-        if (!isActive && !isTracking) return;
-        const t = setInterval(() => setLiveDistance(getTotalDistance()), 3000);
-        return () => clearInterval(t);
-    }, [isActive, isTracking, getTotalDistance]);
-
+    // THE distance. One value, from the backend's authoritative daily summary.
+    //
+    // This used to swap between two sources depending on whether tracking was
+    // active: a locally accumulated live figure while active, and
+    // `summary.total_distance_today` (a raw GPS chain on the server) once
+    // idle. They are computed by different algorithms, so they disagreed by
+    // roughly the size of the difference between raw and road distance - which
+    // is what produced the reported oscillation (0.33 -> 1.34 -> 1.54 -> 0.32).
+    // It also flipped on every focus/refresh boundary, so the number appeared
+    // to move for no reason at all.
+    //
+    // There is now exactly one source and it is authoritative. It is null until
+    // the server has an answer, and it is shown as an em dash rather than 0.00,
+    // because "not known yet" and "no distance travelled" are different facts.
     const statsData = useMemo(() => {
-        // When tracking is active, GPS live distance is more accurate than the
-        // backend punch-to-punch value (which only counts straight lines between punches).
-        const distanceValue = (isActive || isTracking)
-            ? parseFloat((liveDistance || 0).toFixed(2))
-            : parseFloat((summary?.total_distance_today || 0).toFixed(2));
+        const distanceValue = punchCtx?.distanceKm != null
+            ? parseFloat(punchCtx.distanceKm.toFixed(2))
+            : null;
 
         return [
-            { id: 'distance', icon: 'navigation', value: distanceValue, label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight, suffix: ' km', onPress: () => navigation.navigate('RouteMap') },
+            {
+                // StatCard only formats a numeric `value` with the `km` suffix;
+                // a null value falls through to its raw-child branch and would
+                // render as a bare " km" with nothing before it. Match the em
+                // dash (no suffix) used everywhere else on this screen for the
+                // same "not known yet" state.
+                id: 'distance', icon: 'navigation',
+                value: distanceValue != null ? distanceValue : '—',
+                label: 'Distance', iconColor: colors.info, bgColor: colors.infoLight,
+                suffix: distanceValue != null ? ' km' : '', onPress: () => navigation.navigate('RouteMap'),
+            },
             { id: 'punches', icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight, onPress: () => navigation.navigate('PunchHistory') },
             {
                 id: 'collected', icon: 'dollar-sign', label: 'Collected',
@@ -726,7 +757,7 @@ const EmployeeHomeScreen = ({ navigation }) => {
                 onPress: () => navigation.navigate('VisitActivitySummary'),
             },
         ];
-    }, [summary, isActive, isTracking, liveDistance, collectionStats, visitSummary, navigation]);
+    }, [punchCtx?.distanceKm, summary, collectionStats, visitSummary, navigation]);
 
     const correctionCounts = useMemo(() => ({
         pending: correctionSummary?.pending || 0,
@@ -808,7 +839,9 @@ const EmployeeHomeScreen = ({ navigation }) => {
     }, []);
 
     const formatDistance = useCallback((km) => {
-        if (!km || km < 0) return '0 km';
+        // "not known yet" is not "0 km" - showing 0.00 for a distance the
+        // server has not finished computing reads as a real, wrong number.
+        if (km == null || !Number.isFinite(km) || km < 0) return '—';
         return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(2)} km`;
     }, []);
 
@@ -913,7 +946,9 @@ const EmployeeHomeScreen = ({ navigation }) => {
                         <View style={styles.trackingStatsRow}>
                             <View style={styles.miniStat}>
                                 <Icon name="navigation" size={16} color={colors.primary} />
-                                <Text style={styles.miniStatValue}>{formatDistance(liveDistance)}</Text>
+                                <Text style={styles.miniStatValue}>
+                                    {formatDistance(punchCtx?.distanceKm)}
+                                </Text>
                             </View>
                             <View style={styles.miniStatDivider} />
                             <View style={styles.miniStat}>
