@@ -12,7 +12,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import {
+    capturePhotoFromCamera, pickPhotoFromGallery,
+} from '../../services/PhotoCapture';
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
 import { enqueue, registerReplayer, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
@@ -81,15 +83,16 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
 
     const originalAmount = existingData?.original_collected_amount ?? record?.collected_amount;
 
-    const pickDocument = (fromCamera) => {
+    // Supporting Document — same PhotoCapture flow as every other photo
+    // field (CAMERA runtime permission requested up front; denied/blocked
+    // handled with a clear message + Settings link). Keeps this screen's
+    // own compression options unchanged.
+    const pickDocument = async (fromCamera) => {
         const options = { mediaType: 'photo', quality: 0.7, includeBase64: false };
-        const cb = (result) => {
-            if (result.didCancel || result.errorCode) return;
-            const asset = result.assets?.[0];
-            if (asset) setDocument(asset);
-        };
-        if (fromCamera) launchCamera(options, cb);
-        else launchImageLibrary(options, cb);
+        const asset = fromCamera
+            ? await capturePhotoFromCamera(options)
+            : await pickPhotoFromGallery(options);
+        if (asset) setDocument(asset);
     };
 
     const validate = () => {
