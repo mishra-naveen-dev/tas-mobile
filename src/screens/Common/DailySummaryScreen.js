@@ -208,31 +208,32 @@ const DailySummaryScreen = ({ navigation }) => {
                 setPunches(raw.sort((a, b) => new Date(a.punched_at) - new Date(b.punched_at)));
             }
 
-            // ── GPS route & distance ───────────────────────────────────────────
-            // Distance between ACCEPTED route points only (stationary noise
-            // excluded) — same centralized buildAcceptedRoute rule the Route
-            // Map draws. Prefers the backend's accepted_distance_km when the
-            // response carries it.
+            // ── GPS route point/session count (diagnostic only — never distance) ──
+            let routePointCount = 0;
+            let routeSessionCount = 0;
             if (liveRes.status === 'fulfilled' && (liveRes.value?.data?.route?.length > 0 || liveRes.value?.data?.accepted_route)) {
                 const data = liveRes.value.data;
-                const distance = data.accepted_distance_km != null
-                    ? Number(data.accepted_distance_km)
-                    : buildAcceptedRoute(data.route || []).acceptedDistanceKm;
-                const count = Array.isArray(data.accepted_route)
+                routePointCount = Array.isArray(data.accepted_route)
                     ? data.accepted_route.length
                     : buildAcceptedRoute(data.route || []).accepted.length;
-                setLiveRoute({
-                    distance,
-                    points:   count,
-                    sessions: data.total_sessions ?? 0,
-                });
-            } else {
-                setLiveRoute(null);
+                routeSessionCount = data.total_sessions ?? 0;
             }
 
-            // ── Duration from daily summary (most reliable source) ────────────
+            // ── Distance & duration from the daily summary (most reliable
+            // source) — the SAME TrackingDailySummary.trusted_distance_km
+            // the Home card and both maps read. Never recomputed here from
+            // the live route (that produced a different, noise-filtered but
+            // non-road-matched figure that disagreed with the rest of the app).
             if (summaryRes.status === 'fulfilled') {
                 setDuration(summaryRes.value?.data?.duration || null);
+                const trustedDistance = summaryRes.value?.data?.total_distance_today;
+                setLiveRoute(trustedDistance != null ? {
+                    distance: Number(trustedDistance),
+                    points:   routePointCount,
+                    sessions: routeSessionCount,
+                } : null);
+            } else {
+                setLiveRoute(null);
             }
 
             // ── P2P-aware collection visits (VISIT rule's COLLECTION bucket:

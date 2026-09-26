@@ -16,7 +16,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { useApiQuery } from '../../hooks/useApiQuery';
-import { buildAcceptedRoute } from '../../utils/gpsUtils';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme/tokens';
 import HeroHeader from '../../components/HeroHeader';
@@ -202,25 +201,6 @@ const DashboardScreen = ({ navigation }) => {
     const punches = useMemo(() => punchesQuery.data?.results || punchesQuery.data || [], [punchesQuery.data]);
     const isGpsActive = punches.length > 0;
 
-    // Use accepted-route distance (stationary GPS noise excluded) with the one
-    // centralized buildAcceptedRoute rule. The daily_summary distance can be
-    // wildly wrong when any punch record was captured with a bad GPS fix
-    // (multipath / NLOS outlier). The live track gives the actual travelled
-    // path — cluster it into accepted points and use that as the displayed
-    // distance; falls back to the summary value (null here) when there's no
-    // live route yet. Prefers the backend's accepted_distance_km when present.
-    const cleanDistanceKm = useMemo(() => {
-        const data = liveRouteQuery.data;
-        if (data?.accepted_distance_km != null) {
-            return Number(data.accepted_distance_km);
-        }
-        const route = data?.route;
-        if (route?.length > 0) {
-            return buildAcceptedRoute(route).acceptedDistanceKm;
-        }
-        return null;
-    }, [liveRouteQuery.data]);
-
     useFocusEffect(useCallback(() => {
         summaryQuery.refetch();
         punchesQuery.refetch();
@@ -239,16 +219,17 @@ const DashboardScreen = ({ navigation }) => {
     const retryAll = onRefresh;
 
     const statsData = useMemo(() => {
-        // Prefer the outlier-filtered live tracking distance.
-        // Fall back to the punch summary value only when live track data is absent.
-        const distanceKm = cleanDistanceKm ?? summary?.total_distance_today ?? 0;
+        // Trusted distance — same TrackingDailySummary.trusted_distance_km
+        // figure every other screen (Route Map, web Daily Route/Tracking)
+        // reads via daily_summary. Never recomputed here from the live route.
+        const distanceKm = summary?.total_distance_today ?? 0;
         return [
             { icon: 'navigation', value: Number(distanceKm).toFixed(2), label: 'Distance', iconColor: colors.danger, bgColor: colors.dangerLight, suffix: ' km' },
             { icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
             { icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
             { icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.info, bgColor: colors.infoLight, prefix: '₹' },
         ];
-    }, [summary, cleanDistanceKm]);
+    }, [summary]);
 
     // Route points are ALWAYS chronological (oldest → newest), sorted by the
     // authoritative punched_at — never derived from table/API order (which is
