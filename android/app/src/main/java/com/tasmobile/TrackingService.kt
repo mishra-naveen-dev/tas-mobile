@@ -101,6 +101,8 @@ class TrackingService : Service() {
 
         private const val PREFS = "tas_tracking_prefs"
         private const val KEY_SEQUENCE = "sequence_no"
+
+        private const val TAG = "TasTracking"
     }
 
     private var fused: FusedLocationProviderClient? = null
@@ -111,10 +113,6 @@ class TrackingService : Service() {
     private var baseUrl: String = ""
     private var token: String = ""
     private var sessionId: Int = -1
-
-    private companion object {
-        const val TAG = "TasTracking"
-    }
 
     // Config-driven intervals (seconds) — see companion defaults above.
     private var intervalMovingS = DEFAULT_INTERVAL_MOVING_S
