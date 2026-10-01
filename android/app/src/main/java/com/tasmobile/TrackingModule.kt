@@ -86,6 +86,10 @@ class TrackingModule(private val reactContext: ReactApplicationContext) :
                 intent.putExtra(TrackingService.EXTRA_INTERVAL_LOW_BATTERY_S, json.getInt("interval_low_battery_s"))
             if (json.has("low_battery_threshold_pct"))
                 intent.putExtra(TrackingService.EXTRA_LOW_BATTERY_THRESHOLD_PCT, json.getInt("low_battery_threshold_pct"))
+            if (json.has("batch_max_points"))
+                intent.putExtra(TrackingService.EXTRA_BATCH_MAX_POINTS, json.getInt("batch_max_points"))
+            if (json.has("batch_upload_interval_s"))
+                intent.putExtra(TrackingService.EXTRA_BATCH_UPLOAD_INTERVAL_S, json.getInt("batch_upload_interval_s"))
         } catch (e: Exception) {
             // Malformed config JSON — service keeps its current/default intervals.
         }

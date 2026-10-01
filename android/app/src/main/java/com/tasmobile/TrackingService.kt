@@ -82,12 +82,23 @@ class TrackingService : Service() {
         const val EXTRA_INTERVAL_STATIONARY_S = "interval_stationary_s"
         const val EXTRA_INTERVAL_LOW_BATTERY_S = "interval_low_battery_s"
         const val EXTRA_LOW_BATTERY_THRESHOLD_PCT = "low_battery_threshold_pct"
+        // Batch upload cadence — previously hardcoded compile-time constants
+        // here while the JS capture path (LiveTrackingService.js) already
+        // honored config.batch_max_points/batch_upload_interval_s, so an
+        // admin-tuned upload cadence silently never applied to Android's
+        // native capture path (the one actually authoritative per spec —
+        // see TrackingService's class doc). Now wired the same way as the
+        // interval_* extras above.
+        const val EXTRA_BATCH_MAX_POINTS = "batch_max_points"
+        const val EXTRA_BATCH_UPLOAD_INTERVAL_S = "batch_upload_interval_s"
 
         const val DEFAULT_INTERVAL_MOVING_S = 10
         const val DEFAULT_INTERVAL_WALKING_S = 15
         const val DEFAULT_INTERVAL_STATIONARY_S = 30
         const val DEFAULT_INTERVAL_LOW_BATTERY_S = 60
         const val DEFAULT_LOW_BATTERY_THRESHOLD_PCT = 20
+        const val DEFAULT_BATCH_MAX_POINTS = 6
+        const val DEFAULT_BATCH_UPLOAD_INTERVAL_S = 60
 
         // Movement classification thresholds (km/h), derived from the fix's own
         // reported speed — a heuristic, not a dedicated activity-recognition
@@ -95,8 +106,6 @@ class TrackingService : Service() {
         private const val MOVING_SPEED_KMH = 15.0
         private const val WALKING_SPEED_KMH = 3.0
 
-        const val BATCH_INTERVAL_MS = 60_000L   // upload batched points once a minute
-        const val BATCH_MAX = 6                 // ...or sooner once this many are buffered
         const val BUFFER_CAP = 600              // drop oldest beyond this if server is down
 
         private const val PREFS = "tas_tracking_prefs"
@@ -121,6 +130,8 @@ class TrackingService : Service() {
     private var intervalLowBatteryS = DEFAULT_INTERVAL_LOW_BATTERY_S
     private var lowBatteryThresholdPct = DEFAULT_LOW_BATTERY_THRESHOLD_PCT
     private var currentIntervalMs = DEFAULT_INTERVAL_STATIONARY_S * 1000L
+    private var batchMaxPoints = DEFAULT_BATCH_MAX_POINTS
+    private var batchIntervalMs = DEFAULT_BATCH_UPLOAD_INTERVAL_S * 1000L
 
     // Buffer of captured fixes, uploaded in batches to keep server load low.
     private val buffer = ArrayList<JSONObject>()
@@ -135,7 +146,7 @@ class TrackingService : Service() {
     private val flushRunnable = object : Runnable {
         override fun run() {
             flush()
-            flushHandler.postDelayed(this, BATCH_INTERVAL_MS)
+            flushHandler.postDelayed(this, batchIntervalMs)
         }
     }
 
@@ -221,6 +232,10 @@ class TrackingService : Service() {
         intervalStationaryS = intent.getIntExtra(EXTRA_INTERVAL_STATIONARY_S, intervalStationaryS)
         intervalLowBatteryS = intent.getIntExtra(EXTRA_INTERVAL_LOW_BATTERY_S, intervalLowBatteryS)
         lowBatteryThresholdPct = intent.getIntExtra(EXTRA_LOW_BATTERY_THRESHOLD_PCT, lowBatteryThresholdPct)
+        batchMaxPoints = intent.getIntExtra(EXTRA_BATCH_MAX_POINTS, batchMaxPoints)
+        batchIntervalMs = intent.getIntExtra(
+            EXTRA_BATCH_UPLOAD_INTERVAL_S, (batchIntervalMs / 1000L).toInt(),
+        ).toLong() * 1000L
     }
 
     private fun batteryPercent(): Int {
@@ -288,7 +303,7 @@ class TrackingService : Service() {
             // Periodic safety flush so buffered points never sit longer than the
             // batch interval, even if fixes arrive slowly.
             flushHandler.removeCallbacks(flushRunnable)
-            flushHandler.postDelayed(flushRunnable, BATCH_INTERVAL_MS)
+            flushHandler.postDelayed(flushRunnable, batchIntervalMs)
         } catch (e: SecurityException) {
             // Location permission missing — nothing we can do from here.
         }
@@ -367,7 +382,7 @@ class TrackingService : Service() {
                 Log.w(TAG, "GPS buffer full (${BUFFER_CAP}); dropped the oldest unsent fix - " +
                     "the route will show a gap there, which is honest: those fixes were never uploaded.")
             }
-            shouldFlush = buffer.size >= BATCH_MAX
+            shouldFlush = buffer.size >= batchMaxPoints
         }
         if (shouldFlush) flush()
     }
@@ -419,7 +434,7 @@ class TrackingService : Service() {
         val oldestAgeMs = System.currentTimeMillis() - (batch.firstOrNull()?.let {
             try { iso.parse(it.getString("timestamp"))?.time } catch (e: Exception) { null }
         } ?: System.currentTimeMillis())
-        val source = if (oldestAgeMs > BATCH_INTERVAL_MS * 2) "offline_sync" else "live"
+        val source = if (oldestAgeMs > batchIntervalMs * 2) "offline_sync" else "live"
 
         val body = JSONObject().apply {
             put("session_id", sessionId)
@@ -520,6 +535,8 @@ class TrackingService : Service() {
             .putInt(EXTRA_INTERVAL_STATIONARY_S, intervalStationaryS)
             .putInt(EXTRA_INTERVAL_LOW_BATTERY_S, intervalLowBatteryS)
             .putInt(EXTRA_LOW_BATTERY_THRESHOLD_PCT, lowBatteryThresholdPct)
+            .putInt(EXTRA_BATCH_MAX_POINTS, batchMaxPoints)
+            .putInt(EXTRA_BATCH_UPLOAD_INTERVAL_S, (batchIntervalMs / 1000L).toInt())
             .apply()
     }
 
@@ -533,6 +550,8 @@ class TrackingService : Service() {
         intervalStationaryS = p.getInt(EXTRA_INTERVAL_STATIONARY_S, DEFAULT_INTERVAL_STATIONARY_S)
         intervalLowBatteryS = p.getInt(EXTRA_INTERVAL_LOW_BATTERY_S, DEFAULT_INTERVAL_LOW_BATTERY_S)
         lowBatteryThresholdPct = p.getInt(EXTRA_LOW_BATTERY_THRESHOLD_PCT, DEFAULT_LOW_BATTERY_THRESHOLD_PCT)
+        batchMaxPoints = p.getInt(EXTRA_BATCH_MAX_POINTS, DEFAULT_BATCH_MAX_POINTS)
+        batchIntervalMs = p.getInt(EXTRA_BATCH_UPLOAD_INTERVAL_S, DEFAULT_BATCH_UPLOAD_INTERVAL_S).toLong() * 1000L
         return baseUrl.isNotEmpty() && token.isNotEmpty()
     }
 
