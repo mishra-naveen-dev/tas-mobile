@@ -3,6 +3,7 @@ import { Platform, NativeModules, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import api, { getBaseURL } from '../api/api';
 import { secureGetItem } from '../utils/secureStorage';
+import { serverStatus } from '../utils/serverStatus';
 
 const IS_DEV = __DEV__;
 
@@ -381,6 +382,16 @@ class LiveTrackingService {
   static async _sync(isFinal = false) {
     if (!this.sessionId) return;
     if (this.queue.length === 0) return;
+    // Known-offline (set by api.js's response interceptor on a prior failed
+    // request, cleared once its own reconnect poll succeeds) — skip this
+    // attempt entirely rather than burning battery/cycles on a request
+    // already known to fail. Never final-skipped: a final sync (session end)
+    // still tries once, since it may be the very request that proves we're
+    // back online, and the queue stays intact either way if it isn't.
+    if (!isFinal && !serverStatus._online) {
+      if (IS_DEV) console.log('[Live] Skipping sync — known offline, queue kept for later.');
+      return;
+    }
 
     const batch = [...this.queue];
     this.queue = [];
