@@ -501,13 +501,14 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     try {
       const fd = buildFormData(extra, clientTransactionId);
       const res = await api.completeVisit(collectionId, fd);
-      await registerExternalPunchIn(res.data, localLocation);
+      const { trackingWarning } = await registerExternalPunchIn(res.data, localLocation);
       const savedLoanId = record?.loan_id || loanId;
       Alert.alert(
         'Success',
         buildVisitSuccessMessage(form)
           + (savedLoanId ? `\nLoan ID: ${savedLoanId}` : '')
-          + `\n${fmtConfirmTime(new Date())}`,
+          + `\n${fmtConfirmTime(new Date())}`
+          + (trackingWarning ? `\n\n⚠ ${trackingWarning}` : ''),
         [{ text: 'OK', onPress: () => navigation.goBack() }],
       );
     } catch (err) {

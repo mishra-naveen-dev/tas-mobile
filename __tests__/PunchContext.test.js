@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { create, act } from 'react-test-renderer';
-import { PunchProvider } from '../src/context/PunchContext';
+import { PunchProvider, usePunch } from '../src/context/PunchContext';
 import api from '../src/api/api';
 import LocationService from '../src/services/LocationService';
 
@@ -30,11 +30,12 @@ jest.mock('../src/services/LocationService', () => ({
   default: {
     setBaseDistance: jest.fn(),
     getTotalDistance: jest.fn(() => 0),
+    startTracking: jest.fn(() => Promise.resolve()),
   },
 }));
 
 jest.mock('../src/services/GeocodingService', () => ({ reverseGeocode: jest.fn() }));
-jest.mock('../src/services/LiveTrackingService', () => ({}));
+jest.mock('../src/services/LiveTrackingService', () => ({ attach: jest.fn(() => Promise.resolve()) }));
 jest.mock('../src/hooks/useFieldActivityLocation', () => ({ captureFieldActivityLocation: jest.fn() }));
 jest.mock('../src/services/OfflineQueue', () => ({
   enqueue: jest.fn(),
@@ -113,5 +114,71 @@ describe('PunchContext fetchTodayPunches distance restore', () => {
 
     expect(LocationService.setBaseDistance).toHaveBeenCalledWith(0);
     expect(api.getActiveLiveSession).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Covers punchIn()'s pass-through of the server's `tracking_warning` field
+ * (apps.attendance.views.AttendancePunchViewSet.create → PUNCH_IN branch) —
+ * set when start_session_for_punch couldn't open a LiveSession, so the punch
+ * itself succeeded but background GPS tracking will not start. The caller
+ * (EmployeePunchScreen) relies on this to tell the employee instead of the
+ * failure being silent.
+ */
+describe('PunchContext punchIn tracking_warning passthrough', () => {
+  let captured;
+
+  const Harness = () => {
+    captured = usePunch();
+    return null;
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    api.getLastAutoClosure.mockResolvedValue({ data: { pending: false } });
+    api.get.mockResolvedValue({ data: [] });
+  });
+
+  test('live session opened: result carries no tracking warning', async () => {
+    api.post.mockResolvedValue({
+      data: { id: 10, live_session_id: 55, tracking_engine: 'livetracking' },
+    });
+
+    await act(async () => {
+      create(<PunchProvider><Harness /></PunchProvider>);
+    });
+    await flush();
+
+    let result;
+    await act(async () => {
+      result = await captured.punchIn({}, { latitude: 23.0, longitude: 72.0 });
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.trackingWarning).toBeNull();
+  });
+
+  test('server could not open a live session: result surfaces tracking_warning', async () => {
+    api.post.mockResolvedValue({
+      data: {
+        id: 11,
+        live_session_id: null,
+        tracking_engine: 'failed',
+        tracking_warning: 'Tracking session could not be created. Please contact support.',
+      },
+    });
+
+    await act(async () => {
+      create(<PunchProvider><Harness /></PunchProvider>);
+    });
+    await flush();
+
+    let result;
+    await act(async () => {
+      result = await captured.punchIn({}, { latitude: 23.0, longitude: 72.0 });
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.trackingWarning).toBe('Tracking session could not be created. Please contact support.');
   });
 });
