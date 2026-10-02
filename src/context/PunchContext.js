@@ -453,6 +453,13 @@ export const PunchProvider = ({ children }) => {
       // — attach() hands that existing session id to the native/background
       // capture path instead of opening a second one.
       const liveSessionId = res.data?.live_session_id;
+      // tracking_warning is set by the server (AttendancePunchViewSet.create)
+      // when start_session_for_punch couldn't open a LiveSession — the punch
+      // itself still succeeded, but background GPS tracking will not start
+      // for this shift. Surfaced to the user by the calling screen instead
+      // of failing silently (the #1 root cause of "activities exist but no
+      // continuous route" reports).
+      const trackingWarning = res.data?.tracking_warning || null;
       if (liveSessionId) {
         LiveTrackingService.attach(liveSessionId, {
           battery_level: locationData.battery_level ?? null,
@@ -465,7 +472,7 @@ export const PunchProvider = ({ children }) => {
 
       await fetchTodayPunches();
 
-      return { success: true, data: res.data };
+      return { success: true, data: res.data, trackingWarning };
     } catch (err) {
       if (IS_DEV) console.error('[Punch] Error:', err?.response?.data || err.message);
       if (isNetworkError(err)) {
@@ -504,6 +511,10 @@ export const PunchProvider = ({ children }) => {
     });
 
     const liveSessionId = responseData?.live_session_id;
+    // See the matching comment in punchIn() above — surfaced to the caller
+    // so CollectionVisitScreen/EmployeePunchScreen can tell the employee
+    // tracking won't run for this shift instead of failing silently.
+    const trackingWarning = responseData?.tracking_warning || null;
     if (liveSessionId) {
       LiveTrackingService.attach(liveSessionId, {
         battery_level: locationData.battery_level ?? null,
@@ -515,6 +526,7 @@ export const PunchProvider = ({ children }) => {
     }
 
     await fetchTodayPunches();
+    return { trackingWarning };
   }, [fetchTodayPunches]);
 
   const punchOut = useCallback(async () => {
@@ -784,7 +796,7 @@ export const usePunch = () => {
       addPunch: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       punchIn: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       punchOut: () => Promise.resolve({ success: false, error: 'Context not ready' }),
-      registerExternalPunchIn: () => Promise.resolve(),
+      registerExternalPunchIn: () => Promise.resolve({ trackingWarning: null }),
       fetchLocation: () => Promise.resolve({ success: false, error: 'Context not ready' }),
       resetForm: () => {},
       dismissError: () => {},

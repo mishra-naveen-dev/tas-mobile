@@ -615,11 +615,12 @@ const EmployeePunchScreen = ({ navigation }) => {
         clientTransactionId,
       });
       const res = await api.completeVisit(collectionId, fd);
-      await registerExternalPunchIn(res.data, localLocation);
+      const { trackingWarning } = await registerExternalPunchIn(res.data, localLocation);
       const savedLoanId = resolvedRecord?.loan_id || form.loan_id;
       const successMessage = buildVisitSuccessMessage(form)
         + (savedLoanId ? `\nLoan ID: ${savedLoanId}` : '')
-        + `\n${fmtConfirmTime(new Date())}`;
+        + `\n${fmtConfirmTime(new Date())}`
+        + (trackingWarning ? `\n\n⚠ ${trackingWarning}` : '');
       resetPunchForm();
       resetForm();
       Alert.alert('Success', successMessage);
@@ -679,7 +680,8 @@ const EmployeePunchScreen = ({ navigation }) => {
         // it open for another entry.
         resetPunchForm();
         resetForm();
-        Alert.alert('Success', `Punch recorded!\n\n${fmtConfirmTime(new Date())}`);
+        const warningSuffix = result.trackingWarning ? `\n\n⚠ ${result.trackingWarning}` : '';
+        Alert.alert('Success', `Punch recorded!\n\n${fmtConfirmTime(new Date())}${warningSuffix}`);
         return;
       }
 
