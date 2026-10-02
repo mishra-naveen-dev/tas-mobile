@@ -1,6 +1,7 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import DeviceInfo from 'react-native-device-info';
 import { cacheWrite, cacheRead, makeCacheKey } from '../utils/dataCache';
 import { serverStatus } from '../utils/serverStatus';
@@ -189,23 +190,47 @@ api.interceptors.request.use(async (config) => {
 let sessionExpiredCallback = null;
 let isSessionExpiredHandled = false;
 
-// Reconnect polling — tries a lightweight GET every 20s while server is unreachable
+// Reconnect polling — exponential backoff (5s -> 60s cap) against the
+// lightweight, unauthenticated /health/live/ probe (no DB hit, unlike
+// /organization/roles/), plus a NetInfo listener that short-circuits a
+// long backoff wait the moment the device's network interface comes back,
+// rather than waiting out the rest of the current delay.
+const RECONNECT_MIN_MS = 5000;
+const RECONNECT_MAX_MS = 60000;
 let _reconnectTimer = null;
+let _reconnectDelay = RECONNECT_MIN_MS;
+let _reconnectNetInfoUnsub = null;
+
+const getHealthURL = () => `${getBaseURL().replace(/\/api\/v1$/, '')}/health/live/`;
+
+function stopReconnectPolling() {
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    if (_reconnectNetInfoUnsub) { _reconnectNetInfoUnsub(); _reconnectNetInfoUnsub = null; }
+}
+
+async function attemptReconnect() {
+    try {
+        await axios.get(getHealthURL(), { timeout: 8000 });
+        stopReconnectPolling();
+        serverStatus.setOnline();
+        return;
+    } catch (_) { /* still offline */ }
+    _reconnectDelay = Math.min(_reconnectDelay * 2, RECONNECT_MAX_MS);
+    _reconnectTimer = setTimeout(attemptReconnect, _reconnectDelay);
+}
+
 function startReconnectPolling() {
     if (_reconnectTimer) return;
-    _reconnectTimer = setInterval(async () => {
-        try {
-            const token = await secureGetItem('access');
-            await axios.get(`${getBaseURL()}/organization/roles/`, {
-                params: { page_size: 1 },
-                timeout: 8000,
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-            });
-            clearInterval(_reconnectTimer);
-            _reconnectTimer = null;
-            serverStatus.setOnline();
-        } catch (_) { /* still offline */ }
-    }, 20000);
+    _reconnectDelay = RECONNECT_MIN_MS;
+    if (!_reconnectNetInfoUnsub) {
+        _reconnectNetInfoUnsub = NetInfo.addEventListener((state) => {
+            if (state.isConnected && _reconnectTimer) {
+                clearTimeout(_reconnectTimer);
+                _reconnectTimer = setTimeout(attemptReconnect, 500);
+            }
+        });
+    }
+    _reconnectTimer = setTimeout(attemptReconnect, _reconnectDelay);
 }
 
 export const setSessionExpiredCallback = (callback) => {
@@ -265,7 +290,7 @@ api.interceptors.response.use(
             await cacheWrite(key, response.data);
         }
         if (!serverStatus._online) serverStatus.setOnline();
-        if (_reconnectTimer) { clearInterval(_reconnectTimer); _reconnectTimer = null; }
+        stopReconnectPolling();
         return response;
     },
     async (error) => {

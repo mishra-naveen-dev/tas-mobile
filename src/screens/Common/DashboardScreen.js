@@ -222,9 +222,12 @@ const DashboardScreen = ({ navigation }) => {
         // Trusted distance — same TrackingDailySummary.trusted_distance_km
         // figure every other screen (Route Map, web Daily Route/Tracking)
         // reads via daily_summary. Never recomputed here from the live route.
+        // distance_known=false (no trusted route yet) shows "—", never "0.00"
+        // — a measured zero and "not measured yet" must look different.
+        const distanceKnown = !!summary?.distance_known;
         const distanceKm = summary?.total_distance_today ?? 0;
         return [
-            { icon: 'navigation', value: Number(distanceKm).toFixed(2), label: 'Distance', iconColor: colors.danger, bgColor: colors.dangerLight, suffix: ' km' },
+            { icon: 'navigation', value: distanceKnown ? Number(distanceKm).toFixed(2) : '—', label: 'Distance', iconColor: colors.danger, bgColor: colors.dangerLight, suffix: distanceKnown ? ' km' : '' },
             { icon: 'check-circle', value: summary?.punch_count || 0, label: 'Punches', iconColor: colors.success, bgColor: colors.successLight },
             { icon: 'dollar-sign', value: summary?.total_collection || 0, label: 'Collected', iconColor: colors.warning, bgColor: colors.warningLight, prefix: '₹' },
             { icon: 'trending-up', value: summary?.total_disbursement || 0, label: 'Disbursement', iconColor: colors.info, bgColor: colors.infoLight, prefix: '₹' },

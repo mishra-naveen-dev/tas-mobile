@@ -30,7 +30,10 @@ import { subscribe as subscribeOfflineQueue, syncNow, QUEUE_STATUS } from '../..
  * banner was the other half of the bug report.
  */
 export default function OfflineBanner() {
-    const [status, setStatus] = useState({ online: serverStatus._online, cachedAt: serverStatus._cachedAt });
+    const [status, setStatus] = useState({
+        online: serverStatus._online, cachedAt: serverStatus._cachedAt,
+        networkAvailable: serverStatus._networkAvailable,
+    });
     const [queueItems, setQueueItems] = useState([]);
     const insets = useSafeAreaInsets();
 
@@ -61,7 +64,11 @@ export default function OfflineBanner() {
                 )}
                 <Text style={styles.pillText} numberOfLines={1}>
                     {offline
-                        ? (queuedCount > 0 ? `Offline · ${queuedCount} queued` : 'Offline')
+                        // "No network" (device itself has no connection) vs
+                        // "Server unreachable" (network is up, our API isn't
+                        // answering) are different problems for the user -
+                        // GPS/offline queueing keep working in both cases.
+                        ? `${status.networkAvailable ? 'Server unreachable' : 'No network'}${queuedCount > 0 ? ` · ${queuedCount} queued` : ''}`
                         : 'Syncing…'}
                 </Text>
             </TouchableOpacity>
