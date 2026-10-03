@@ -11,7 +11,7 @@ import { colors, typography, spacing, borderRadius } from '../../theme/tokens';
 // Same DPD bucket labels the Collection Visit form's own OD Visit dropdown
 // uses (DPD_BUCKET_OPTIONS in collectionVisitRules.js) — kept in the same
 // order the backend returns them (DPD_BUCKET_ORDER, apps/loans/views.py).
-const DPD_BUCKET_LABELS = { '60': '1-60', '90': '61-90', '180': '91-180', '360': '181-360', '360+': '360+' };
+const DPD_BUCKET_LABELS = { '30': '1-30', '60': '31-60', '90': '61-90', '180': '91-180', '360': '181-360', '360+': '360+' };
 
 const toISODate = (d) => d.toISOString().slice(0, 10);
 const startOfWeek = (d) => {
