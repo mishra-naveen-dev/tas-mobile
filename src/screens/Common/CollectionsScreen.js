@@ -77,7 +77,8 @@ const PRODUCT_TYPE_OPTIONS = ['IL', 'ILC', 'IBL', 'JLG'];
 
 // DPD (days past due) sub-buckets — only relevant when Type filter = OD
 const DPD_BUCKET_OPTIONS = [
-    { value: '60', label: '1-60', min: 0, max: 60 },
+    { value: '30', label: '1-30', min: 0, max: 30 },
+    { value: '60', label: '31-60', min: 31, max: 60 },
     { value: '90', label: '61-90', min: 61, max: 90 },
     { value: '180', label: '91-180', min: 91, max: 180 },
     { value: '360', label: '181-360', min: 181, max: 360 },
