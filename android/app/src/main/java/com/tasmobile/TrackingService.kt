@@ -357,6 +357,12 @@ class TrackingService : Service() {
             put("speed", if (loc.hasSpeed()) (loc.speed * 3.6).toDouble() else JSONObject.NULL)
             put("altitude", if (loc.hasAltitude()) loc.altitude else JSONObject.NULL)
             put("heading", if (loc.hasBearing()) loc.bearing.toDouble() else JSONObject.NULL)
+            // Mock-location fraud detection (GPSValidator.validate step 0,
+            // apps.livetracking.services.py) was previously fed only by the
+            // JS-driven single-fix capture path (LocationService.js, for
+            // punch/visit/collection) - this continuous native stream never
+            // populated it, so a mocked fix here always validated as real.
+            put("is_mock_location", loc.isFromMockProvider)
             put("battery_level", batteryPercent())
             put("timestamp", iso.format(Date(loc.time)))
             // Idempotency key (Milestone 1) — lets the server dedup a batch
