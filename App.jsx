@@ -20,6 +20,8 @@ import { startAutoSync, onSyncComplete } from './src/services/OfflineQueue';
 import { registerCollectionVisitOfflineReplayer } from './src/utils/collectionVisitRules';
 import { registerCollectionCorrectionOfflineReplayer } from './src/screens/Common/CollectionCorrectionFormScreen';
 import { registerPunchCorrectionOfflineReplayer } from './src/screens/Common/PunchCorrectionScreen';
+import { navigateForNotification } from './src/utils/notificationNavigation';
+import PushNotificationService from './src/services/PushNotificationService';
 
 wireReactQueryToAppEvents();
 // All four OfflineQueue replayers registered explicitly here, in one place,
@@ -62,20 +64,7 @@ const AppContent = () => {
             if (msg?.notification_type === 'CUSTOMER_ASSIGNED') {
                 notify.info(msg.message || 'You have been assigned a new customer', {
                     duration: NotificationDuration.LONG,
-                    onPress: () => {
-                        if (!navigationRef.current) return;
-                        // Only employees receive CUSTOMER_ASSIGNED, so EmployeeTabs/
-                        // EmployeeCollections (the real registered route names —
-                        // see RootNavigator.js) is always the right target here.
-                        if (msg.collection_id) {
-                            navigationRef.current.navigate('EmployeeTabs', {
-                                screen: 'EmployeeCollections',
-                                params: { collectionId: msg.collection_id },
-                            });
-                        } else {
-                            navigationRef.current.navigate('EmployeeTabs', { screen: 'EmployeeCollections' });
-                        }
-                    },
+                    onPress: () => navigateForNotification(navigationRef, msg),
                 });
                 return;
             }
@@ -86,9 +75,7 @@ const AppContent = () => {
             if (msg?.notification_type === 'PUNCH_INACTIVITY') {
                 notify.warning(msg.message || "It's been a while since your last punch — please punch out or update your status.", {
                     duration: NotificationDuration.LONG,
-                    onPress: () => {
-                        navigationRef.current?.navigate('EmployeeTabs', { screen: 'EmployeePunch' });
-                    },
+                    onPress: () => navigateForNotification(navigationRef, msg),
                 });
             }
         });
@@ -138,6 +125,19 @@ const AppContent = () => {
         if (!auth.isAuthenticated) return;
         ApplicationActivityService.start();
         return () => ApplicationActivityService.stop();
+    }, [auth.isAuthenticated]);
+
+    // OS-level push notifications (FCM) — registers this device's token
+    // once authenticated (the registration endpoint requires auth + the
+    // X-Device-ID header every request already sends), and wires a tap on
+    // a background/quit-state notification to the SAME navigation mapping
+    // the real-time in-app toast above uses.
+    useEffect(() => {
+        if (!auth.isAuthenticated) return;
+        const unsubscribe = PushNotificationService.initialize({
+            onNotificationOpened: (payload) => navigateForNotification(navigationRef, payload),
+        });
+        return unsubscribe;
     }, [auth.isAuthenticated]);
 
     // Show splash until BOTH the animation finishes AND auth has initialized.
