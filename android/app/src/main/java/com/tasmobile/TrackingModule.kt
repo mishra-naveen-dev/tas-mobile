@@ -90,6 +90,8 @@ class TrackingModule(private val reactContext: ReactApplicationContext) :
                 intent.putExtra(TrackingService.EXTRA_BATCH_MAX_POINTS, json.getInt("batch_max_points"))
             if (json.has("batch_upload_interval_s"))
                 intent.putExtra(TrackingService.EXTRA_BATCH_UPLOAD_INTERVAL_S, json.getInt("batch_upload_interval_s"))
+            if (json.has("offline_max_batch_size"))
+                intent.putExtra(TrackingService.EXTRA_OFFLINE_MAX_BATCH_SIZE, json.getInt("offline_max_batch_size"))
         } catch (e: Exception) {
             // Malformed config JSON — service keeps its current/default intervals.
         }

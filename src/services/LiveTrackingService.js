@@ -54,6 +54,11 @@ const DEFAULT_CONFIG = {
   // STATIONARY_DIST_M). Fetched from /livetracking/config/, default 50m.
   stationary_distance_m: 50,
   stationary_window_s: 60,
+  // Hard cap per offline-sync POST (mirrors TrackingConfiguration.
+  // offline_max_batch_size) - _sync() chunks the queue to this size instead
+  // of sending it all in one request, so a long offline backlog can't
+  // permanently deadlock against the server's own ceiling.
+  offline_max_batch_size: 200,
 };
 
 // The offline GPS queue. Scoped by the AUTHENTICATED USER as well as the
@@ -393,29 +398,51 @@ class LiveTrackingService {
       return;
     }
 
-    const batch = [...this.queue];
-    this.queue = [];
+    // Send the queue in chunks no larger than the server's own cap (an
+    // offline backlog can grow past it) — oldest first, one chunk at a time.
+    // A chunk is only ever removed from the FRONT of this.queue, and only
+    // after the server has accepted it, so: (a) a chunk that fails leaves
+    // the queue untouched — nothing lost, nothing double-sent on retry
+    // (client_point_id/sequence_no make a resend a safe no-op server-side
+    // either way); (b) new pings enqueue()'d while a request is in flight
+    // land at the END of this.queue and are never disturbed by slicing the
+    // front. Progress already made (earlier chunks in THIS call) is kept
+    // even if a later chunk fails.
+    let chunkSize = this.config.offline_max_batch_size || 200;
 
-    if (IS_DEV) console.log('[Live] Syncing', batch.length, 'pings', isFinal ? '(final)' : '');
+    while (this.queue.length > 0) {
+      const chunk = this.queue.slice(0, chunkSize);
 
-    // A batch whose oldest point is well older than one normal sync interval
-    // accumulated while offline — flag it for the server's sync audit trail.
-    const syncMs = (this.config.batch_upload_interval_s || 60) * 1000;
-    const oldestAgeMs = Date.now() - new Date(batch[0]?.timestamp || Date.now()).getTime();
-    const source = oldestAgeMs > syncMs * 2 ? 'offline_sync' : 'live';
+      if (IS_DEV) console.log('[Live] Syncing', chunk.length, 'pings', isFinal ? '(final)' : '');
 
-    try {
-      await api.sendLivePoints({ session_id: this.sessionId, points: batch, source });
-      // Re-persist whatever arrived while the request was in flight (may be empty).
-      await this._saveQueue();
-    } catch (err) {
-      if (IS_DEV) console.warn('[Live] Sync failed, will retry:', err.message);
-      // Requeue (preserving chronological order) and persist for crash recovery.
-      // Each point kept its client_point_id, so if the request actually
-      // succeeded server-side before this error (e.g. the response itself
-      // was lost), the retry is a safe no-op for those points server-side.
-      this.queue = [...batch, ...this.queue];
-      await this._saveQueue();
+      // A batch whose oldest point is well older than one normal sync
+      // interval accumulated while offline — flag it for the server's sync
+      // audit trail.
+      const syncMs = (this.config.batch_upload_interval_s || 60) * 1000;
+      const oldestAgeMs = Date.now() - new Date(chunk[0]?.timestamp || Date.now()).getTime();
+      const source = oldestAgeMs > syncMs * 2 ? 'offline_sync' : 'live';
+
+      try {
+        await api.sendLivePoints({ session_id: this.sessionId, points: chunk, source });
+        this.queue = this.queue.slice(chunk.length);
+        await this._saveQueue();
+      } catch (err) {
+        const status = err?.response?.status;
+        if (status === 400 && chunkSize > 1) {
+          // The configured chunk size is itself too large for this batch
+          // (e.g. an old app build's offline_max_batch_size is stale) —
+          // halve it and retry immediately instead of waiting a full cycle.
+          chunkSize = Math.max(1, Math.floor(chunkSize / 2));
+          if (IS_DEV) console.warn('[Live] Sync got 400, halving chunk size to', chunkSize);
+          continue;
+        }
+        if (IS_DEV) console.warn('[Live] Sync failed, will retry:', err.message);
+        // Network error / 5xx / a 400 even at chunk size 1 (malformed data,
+        // not a size problem) — stop here for this cycle. The chunk (and
+        // everything behind it) is still in this.queue, untouched.
+        await this._saveQueue();
+        return;
+      }
     }
   }
 

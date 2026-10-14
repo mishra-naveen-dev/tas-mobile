@@ -91,6 +91,12 @@ class TrackingService : Service() {
         // interval_* extras above.
         const val EXTRA_BATCH_MAX_POINTS = "batch_max_points"
         const val EXTRA_BATCH_UPLOAD_INTERVAL_S = "batch_upload_interval_s"
+        // Hard cap per offline-sync POST (mirrors TrackingConfiguration.
+        // offline_max_batch_size) - flush() chunks the buffer to this size
+        // instead of sending it all in one request, so a long offline
+        // backlog can't permanently deadlock against the server's own
+        // ceiling (every retry re-sending the same too-large batch forever).
+        const val EXTRA_OFFLINE_MAX_BATCH_SIZE = "offline_max_batch_size"
 
         const val DEFAULT_INTERVAL_MOVING_S = 10
         const val DEFAULT_INTERVAL_WALKING_S = 15
@@ -99,6 +105,7 @@ class TrackingService : Service() {
         const val DEFAULT_LOW_BATTERY_THRESHOLD_PCT = 20
         const val DEFAULT_BATCH_MAX_POINTS = 6
         const val DEFAULT_BATCH_UPLOAD_INTERVAL_S = 60
+        const val DEFAULT_OFFLINE_MAX_BATCH_SIZE = 200
 
         // Movement classification thresholds (km/h), derived from the fix's own
         // reported speed — a heuristic, not a dedicated activity-recognition
@@ -132,6 +139,7 @@ class TrackingService : Service() {
     private var currentIntervalMs = DEFAULT_INTERVAL_STATIONARY_S * 1000L
     private var batchMaxPoints = DEFAULT_BATCH_MAX_POINTS
     private var batchIntervalMs = DEFAULT_BATCH_UPLOAD_INTERVAL_S * 1000L
+    private var offlineMaxBatchSize = DEFAULT_OFFLINE_MAX_BATCH_SIZE
 
     // Buffer of captured fixes, uploaded in batches to keep server load low.
     private val buffer = ArrayList<JSONObject>()
@@ -236,6 +244,7 @@ class TrackingService : Service() {
         batchIntervalMs = intent.getIntExtra(
             EXTRA_BATCH_UPLOAD_INTERVAL_S, (batchIntervalMs / 1000L).toInt(),
         ).toLong() * 1000L
+        offlineMaxBatchSize = intent.getIntExtra(EXTRA_OFFLINE_MAX_BATCH_SIZE, offlineMaxBatchSize)
     }
 
     private fun batteryPercent(): Int {
@@ -425,69 +434,97 @@ class TrackingService : Service() {
     private fun flush() {
         if (baseUrl.isEmpty() || token.isEmpty() || sessionId < 0) return
 
-        val batch: List<JSONObject>
+        val fullBatch: List<JSONObject>
         synchronized(bufferLock) {
             if (buffer.isEmpty()) return
-            batch = ArrayList(buffer)
+            fullBatch = ArrayList(buffer)
             buffer.clear()
         }
 
-        val points = JSONArray()
-        for (p in batch) points.put(p)
-        // A batch whose oldest point is well older than one normal flush
-        // interval accumulated while offline — flag it for the server's
-        // sync audit trail (see IngestPointsView's `source` handling).
-        val oldestAgeMs = System.currentTimeMillis() - (batch.firstOrNull()?.let {
-            try { iso.parse(it.getString("timestamp"))?.time } catch (e: Exception) { null }
-        } ?: System.currentTimeMillis())
-        val source = if (oldestAgeMs > batchIntervalMs * 2) "offline_sync" else "live"
-
-        val body = JSONObject().apply {
-            put("session_id", sessionId)
-            put("points", points)
-            put("source", source)
-        }.toString()
-
         val url = baseUrl.trimEnd('/') + "/livetracking/points/"
         val authToken = token
+        val sid = sessionId
+        val interval = batchIntervalMs
 
+        // Send in chunks no larger than the server's own cap (an offline
+        // backlog can grow past it) — oldest first, one chunk at a time, on
+        // this same background thread so a long backlog drains in one pass
+        // instead of waiting one flush cycle per chunk. A chunk is only
+        // dropped from `remaining` after the server accepts it; on any
+        // failure the untried remainder (including the failed chunk) is
+        // re-queued, same idempotency guarantee as before (client_point_id +
+        // sequence_no make a resend a safe no-op server-side).
         thread {
-            var conn: HttpURLConnection? = null
-            try {
-                conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 15000
-                    readTimeout = 15000
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Authorization", "Bearer $authToken")
-                }
-                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                val code = conn.responseCode
-                if (code !in 200..299) throw RuntimeException("HTTP $code")
-                // Step the local counter past whatever the server now holds, so
-                // a counter lost with the process cannot make every subsequent
-                // fix look like a duplicate of one already stored.
-                (conn.inputStream.bufferedReader().use { it.readText() }).let { response ->
-                    try { noteServerMaxSequence(JSONObject(response).optInt("max_sequence", 0)) }
-                    catch (e: Exception) { /* response shape changed; keep local counter */ }
-                }
-            } catch (e: Exception) {
-                // Re-queue the batch (oldest first) so it retries on the next
-                // flush. Each point kept its client_point_id AND its sequence
-                // number, so if the earlier POST actually succeeded server-side
-                // before this exception (e.g. the response itself was lost), the
-                // retry is a safe no-op for those points instead of creating
-                // duplicates.
-                synchronized(bufferLock) {
-                    buffer.addAll(0, batch)
-                    if (buffer.size > BUFFER_CAP) {
-                        buffer.removeAt(0)
-                        Log.w(TAG, "GPS buffer overflowed on retry; dropped the oldest unsent fix.")
+            var remaining: List<JSONObject> = fullBatch
+            var chunkSize = offlineMaxBatchSize.coerceAtLeast(1)
+
+            while (remaining.isNotEmpty()) {
+                val chunk = remaining.take(chunkSize)
+                val points = JSONArray()
+                for (p in chunk) points.put(p)
+                // A batch whose oldest point is well older than one normal
+                // flush interval accumulated while offline — flag it for the
+                // server's sync audit trail (see IngestPointsView's `source`
+                // handling).
+                val oldestAgeMs = System.currentTimeMillis() - (chunk.firstOrNull()?.let {
+                    try { iso.parse(it.getString("timestamp"))?.time } catch (e: Exception) { null }
+                } ?: System.currentTimeMillis())
+                val source = if (oldestAgeMs > interval * 2) "offline_sync" else "live"
+
+                val body = JSONObject().apply {
+                    put("session_id", sid)
+                    put("points", points)
+                    put("source", source)
+                }.toString()
+
+                var conn: HttpURLConnection? = null
+                try {
+                    conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        connectTimeout = 15000
+                        readTimeout = 15000
+                        doOutput = true
+                        setRequestProperty("Content-Type", "application/json")
+                        setRequestProperty("Authorization", "Bearer $authToken")
                     }
+                    conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                    val code = conn.responseCode
+                    if (code in 200..299) {
+                        // Step the local counter past whatever the server now
+                        // holds, so a counter lost with the process cannot
+                        // make every subsequent fix look like a duplicate of
+                        // one already stored.
+                        (conn.inputStream.bufferedReader().use { it.readText() }).let { response ->
+                            try { noteServerMaxSequence(JSONObject(response).optInt("max_sequence", 0)) }
+                            catch (e: Exception) { /* response shape changed; keep local counter */ }
+                        }
+                        remaining = remaining.drop(chunk.size)
+                    } else if (code == 400 && chunkSize > 1) {
+                        // Even our configured chunk size is too large for this
+                        // batch (e.g. a stale offline_max_batch_size) — halve
+                        // it and retry the SAME remaining data immediately.
+                        chunkSize = (chunkSize / 2).coerceAtLeast(1)
+                        Log.w(TAG, "flush() got HTTP 400, halving chunk size to $chunkSize")
+                    } else {
+                        throw RuntimeException("HTTP $code")
+                    }
+                } catch (e: Exception) {
+                    // Network error / 5xx / a 400 even at chunk size 1
+                    // (malformed data, not a size problem) — re-queue
+                    // whatever's left (oldest first) and stop this pass; it
+                    // retries on the next scheduled flush.
+                    synchronized(bufferLock) {
+                        buffer.addAll(0, remaining)
+                        if (buffer.size > BUFFER_CAP) {
+                            val overflow = buffer.size - BUFFER_CAP
+                            repeat(overflow) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
+                            Log.w(TAG, "GPS buffer overflowed on retry; dropped $overflow oldest unsent fix(es).")
+                        }
+                    }
+                    return@thread
+                } finally {
+                    conn?.disconnect()
                 }
-            } finally {
-                conn?.disconnect()
             }
         }
     }
@@ -543,6 +580,7 @@ class TrackingService : Service() {
             .putInt(EXTRA_LOW_BATTERY_THRESHOLD_PCT, lowBatteryThresholdPct)
             .putInt(EXTRA_BATCH_MAX_POINTS, batchMaxPoints)
             .putInt(EXTRA_BATCH_UPLOAD_INTERVAL_S, (batchIntervalMs / 1000L).toInt())
+            .putInt(EXTRA_OFFLINE_MAX_BATCH_SIZE, offlineMaxBatchSize)
             .apply()
     }
 
@@ -558,6 +596,7 @@ class TrackingService : Service() {
         lowBatteryThresholdPct = p.getInt(EXTRA_LOW_BATTERY_THRESHOLD_PCT, DEFAULT_LOW_BATTERY_THRESHOLD_PCT)
         batchMaxPoints = p.getInt(EXTRA_BATCH_MAX_POINTS, DEFAULT_BATCH_MAX_POINTS)
         batchIntervalMs = p.getInt(EXTRA_BATCH_UPLOAD_INTERVAL_S, DEFAULT_BATCH_UPLOAD_INTERVAL_S).toLong() * 1000L
+        offlineMaxBatchSize = p.getInt(EXTRA_OFFLINE_MAX_BATCH_SIZE, DEFAULT_OFFLINE_MAX_BATCH_SIZE)
         return baseUrl.isNotEmpty() && token.isNotEmpty()
     }
 
