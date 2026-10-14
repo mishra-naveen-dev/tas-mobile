@@ -433,6 +433,10 @@ api.punchOut = (punchId, data = {}) => {
     return api.post('/attendance/punches/', payload);
 };
 
+api.registerFCMToken = (fcmToken) => {
+    return api.post('/organization/devices/fcm-token/', { fcm_token: fcmToken });
+};
+
 api.getDailySummary = (params = {}) => {
     return api.get('/attendance/punches/daily_summary/', { params });
 };
