@@ -1,8 +1,20 @@
 import { Platform, PermissionsAndroid } from 'react-native';
 import messaging from '@react-native-firebase/messaging';
+import crashlytics from '@react-native-firebase/crashlytics';
 import api from '../api/api';
 
 const IS_DEV = __DEV__;
+
+// console.warn/log calls below are compiled out of release builds (__DEV__
+// is false), so they're useless for diagnosing a real production failure -
+// recordFailure logs a non-fatal to Crashlytics (visible in the Firebase
+// console on any build, dev or release) as well as the dev console.
+function recordFailure(context, error) {
+  if (IS_DEV) console.warn(`[Push] ${context}:`, error?.message);
+  try {
+    crashlytics().recordError(error instanceof Error ? error : new Error(`${context}: ${error}`));
+  } catch {}
+}
 
 /**
  * Real OS-level push notifications (FCM) — reaches the device even
@@ -48,15 +60,13 @@ class PushNotificationService {
           }
           await this._registerToken();
         } catch (e) {
-          if (IS_DEV) console.warn('[Push] Permission/token setup failed:', e?.message);
+          recordFailure('Permission/token setup failed', e);
         }
       })();
 
       this._unsubscribers.push(
         messaging().onTokenRefresh((token) => {
-          api.registerFCMToken(token).catch((e) => {
-            if (IS_DEV) console.warn('[Push] Token refresh registration failed:', e.message);
-          });
+          api.registerFCMToken(token).catch((e) => recordFailure('Token refresh registration failed', e));
         }),
       );
 
@@ -83,7 +93,7 @@ class PushNotificationService {
         })
         .catch(() => {});
     } catch (e) {
-      if (IS_DEV) console.warn('[Push] initialize() failed - continuing without push:', e?.message);
+      recordFailure('initialize() failed - continuing without push', e);
       return () => {};
     }
 
@@ -115,7 +125,7 @@ class PushNotificationService {
       const token = await messaging().getToken();
       if (token) await api.registerFCMToken(token);
     } catch (e) {
-      if (IS_DEV) console.warn('[Push] Token registration failed:', e.message);
+      recordFailure('Token registration failed', e);
     }
   }
 
