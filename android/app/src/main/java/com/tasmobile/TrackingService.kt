@@ -194,9 +194,10 @@ class TrackingService : Service() {
                 sessionId = newSessionId
                 applyConfigExtras(intent)
                 persistParams()
-                startForegroundTracking()
-                startLocationUpdates()
-                registerNetworkCallback()
+                if (startForegroundTracking()) {
+                    startLocationUpdates()
+                    registerNetworkCallback()
+                }
             }
 
             ACTION_UPDATE_CONFIG -> {
@@ -221,10 +222,18 @@ class TrackingService : Service() {
             // capturing, and let the server know this happened.
             else -> {
                 if (restoreParams() && sessionId >= 0) {
-                    startForegroundTracking()
-                    startLocationUpdates()
-                    registerNetworkCallback()
-                    postHeartbeat("SERVICE_RESTARTED", "TrackingService resumed after process restart (START_STICKY)")
+                    if (startForegroundTracking()) {
+                        startLocationUpdates()
+                        registerNetworkCallback()
+                        postHeartbeat("SERVICE_RESTARTED", "TrackingService resumed after process restart (START_STICKY)")
+                    } else {
+                        // The OS refused to let this restart reach the foreground -
+                        // tracking is genuinely stopped until the app itself is
+                        // reopened (PunchContext re-attaches LiveTrackingService on
+                        // app start whenever the employee is still punched in). Tell
+                        // the server so this gap is visible instead of silent.
+                        postHeartbeat("SERVICE_RESTART_REFUSED", "OS refused startForeground() on auto-restart - tracking stopped until app reopened")
+                    }
                 } else {
                     stopSelf()
                     return START_NOT_STICKY
@@ -607,17 +616,35 @@ class TrackingService : Service() {
 
     // ---- foreground notification ----
 
-    private fun startForegroundTracking() {
+    /** Returns true if the service successfully promoted itself to
+     * foreground. On Android 12+, the OS can refuse startForeground() when
+     * it auto-restarts this service (START_STICKY, null intent) after
+     * killing it - that restart isn't a user-initiated trigger, so the
+     * system throws ForegroundServiceStartNotAllowedException. Previously
+     * uncaught here, crashing the service outright (confirmed in
+     * Crashlytics: repeated crash-loop on at least one device, versions
+     * 1.34-1.47). Callers must not proceed to startLocationUpdates() on
+     * false - capturing location in the background without an active
+     * foreground notification is itself a violation the OS will kill for,
+     * just less immediately. */
+    private fun startForegroundTracking(): Boolean {
         createNotificationChannel()
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            true
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "startForeground() refused by the OS - stopping cleanly instead of crashing.", e)
+            stopSelf()
+            false
         }
     }
 
