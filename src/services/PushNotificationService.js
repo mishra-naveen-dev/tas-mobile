@@ -31,45 +31,61 @@ class PushNotificationService {
   static initialize({ onNotificationOpened } = {}) {
     this._cleanup();
 
-    (async () => {
-      const granted = await this._ensurePermission();
-      if (!granted) {
-        if (IS_DEV) console.log('[Push] Notification permission not granted - FCM registration skipped.');
-        return;
-      }
-      await this._registerToken();
-    })();
+    // This feature must never be able to take the whole app down with it -
+    // same no-op-on-failure discipline as the backend side
+    // (apps.organization.push.send_push_to_user never raises either). Any
+    // native-module failure here (missing/outdated Play Services, a release-
+    // build autolinking gap, etc.) previously threw straight out of the
+    // useEffect that calls this, uncaught - crashing the app for every user
+    // right after login.
+    try {
+      (async () => {
+        try {
+          const granted = await this._ensurePermission();
+          if (!granted) {
+            if (IS_DEV) console.log('[Push] Notification permission not granted - FCM registration skipped.');
+            return;
+          }
+          await this._registerToken();
+        } catch (e) {
+          if (IS_DEV) console.warn('[Push] Permission/token setup failed:', e?.message);
+        }
+      })();
 
-    this._unsubscribers.push(
-      messaging().onTokenRefresh((token) => {
-        api.registerFCMToken(token).catch((e) => {
-          if (IS_DEV) console.warn('[Push] Token refresh registration failed:', e.message);
-        });
-      }),
-    );
+      this._unsubscribers.push(
+        messaging().onTokenRefresh((token) => {
+          api.registerFCMToken(token).catch((e) => {
+            if (IS_DEV) console.warn('[Push] Token refresh registration failed:', e.message);
+          });
+        }),
+      );
 
-    // Foreground: deliberately no toast here (see class doc) - just keep
-    // Crashlytics/analytics-style visibility in dev.
-    this._unsubscribers.push(
-      messaging().onMessage(async (remoteMessage) => {
-        if (IS_DEV) console.log('[Push] Foreground message (no toast - WebSocket already covers this):', remoteMessage.data);
-      }),
-    );
+      // Foreground: deliberately no toast here (see class doc) - just keep
+      // Crashlytics/analytics-style visibility in dev.
+      this._unsubscribers.push(
+        messaging().onMessage(async (remoteMessage) => {
+          if (IS_DEV) console.log('[Push] Foreground message (no toast - WebSocket already covers this):', remoteMessage.data);
+        }),
+      );
 
-    // Tapped while the app was backgrounded (not killed).
-    this._unsubscribers.push(
-      messaging().onNotificationOpenedApp((remoteMessage) => {
-        if (remoteMessage?.data) onNotificationOpened?.(remoteMessage.data);
-      }),
-    );
+      // Tapped while the app was backgrounded (not killed).
+      this._unsubscribers.push(
+        messaging().onNotificationOpenedApp((remoteMessage) => {
+          if (remoteMessage?.data) onNotificationOpened?.(remoteMessage.data);
+        }),
+      );
 
-    // Tapped from a fully quit state - only ever relevant once, at startup.
-    messaging()
-      .getInitialNotification()
-      .then((remoteMessage) => {
-        if (remoteMessage?.data) onNotificationOpened?.(remoteMessage.data);
-      })
-      .catch(() => {});
+      // Tapped from a fully quit state - only ever relevant once, at startup.
+      messaging()
+        .getInitialNotification()
+        .then((remoteMessage) => {
+          if (remoteMessage?.data) onNotificationOpened?.(remoteMessage.data);
+        })
+        .catch(() => {});
+    } catch (e) {
+      if (IS_DEV) console.warn('[Push] initialize() failed - continuing without push:', e?.message);
+      return () => {};
+    }
 
     return () => this._cleanup();
   }
