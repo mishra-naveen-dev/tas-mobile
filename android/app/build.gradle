@@ -102,8 +102,8 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
 
-        versionCode 51
-        versionName "1.50"
+        versionCode 52
+        versionName "1.51"
 
         manifestPlaceholders = [MAPS_API_KEY: dotenvProps.getProperty("GOOGLE_MAPS_API_KEY", "")]
 
@@ -188,6 +188,7 @@ dependencies {
     implementation("com.google.firebase:firebase-analytics")
     implementation("com.google.firebase:firebase-crashlytics")
     implementation("com.google.firebase:firebase-perf")
+    implementation("com.google.firebase:firebase-messaging")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
