@@ -250,6 +250,20 @@ export const PunchProvider = ({ children }) => {
                 maxDurationEndsAt: ph.max_duration_ends_at || s.max_duration_ends_at || null,
                 absoluteExpiresAt: ph.absolute_expires_at || s.absolute_expires_at || null,
               });
+              // Re-attach the native GPS capture engine on every app
+              // (re)start while still punched in - this JS runtime restarting
+              // (app reopen, OS background kill, an app update) does NOT mean
+              // the native tracking service survived too. Without this, a
+              // dead native service after a restart silently stays dead: the
+              // UI above restores "tracking active, X km so far" from the
+              // server and looks completely normal, but no further GPS ever
+              // gets captured until the employee happens to punch out and
+              // back in again. attach() already detaches any stale prior
+              // session first, so this is safe even when tracking is in fact
+              // still alive.
+              LiveTrackingService.attach(s.id).catch((e) => {
+                if (IS_DEV) console.warn('[Punch] Re-attach on restore failed:', e.message);
+              });
             } else {
               setTrackingMarks(null);
             }

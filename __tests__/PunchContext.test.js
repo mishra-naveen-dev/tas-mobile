@@ -14,6 +14,7 @@ import { create, act } from 'react-test-renderer';
 import { PunchProvider, usePunch } from '../src/context/PunchContext';
 import api from '../src/api/api';
 import LocationService from '../src/services/LocationService';
+import LiveTrackingService from '../src/services/LiveTrackingService';
 
 jest.mock('../src/api/api', () => ({
   __esModule: true,
@@ -75,6 +76,33 @@ describe('PunchContext fetchTodayPunches distance restore', () => {
     // Second call must be the SUM (12.3 + 4.7), not 4.7 alone.
     const calls = LocationService.setBaseDistance.mock.calls.map(c => c[0]);
     expect(calls[calls.length - 1]).toBeCloseTo(17.0, 5);
+  });
+
+  test('active LiveSession: re-attaches the native tracking engine, not just the distance', async () => {
+    // This JS runtime restarting (app reopen, OS background kill, an app
+    // update) says nothing about whether the native TrackingService
+    // survived too - if it didn't, this is the only thing that resumes GPS
+    // capture; without it the UI looks fully restored while no further
+    // location is ever captured until the employee happens to punch out
+    // and back in again.
+    api.get.mockResolvedValue({
+      data: [{
+        id: 1,
+        punch_type: 'PUNCH_IN',
+        punched_at: new Date().toISOString(),
+        total_distance_day: 12.3,
+      }],
+    });
+    api.getActiveLiveSession.mockResolvedValue({
+      data: { active: true, session: { id: 42, total_distance: 4.7 } },
+    });
+
+    await act(async () => {
+      create(<PunchProvider><></></PunchProvider>);
+    });
+    await flush();
+
+    expect(LiveTrackingService.attach).toHaveBeenCalledWith(42);
   });
 
   test('no active LiveSession: base distance stays the punch-chain snapshot', async () => {
