@@ -352,17 +352,18 @@ export const PunchProvider = ({ children }) => {
         return { success: false, error: location.error, errorType: location.errorType };
       }
 
-      // Reverse-geocode the fix into a human-readable address (Google, with
-      // an on-device coordinate fallback if the API/network is unavailable).
+      // Reverse-geocode the fix into a human-readable address. Deliberately
+      // no coordinate-string fallback here: GeocodingService.reverseGeocode()
+      // already returns null (not a disguised "lat, lng" string) when the
+      // API fails or times out, so address simply stays blank in that case -
+      // every display layer already treats a blank address as "unavailable"
+      // correctly, which a fake coordinate-shaped address used to defeat.
       let address = location.address || '';
       try {
         const geo = await reverseGeocodeWithTimeout(location.latitude, location.longitude);
         address = geo?.fullAddress || geo?.shortAddress || address;
       } catch (e) {
         if (IS_DEV) console.warn('[Punch] Reverse geocode failed:', e.message);
-      }
-      if (!address) {
-        address = `${location.latitude?.toFixed(5)}, ${location.longitude?.toFixed(5)}`;
       }
 
       setCapturedLocation({

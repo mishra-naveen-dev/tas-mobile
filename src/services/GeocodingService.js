@@ -260,13 +260,23 @@ class GeocodingService {
     return parts.length > 0 ? parts.join(', ') : 'Unknown Location';
   }
 
+  // Every caller checks `fullAddress || shortAddress` first - this used to
+  // put a coordinate string in `fullAddress`, which every caller then
+  // picked over a real address every single time the API failed or
+  // returned no result, permanently storing "23.042559, 72.566681" as if
+  // it were a resolved address (the backend's own punch records, and the
+  // admin table that reads them, show exactly this). Returning null here
+  // instead lets every caller's own `|| ''` fallback leave the address
+  // genuinely blank, which every display layer (the admin AddressCell,
+  // CollectionVisitScreen's `{!!address}` guard) already renders as "no
+  // address available" rather than a misleading coordinate string.
   static getFallbackAddress(latitude, longitude) {
     return {
       latitude,
       longitude,
-      formattedAddress: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
-      shortAddress: 'Unknown Location',
-      fullAddress: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+      formattedAddress: null,
+      shortAddress: null,
+      fullAddress: null,
       street: '',
       city: '',
       state: '',
