@@ -248,7 +248,12 @@ const CollectionVisitScreen = ({ navigation, route }) => {
 
       // Reverse-geocode into a human-readable current address — the same
       // "save the address the employee is actually standing at" behaviour
-      // punch already has (see PunchContext.fetchLocation).
+      // punch already has (see PunchContext.fetchLocation). Deliberately no
+      // coordinate-string fallback: GeocodingService.reverseGeocode() already
+      // returns null (not a disguised "lat, lng" string) on failure/timeout,
+      // so address stays blank, which the `{!!localLocation?.address}` guard
+      // below already renders correctly as "no address card" rather than a
+      // misleading coordinate string.
       let address = loc.address || '';
       try {
         const geo = await Promise.race([
@@ -257,10 +262,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         ]);
         address = geo?.fullAddress || geo?.shortAddress || address;
       } catch (e) {
-        // Best-effort — raw coordinates are still a valid fallback below.
-      }
-      if (!address) {
-        address = `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
+        // Best-effort — address stays whatever it already was (likely '').
       }
 
       setLocalLocation({ ...loc, address });
