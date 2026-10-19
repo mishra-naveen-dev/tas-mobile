@@ -593,7 +593,6 @@ export const PunchProvider = ({ children }) => {
         } catch (geoErr) {
           if (IS_DEV) console.warn('[Punch] Reverse geocode failed on punch out:', geoErr.message);
         }
-        if (!address) address = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
       } else if (capturedLocation?.latitude != null && capturedLocation?.longitude != null) {
         // captureFieldActivityLocation() already tried live GPS (with retries) and
         // its own persisted cache — this in-session punch-in reading is a
@@ -601,7 +600,7 @@ export const PunchProvider = ({ children }) => {
         // fabricated one.
         lat = capturedLocation.latitude;
         lng = capturedLocation.longitude;
-        address = capturedLocation.current_address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        address = capturedLocation.current_address || '';
         accuracy = capturedLocation.accuracy ?? null;
         gpsExtra = {
           altitude: capturedLocation.altitude ?? null,

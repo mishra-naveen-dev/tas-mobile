@@ -96,7 +96,12 @@ const PunchScreen = ({ navigation }) => {
                 return false;
             }
 
-            const address = result.address || `${result.latitude.toFixed(6)}, ${result.longitude.toFixed(6)}`;
+            // Never disguise a failed reverse-geocode as a real address - a
+            // coordinate string here used to get submitted as current_address
+            // and stored on the punch permanently. Leave it blank; the
+            // server-side backfill (apps.attendance.tasks.backfill_punch_address)
+            // resolves it once the punch reaches the backend.
+            const address = result.address || '';
             
             setCurrentLocation({
                 latitude: result.latitude,

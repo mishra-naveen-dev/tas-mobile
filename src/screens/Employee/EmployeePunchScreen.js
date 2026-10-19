@@ -1178,7 +1178,7 @@ const EmployeePunchScreen = ({ navigation }) => {
                   <Icon name={isMockLocation ? 'smartphone' : 'map-pin'} size={18} color={isMockLocation ? colors.warning : colors.success} />
                   <View style={styles.locInfo}>
                     <Text style={[styles.locText, { color: isMockLocation ? colors.warning : colors.success }]}>
-                      {localLocation.current_address || `${localLocation.latitude}, ${localLocation.longitude}`}
+                      {localLocation.current_address || 'Resolving address...'}
                     </Text>
                     {isMockLocation && <Text style={styles.mockText}>Dev Mode</Text>}
                   </View>
