@@ -117,6 +117,7 @@ class TrackingService : Service() {
 
         private const val PREFS = "tas_tracking_prefs"
         private const val KEY_SEQUENCE = "sequence_no"
+        private const val KEY_BUFFER = "gps_buffer_json"
 
         private const val TAG = "TasTracking"
     }
@@ -144,6 +145,13 @@ class TrackingService : Service() {
     // Buffer of captured fixes, uploaded in batches to keep server load low.
     private val buffer = ArrayList<JSONObject>()
     private val bufferLock = Any()
+    // flush() no longer clears `buffer` upfront (see flush() doc), which
+    // removed the implicit mutex that used to make a second concurrent call
+    // (periodic timer, network-restored callback, and the threshold check in
+    // addPoint() can all fire close together) harmlessly see an empty buffer
+    // and return. Without this, two overlapping flush() calls could both
+    // snapshot the same unconfirmed chunk and race each other removing it.
+    private val isFlushing = java.util.concurrent.atomic.AtomicBoolean(false)
 
     // Per-session sequence counter for the (session, sequence_no) idempotency
     // key. -1 means "not loaded yet"; it is persisted so it survives the OS
@@ -168,6 +176,7 @@ class TrackingService : Service() {
         super.onCreate()
         fused = LocationServices.getFusedLocationProviderClient(this)
         connectivityManager = getSystemService(ConnectivityManager::class.java)
+        restoreBuffer()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -187,6 +196,7 @@ class TrackingService : Service() {
                     synchronized(bufferLock) { if (buffer.isNotEmpty()) {
                         Log.w(TAG, "Dropping ${buffer.size} buffered fix(es) from the previous session.")
                         buffer.clear()
+                        persistBufferLocked()
                     } }
                     synchronized(sequenceLock) { sequenceNo = 1 }
                     prefs().edit().putInt(KEY_SEQUENCE, 1).apply()
@@ -406,6 +416,7 @@ class TrackingService : Service() {
                 Log.w(TAG, "GPS buffer full (${BUFFER_CAP}); dropped the oldest unsent fix - " +
                     "the route will show a gap there, which is honest: those fixes were never uploaded.")
             }
+            persistBufferLocked()
             shouldFlush = buffer.size >= batchMaxPoints
         }
         if (shouldFlush) flush()
@@ -439,15 +450,28 @@ class TrackingService : Service() {
         }
     }
 
-    /** POST all buffered fixes as one batch. Re-queues them on failure. */
+    /** POST all buffered fixes as one batch. Nothing is removed from `buffer`
+     * (or its persisted copy) until the server actually confirms it. */
     private fun flush() {
         if (baseUrl.isEmpty() || token.isEmpty() || sessionId < 0) return
+        // Another flush() is already draining the buffer - let it finish
+        // rather than racing it for the same unconfirmed chunk. It will pick
+        // up whatever arrived since on its own next call.
+        if (!isFlushing.compareAndSet(false, true)) return
 
         val fullBatch: List<JSONObject>
         synchronized(bufferLock) {
-            if (buffer.isEmpty()) return
+            if (buffer.isEmpty()) {
+                isFlushing.set(false)
+                return
+            }
+            // Snapshot only - buffer is NOT cleared/removed from here. A
+            // point only leaves `buffer` (and its persisted copy) once a 2xx
+            // response confirms the server actually has it; treating
+            // "handed to the network" the same as "confirmed stored" was
+            // exactly the gap that let a process death mid-send lose data
+            // that looked like it had already been sent.
             fullBatch = ArrayList(buffer)
-            buffer.clear()
         }
 
         val url = baseUrl.trimEnd('/') + "/livetracking/points/"
@@ -459,81 +483,102 @@ class TrackingService : Service() {
         // backlog can grow past it) — oldest first, one chunk at a time, on
         // this same background thread so a long backlog drains in one pass
         // instead of waiting one flush cycle per chunk. A chunk is only
-        // dropped from `remaining` after the server accepts it; on any
-        // failure the untried remainder (including the failed chunk) is
-        // re-queued, same idempotency guarantee as before (client_point_id +
-        // sequence_no make a resend a safe no-op server-side).
+        // removed from `buffer` after the server accepts it; on any failure
+        // the untried remainder simply stays in `buffer` where it already
+        // was (same idempotency guarantee as before either way -
+        // client_point_id + sequence_no make a resend a safe no-op
+        // server-side, so re-attempting a chunk whose success/failure was
+        // ambiguous, e.g. a timeout after the server actually wrote it, is
+        // always safe).
         thread {
-            var remaining: List<JSONObject> = fullBatch
-            var chunkSize = offlineMaxBatchSize.coerceAtLeast(1)
+            try {
+                var remaining: List<JSONObject> = fullBatch
+                var chunkSize = offlineMaxBatchSize.coerceAtLeast(1)
 
-            while (remaining.isNotEmpty()) {
-                val chunk = remaining.take(chunkSize)
-                val points = JSONArray()
-                for (p in chunk) points.put(p)
-                // A batch whose oldest point is well older than one normal
-                // flush interval accumulated while offline — flag it for the
-                // server's sync audit trail (see IngestPointsView's `source`
-                // handling).
-                val oldestAgeMs = System.currentTimeMillis() - (chunk.firstOrNull()?.let {
-                    try { iso.parse(it.getString("timestamp"))?.time } catch (e: Exception) { null }
-                } ?: System.currentTimeMillis())
-                val source = if (oldestAgeMs > interval * 2) "offline_sync" else "live"
+                while (remaining.isNotEmpty()) {
+                    val chunk = remaining.take(chunkSize)
+                    val points = JSONArray()
+                    for (p in chunk) points.put(p)
+                    // A batch whose oldest point is well older than one normal
+                    // flush interval accumulated while offline — flag it for the
+                    // server's sync audit trail (see IngestPointsView's `source`
+                    // handling).
+                    val oldestAgeMs = System.currentTimeMillis() - (chunk.firstOrNull()?.let {
+                        try { iso.parse(it.getString("timestamp"))?.time } catch (e: Exception) { null }
+                    } ?: System.currentTimeMillis())
+                    val source = if (oldestAgeMs > interval * 2) "offline_sync" else "live"
 
-                val body = JSONObject().apply {
-                    put("session_id", sid)
-                    put("points", points)
-                    put("source", source)
-                }.toString()
+                    val body = JSONObject().apply {
+                        put("session_id", sid)
+                        put("points", points)
+                        put("source", source)
+                    }.toString()
 
-                var conn: HttpURLConnection? = null
-                try {
-                    conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        connectTimeout = 15000
-                        readTimeout = 15000
-                        doOutput = true
-                        setRequestProperty("Content-Type", "application/json")
-                        setRequestProperty("Authorization", "Bearer $authToken")
-                    }
-                    conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                    val code = conn.responseCode
-                    if (code in 200..299) {
-                        // Step the local counter past whatever the server now
-                        // holds, so a counter lost with the process cannot
-                        // make every subsequent fix look like a duplicate of
-                        // one already stored.
-                        (conn.inputStream.bufferedReader().use { it.readText() }).let { response ->
-                            try { noteServerMaxSequence(JSONObject(response).optInt("max_sequence", 0)) }
-                            catch (e: Exception) { /* response shape changed; keep local counter */ }
+                    var conn: HttpURLConnection? = null
+                    try {
+                        conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            connectTimeout = 15000
+                            readTimeout = 15000
+                            doOutput = true
+                            setRequestProperty("Content-Type", "application/json")
+                            setRequestProperty("Authorization", "Bearer $authToken")
                         }
-                        remaining = remaining.drop(chunk.size)
-                    } else if (code == 400 && chunkSize > 1) {
-                        // Even our configured chunk size is too large for this
-                        // batch (e.g. a stale offline_max_batch_size) — halve
-                        // it and retry the SAME remaining data immediately.
-                        chunkSize = (chunkSize / 2).coerceAtLeast(1)
-                        Log.w(TAG, "flush() got HTTP 400, halving chunk size to $chunkSize")
-                    } else {
-                        throw RuntimeException("HTTP $code")
-                    }
-                } catch (e: Exception) {
-                    // Network error / 5xx / a 400 even at chunk size 1
-                    // (malformed data, not a size problem) — re-queue
-                    // whatever's left (oldest first) and stop this pass; it
-                    // retries on the next scheduled flush.
-                    synchronized(bufferLock) {
-                        buffer.addAll(0, remaining)
-                        if (buffer.size > BUFFER_CAP) {
-                            val overflow = buffer.size - BUFFER_CAP
-                            repeat(overflow) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
-                            Log.w(TAG, "GPS buffer overflowed on retry; dropped $overflow oldest unsent fix(es).")
+                        conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                        val code = conn.responseCode
+                        if (code in 200..299) {
+                            // Step the local counter past whatever the server now
+                            // holds, so a counter lost with the process cannot
+                            // make every subsequent fix look like a duplicate of
+                            // one already stored.
+                            (conn.inputStream.bufferedReader().use { it.readText() }).let { response ->
+                                try { noteServerMaxSequence(JSONObject(response).optInt("max_sequence", 0)) }
+                                catch (e: Exception) { /* response shape changed; keep local counter */ }
+                            }
+                            remaining = remaining.drop(chunk.size)
+                            // Confirmed stored server-side - now safe to drop from
+                            // the real buffer and its persisted copy. Removing by
+                            // count off the front is correct because
+                            // addPoint()'s own overflow-drop is the only other
+                            // thing that touches buffer's front, and it runs
+                            // under the same lock.
+                            synchronized(bufferLock) {
+                                repeat(chunk.size) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
+                                persistBufferLocked()
+                            }
+                        } else if (code == 400 && chunkSize > 1) {
+                            // Even our configured chunk size is too large for this
+                            // batch (e.g. a stale offline_max_batch_size) — halve
+                            // it and retry the SAME remaining data immediately.
+                            chunkSize = (chunkSize / 2).coerceAtLeast(1)
+                            Log.w(TAG, "flush() got HTTP 400, halving chunk size to $chunkSize")
+                        } else {
+                            throw RuntimeException("HTTP $code")
                         }
+                    } catch (e: Exception) {
+                        // Network error / 5xx / a 400 even at chunk size 1
+                        // (malformed data, not a size problem) — stop this pass.
+                        // Nothing to re-queue: whatever hasn't been confirmed
+                        // sent was never removed from `buffer` in the first
+                        // place. Only new points that arrived from addPoint()
+                        // during this attempt could have pushed it over
+                        // BUFFER_CAP, so just re-check that and stop here; it
+                        // retries on the next scheduled flush.
+                        synchronized(bufferLock) {
+                            if (buffer.size > BUFFER_CAP) {
+                                val overflow = buffer.size - BUFFER_CAP
+                                repeat(overflow) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
+                                Log.w(TAG, "GPS buffer overflowed during flush; dropped $overflow oldest unsent fix(es).")
+                                persistBufferLocked()
+                            }
+                        }
+                        return@thread
+                    } finally {
+                        conn?.disconnect()
                     }
-                    return@thread
-                } finally {
-                    conn?.disconnect()
                 }
+            } finally {
+                isFlushing.set(false)
             }
         }
     }
@@ -570,6 +615,41 @@ class TrackingService : Service() {
             } finally {
                 conn?.disconnect()
             }
+        }
+    }
+
+    // ---- GPS buffer persistence (survive process death while offline) ----
+    //
+    // `buffer` used to be purely in-memory: if the OS killed this service's
+    // process (battery optimization, memory pressure, the
+    // ForegroundServiceStartNotAllowedException crash fixed elsewhere) while
+    // fixes were sitting unsent, every one of them was gone with no trace -
+    // not even a gap marker, since the points were never persisted anywhere
+    // to begin with. Writing the buffer to SharedPreferences on every
+    // mutation (same mechanism already used for params/sequence below) means
+    // a process restart reloads whatever was pending and resumes from there
+    // instead of silently losing it. Must be called while already holding
+    // bufferLock.
+    private fun persistBufferLocked() {
+        val arr = JSONArray()
+        for (p in buffer) arr.put(p)
+        prefs().edit().putString(KEY_BUFFER, arr.toString()).apply()
+    }
+
+    private fun restoreBuffer() {
+        val raw = prefs().getString(KEY_BUFFER, null) ?: return
+        try {
+            val arr = JSONArray(raw)
+            synchronized(bufferLock) {
+                for (i in 0 until arr.length()) {
+                    buffer.add(arr.getJSONObject(i))
+                }
+            }
+            if (arr.length() > 0) {
+                Log.i(TAG, "Restored ${arr.length()} unsent GPS fix(es) buffered before the process died.")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore persisted GPS buffer - starting empty.", e)
         }
     }
 
