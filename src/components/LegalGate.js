@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
     View,
     Text,
@@ -41,6 +42,18 @@ export const NEW_DOCS_SUBTITLE =
 export const ACCEPT_LABEL = 'Accept & Continue';
 export const SUCCESS_MESSAGE = 'Legal & Privacy consent recorded successfully.';
 export const SUBMIT_ERROR_MESSAGE = 'Unable to record your consent. Please try again.';
+
+// Cache of the last server-confirmed "fully compliant, nothing pending"
+// result. Field employees routinely spend a full day with zero signal; this
+// is what lets them keep using the app (punch in, keep being tracked)
+// through a connectivity gap, rather than every single app open re-blocking
+// everything behind a network call. This is a pure offline-USABILITY cache,
+// never a compliance weakening: the actual enforcement stays server-side —
+// any business API call gets a 403 LEGAL_ACKNOWLEDGEMENT_REQUIRED the
+// moment a new mandatory document is published, which re-opens this gate
+// immediately via setLegalRequiredCallback below, cache or no cache.
+const LEGAL_STATUS_CACHE_KEY = '@tas_legal_status_cache';
+const LEGAL_STATUS_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export const DocumentText = ({ doc }) => (
     <View>
@@ -93,17 +106,40 @@ const LegalGate = ({ children }) => {
         pendingList.forEach((d) => { next[d.id] = false; });
         setChecked(next);
         if (pendingList.length > 0) setAccepted(false);
+        // See LEGAL_STATUS_CACHE_KEY's doc comment above.
+        if (pendingList.length === 0) {
+            AsyncStorage.setItem(LEGAL_STATUS_CACHE_KEY, JSON.stringify({ checkedAt: Date.now() })).catch(() => {});
+        } else {
+            AsyncStorage.removeItem(LEGAL_STATUS_CACHE_KEY).catch(() => {});
+        }
     }, []);
 
     const refresh = useCallback(() => {
         setError('');
         return api.getLegalStatus()
             .then((r) => applyStatus(r?.data))
-            .catch((e) => {
+            .catch(async (e) => {
                 if (!mountedRef.current) return;
-                // Fail closed (§17): the status is unknown, so the app stays
-                // behind the gate with an explicit error + Retry. Never a
-                // silent allow, never a silent lock without a way out.
+                // Before failing closed, check for a recently-confirmed
+                // "fully compliant" result (see LEGAL_STATUS_CACHE_KEY's doc
+                // comment above) - this is what stops a pure connectivity
+                // failure (not just airplane mode; any network hiccup on
+                // launch) from locking an already-compliant field employee
+                // out of the entire app, including punching in, which
+                // guarantees a tracking gap for however long they stay
+                // offline.
+                try {
+                    const raw = await AsyncStorage.getItem(LEGAL_STATUS_CACHE_KEY);
+                    const cached = raw ? JSON.parse(raw) : null;
+                    if (cached?.checkedAt && (Date.now() - cached.checkedAt) < LEGAL_STATUS_CACHE_MAX_AGE_MS) {
+                        if (mountedRef.current) setPending([]);
+                        return;
+                    }
+                } catch { /* corrupt/missing cache - fall through to fail-closed */ }
+                // Fail closed (§17): the status is unknown and there is no
+                // usable cache, so the app stays behind the gate with an
+                // explicit error + Retry. Never a silent allow, never a
+                // silent lock without a way out.
                 setPending(null);
                 setError(
                     e?.response?.data?.error ||

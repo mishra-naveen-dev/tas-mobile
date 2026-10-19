@@ -10,6 +10,7 @@
 import React from 'react';
 import { Text, BackHandler } from 'react-native';
 import { create, act } from 'react-test-renderer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api, { setLegalRequiredCallback } from '../src/api/api';
 import LegalGate, { GATE_TITLE, GATE_SUBTITLE, ACCEPT_LABEL, CHECK_TEXT, SUCCESS_MESSAGE } from '../src/components/LegalGate';
 
@@ -56,7 +57,11 @@ const mount = async () => {
 };
 
 describe('LegalGate', () => {
-  beforeEach(() => jest.clearAllMocks());
+  // The async-storage-mock is a real in-memory store, not a jest.fn() -
+  // jest.clearAllMocks() doesn't touch it, so a cache written by one test
+  // (e.g. the "nothing pending" case below) would otherwise leak into the
+  // next one and silently change its outcome.
+  beforeEach(async () => { jest.clearAllMocks(); await AsyncStorage.clear(); });
 
   test('exact §5 title/subtitle and §7 checkbox labels are rendered', async () => {
     api.getLegalStatus.mockResolvedValue({ data: status(PENDING) });
@@ -82,6 +87,56 @@ describe('LegalGate', () => {
     expect(t).not.toContain('APP');
     expect(t).toContain('Unable to verify legal document status');
     expect(pressable(r, 'Retry')).toBeTruthy();
+  });
+
+  test('server unreachable but recently confirmed compliant -> app still opens (offline usability)', async () => {
+    // First app open: server confirms nothing pending (writes the cache).
+    api.getLegalStatus.mockResolvedValue({ data: status([]) });
+    const first = await mount();
+    expect(textOf(first.root)).toContain('APP');
+
+    // Later app open (e.g. next day, zero signal) - the server check itself
+    // fails, but the recent "fully compliant" result should still let the
+    // employee in rather than blocking punch-in/tracking entirely.
+    api.getLegalStatus.mockRejectedValue(new Error('offline'));
+    const second = await mount();
+    expect(textOf(second.root)).toContain('APP');
+  });
+
+  test('never pending before, server unreachable -> still FAIL CLOSED (no cache to trust)', async () => {
+    api.getLegalStatus.mockRejectedValue(new Error('offline'));
+    const r = await mount();
+    expect(textOf(r.root)).not.toContain('APP');
+  });
+
+  test('cached compliance older than 30 days is not trusted -> FAIL CLOSED', async () => {
+    await AsyncStorage.setItem(
+      '@tas_legal_status_cache',
+      JSON.stringify({ checkedAt: Date.now() - 31 * 24 * 60 * 60 * 1000 }),
+    );
+    api.getLegalStatus.mockRejectedValue(new Error('offline'));
+    const r = await mount();
+    expect(textOf(r.root)).not.toContain('APP');
+  });
+
+  test('a document going pending clears the cache, so a later outage fails closed again', async () => {
+    api.getLegalStatus.mockResolvedValue({ data: status([]) });
+    const r = await mount();
+    expect(textOf(r.root)).toContain('APP');
+    expect(setLegalRequiredCallback).toHaveBeenCalled();
+
+    // Mid-session: a new mandatory document is published (same §17 path the
+    // existing 403 test below exercises).
+    api.getLegalStatus.mockResolvedValue({ data: status(PENDING) });
+    await act(async () => { setLegalRequiredCallback.mock.calls.at(-1)[0](); });
+    await flush();
+    expect(textOf(r.root)).not.toContain('APP');
+
+    // Now offline, on a fresh mount - the stale cache must not resurrect
+    // access for a document that's since gone pending.
+    api.getLegalStatus.mockRejectedValue(new Error('offline'));
+    const r2 = await mount();
+    expect(textOf(r2.root)).not.toContain('APP');
   });
 
   test('a 403 LEGAL_ACKNOWLEDGEMENT_REQUIRED re-opens the gate via the API callback', async () => {
