@@ -1180,6 +1180,13 @@ const EmployeePunchScreen = ({ navigation }) => {
                     <Text style={[styles.locText, { color: isMockLocation ? colors.warning : colors.success }]}>
                       {localLocation.current_address || 'Resolving address...'}
                     </Text>
+                    {/* Lat/lng is always known (and always what's stored server-side)
+                        the moment GPS is captured, well before reverse-geocoding
+                        resolves or might fail - show it every time, not only as a
+                        fallback, so it's never the one thing missing from the screen. */}
+                    <Text style={styles.coordsText}>
+                      {localLocation.latitude.toFixed(5)}, {localLocation.longitude.toFixed(5)}
+                    </Text>
                     {isMockLocation && <Text style={styles.mockText}>Dev Mode</Text>}
                   </View>
                 </View>
@@ -1643,6 +1650,7 @@ const styles = StyleSheet.create({
   locInfo: { flex: 1, marginLeft: spacing.sm },
   locText: { fontSize: typography.sizes.sm, fontWeight: '500' },
   mockText: { fontSize: typography.sizes.xs, color: colors.warning, marginTop: spacing.xs },
+  coordsText: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
   label: { fontSize: typography.sizes.sm, fontWeight: '600', color: colors.text, marginBottom: spacing.sm, marginTop: spacing.md },
   phoneRecordedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
   phoneRecordedText: { fontSize: typography.sizes.sm, color: colors.textDark, fontWeight: '600' },
