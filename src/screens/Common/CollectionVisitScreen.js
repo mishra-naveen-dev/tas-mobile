@@ -840,11 +840,23 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           )}
         </View>
 
-        {/* Current address — reverse-geocoded from the captured GPS, same as punch */}
-        {!!localLocation?.address && (
+        {/* Current address — reverse-geocoded from the captured GPS, same as
+            punch. Lat/lng is known the moment GPS is captured, well before
+            (or even if) reverse-geocoding resolves, and is what's always
+            stored server-side regardless — shown alongside the address
+            (not only as its fallback) so it's never the one thing missing
+            from this card while an address is still resolving. */}
+        {localLocation?.latitude != null && (
           <View style={styles.addressCard}>
             <Icon name="map-pin" size={14} color={colors.textMuted} />
-            <Text style={styles.addressText} numberOfLines={2}>{localLocation.address}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.addressText} numberOfLines={2}>
+                {localLocation.address || 'Resolving address...'}
+              </Text>
+              <Text style={styles.addressText}>
+                {localLocation.latitude.toFixed(5)}, {localLocation.longitude.toFixed(5)}
+              </Text>
+            </View>
           </View>
         )}
 
