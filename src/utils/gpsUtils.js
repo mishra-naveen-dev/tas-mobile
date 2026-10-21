@@ -353,6 +353,58 @@ export function routeSegmentsFrom(data) {
 }
 
 /**
+ * One run per segment whose road-match failed, drawn from that exact
+ * segment's own already-accepted (noise-filtered, gap-split) raw GPS trail -
+ * never invented across segments or across a gap, same contract as the web
+ * admin map's unverifiedPolylines() (tas-frontend/liveRoutePolylines.js).
+ * This is the ONE deliberate exception to routeSegmentsFrom()'s "never draw
+ * raw GPS" rule: without it, a day whose road-matching failed (OSRM
+ * unavailable, a segment too short to match, etc.) draws nothing at all even
+ * though the GPS data for it is real and already synced - exactly the
+ * "data synced but not reflecting in the UI" gap this fills.
+ *
+ * @param {object|null} data  a /livetracking/daily/ (or route-detail) response
+ * @returns {Array<Array<{latitude, longitude}>>} one coord run per segment
+ *          with raw_points, mirroring routeSegmentsFrom()'s shape so callers
+ *          can treat both lists the same way.
+ */
+export function unverifiedSegmentsFrom(data) {
+    const segments = Array.isArray(data?.trusted_route_segments)
+        ? data.trusted_route_segments
+        : null;
+    if (!segments || segments.length === 0) return [];
+
+    const runs = [];
+    segments.forEach((segment) => {
+        const coords = segmentCoords(segment?.raw_points);
+        if (coords.length > 1) runs.push(coords);
+    });
+    return runs;
+}
+
+/**
+ * Points the backend rejected at ingest (apps.livetracking.models.
+ * RejectedPoint - never counted toward distance or the trusted route),
+ * opt-in for the Route Map's diagnostic overlay. Each one keeps its own
+ * rejection reason (STATIONARY, DUPLICATE, LOCATION_JUMP, ...) so a day with
+ * a high rejected_count can actually be looked at instead of only ever
+ * being a number in the quality panel.
+ *
+ * @param {object|null} data  a /livetracking/daily/ (or route-detail) response
+ * @returns {Array<{latitude, longitude, reason: string, timestamp: string}>}
+ */
+export function rejectedPointsFrom(data) {
+    const points = Array.isArray(data?.rejected_points) ? data.rejected_points : [];
+    return points
+        .map((p) => {
+            const coords = pointCoords(p);
+            if (!coords) return null;
+            return { ...coords, reason: p?.reason || 'UNKNOWN', timestamp: p?.timestamp ?? null };
+        })
+        .filter(Boolean);
+}
+
+/**
  * The quality picture the Route Map shows alongside (or instead of) the route.
  * Every value is read straight off the backend response - the app computes
  * none of it.
@@ -374,5 +426,12 @@ export function routeQualityFrom(data) {
         lastGpsUpdate: data?.last_gps_update ?? null,
         trackingStatus: data?.tracking_status ?? null,
         hasRawEvidence: (data?.route?.length ?? 0) > 0,
+        // The PRIMARY signal for "is this the final answer yet" - a route
+        // whose build was just enqueued (a session just ended, or points
+        // just synced after being offline) reports ROUTE_PROCESSING here
+        // before its trusted geometry exists. See apps.livetracking.
+        // services.classify_route_state. Never infer this from a bare
+        // distance number - see that function's own docstring for why.
+        routeState: data?.route_state || null,
     };
 }

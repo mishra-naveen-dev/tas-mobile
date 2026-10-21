@@ -8,14 +8,17 @@ import {
     Dimensions,
     ScrollView,
     Modal,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
+import { useFocusEffect } from '@react-navigation/native';
+import MapView, { Marker, Polyline, Circle, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
-import { routeSegmentsFrom, routeQualityFrom } from '../../utils/gpsUtils';
+import { routeSegmentsFrom, unverifiedSegmentsFrom, rejectedPointsFrom, routeQualityFrom } from '../../utils/gpsUtils';
 import { istDateStr } from '../../utils/businessDate';
+import { serverStatus } from '../../utils/serverStatus';
 
 const { height } = Dimensions.get('window');
 
@@ -251,6 +254,9 @@ const RouteMapScreen = ({ navigation, route }) => {
     const [allPunches, setAllPunches] = useState([]);
     const [allCollectionUpdates, setAllCollectionUpdates] = useState([]);
     const [gpsSegments, setGpsSegments] = useState([]);   // trusted coord runs — one Polyline each
+    const [unverifiedSegments, setUnverifiedSegments] = useState([]); // raw GPS fallback runs — one dashed Polyline each
+    const [rejectedPoints, setRejectedPoints] = useState([]); // ingest-rejected fixes — opt-in diagnostic overlay
+    const [showRejected, setShowRejected] = useState(false);  // off by default — diagnostic, not part of the route
     const [routeQuality, setRouteQuality] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -267,6 +273,8 @@ const RouteMapScreen = ({ navigation, route }) => {
         // switching date/employee can never leave the old trajectory on screen
         // under the new day's heading.
         setGpsSegments([]);
+        setUnverifiedSegments([]);
+        setRejectedPoints([]);
         setRouteQuality(null);
         try {
             const dateStr = toDateStr(activeDate);
@@ -312,6 +320,8 @@ const RouteMapScreen = ({ navigation, route }) => {
             if (liveRes.status === 'fulfilled') {
                 const data = liveRes.value.data || {};
                 setGpsSegments(routeSegmentsFrom(data));
+                setUnverifiedSegments(unverifiedSegmentsFrom(data));
+                setRejectedPoints(rejectedPointsFrom(data));
                 setRouteQuality(routeQualityFrom(data));
             } else {
                 setError('Failed to load the route for this day. Pull down to retry.');
@@ -334,6 +344,44 @@ const RouteMapScreen = ({ navigation, route }) => {
     }, [activeDate, employeeId]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    // Offline-buffered punches/GPS points sync in the background (OfflineQueue,
+    // TrackingService.kt's own flush) with no signal to a screen that's just
+    // sitting open - without this, "local store synced to server" could be
+    // true while this screen kept showing stale data until a manual pull.
+    // Covers returning to this screen after being elsewhere while a sync
+    // happened; skipped on the very first focus since the effect above
+    // already covers initial load.
+    const hasFocusedBeforeRef = useRef(false);
+    useFocusEffect(
+        useCallback(() => {
+            if (!hasFocusedBeforeRef.current) { hasFocusedBeforeRef.current = true; return; }
+            fetchData();
+        }, [fetchData])
+    );
+
+    // Covers the other case: connectivity returns WHILE this screen is
+    // already open and focused (e.g. walking out of a dead zone mid-review).
+    useEffect(() => {
+        let wasOnline = true;
+        return serverStatus.subscribe(({ online }) => {
+            if (online && !wasOnline) fetchData();
+            wasOnline = online;
+        });
+    }, [fetchData]);
+
+    // The backend's PRIMARY signal that this isn't the final answer yet - a
+    // route whose build was just enqueued (points just synced after being
+    // offline, or a session just ended) reports ROUTE_PROCESSING before its
+    // trusted geometry exists (see classify_route_state). One retry after a
+    // short delay is enough for the common case (route builds finish in a
+    // few seconds); if it's still processing after that, the user still has
+    // the manual refresh button rather than this polling indefinitely.
+    useEffect(() => {
+        if (routeQuality?.routeState !== 'ROUTE_PROCESSING') return undefined;
+        const timer = setTimeout(() => { fetchData(); }, 8000);
+        return () => clearTimeout(timer);
+    }, [routeQuality?.routeState, fetchData]);
 
     // ── Merge punches + collection updates into unified activity list ──────────
     const mergedActivities = useMemo(() => {
@@ -489,11 +537,12 @@ const RouteMapScreen = ({ navigation, route }) => {
     );
 
     // ── GPS polyline coordinates (flat: fit-to / latest point only) ──────────
-    // Derived from the TRUSTED runs that are actually drawn, so the viewport
-    // frames the route on screen. Never a separate, differently-filtered list.
+    // Includes both trusted (road-matched) AND unverified (raw fallback) runs,
+    // so the viewport frames the whole day's evidence — not just whichever
+    // segments happened to road-match.
     const gpsCoordinates = useMemo(
-        () => gpsSegments.flat(),
-        [gpsSegments]
+        () => [...gpsSegments.flat(), ...unverifiedSegments.flat()],
+        [gpsSegments, unverifiedSegments]
     );
 
     // ── What's DRAWN: one Polyline per continuous piece of road ──────────────
@@ -501,6 +550,15 @@ const RouteMapScreen = ({ navigation, route }) => {
     const gpsSegmentCoords = useMemo(
         () => gpsSegments.filter((c) => c.length > 1),
         [gpsSegments]
+    );
+
+    // ── What's DRAWN as a fallback: one dashed Polyline per segment whose
+    // road-match failed, from that exact segment's own raw GPS trail. Always
+    // shown alongside gpsSegmentCoords (never an either/or), so a day with
+    // some matched and some unmatched segments shows both together.
+    const unverifiedSegmentCoords = useMemo(
+        () => unverifiedSegments.filter((c) => c.length > 1),
+        [unverifiedSegments]
     );
 
     // ── Authoritative distance ────────────────────────────────────────────────
@@ -647,14 +705,22 @@ const RouteMapScreen = ({ navigation, route }) => {
                         with 15 gaps render 16 independent lines and no line
                         anywhere between them.
 
-                        There is deliberately NO fallback here. The previous
-                        screen drew a single flat line through the raw GPS
-                        vertices, and a second "fallback" dashed line through
-                        the punch locations - both are straight lines between
-                        observations with no evidence of the road in between,
-                        which is exactly the reported defect. When the road
-                        network cannot be matched, no path is drawn and the
-                        quality panel below says so. */}
+                        The previous screen drew a single flat line through
+                        the raw GPS vertices, and a second "fallback" dashed
+                        line through the punch locations - both were straight
+                        lines between sparse observations with no evidence of
+                        the road in between, which was the reported defect
+                        this screen replaced. That is NOT what the dashed
+                        fallback below is: unverifiedSegmentCoords is each
+                        unmatched segment's own already-accepted (noise-
+                        filtered, gap-split) GPS trail - every real point in
+                        sequence, not a straight line between a few markers -
+                        shown only when that exact segment's road-match
+                        failed. Matched and unmatched segments are always
+                        drawn together, never either/or: a day with some of
+                        each shows solid blue for the matched stretches and
+                        dashed gray for the rest, so GPS that already synced
+                        is never silently invisible on screen. */}
                     {gpsSegmentCoords.map((coords, idx) => (
                         <Polyline
                             key={`gps-seg-${idx}`}
@@ -665,15 +731,36 @@ const RouteMapScreen = ({ navigation, route }) => {
                         />
                     ))}
 
-                    {gpsSegmentCoords.length === 0 && routeQuality?.hasRawEvidence && (
-                        <View style={styles.routeUnavailable}>
-                            <Icon name="alert-triangle" size={16} color={colors.warning} />
-                            <Text style={styles.routeUnavailableText}>
-                                Road geometry unavailable — no path drawn. The GPS evidence
-                                for this day is still counted below.
-                            </Text>
-                        </View>
-                    )}
+                    {unverifiedSegmentCoords.map((coords, idx) => (
+                        <Polyline
+                            key={`gps-unverified-${idx}`}
+                            coordinates={coords}
+                            strokeColor="#9e9e9e"
+                            strokeWidth={3}
+                            lineDashPattern={[8, 6]}
+                        />
+                    ))}
+
+                    {/* Diagnostic overlay — off by default (see "Show on map"
+                        in the quality panel below). apps.livetracking.models.
+                        RejectedPoint fixes, never counted toward distance or
+                        the trusted route; shown here only so a high rejected
+                        count can actually be looked at instead of only ever
+                        being a number. */}
+                    {showRejected && rejectedPoints.map((p, idx) => (
+                        <Circle
+                            key={`rejected-${idx}`}
+                            center={{ latitude: p.latitude, longitude: p.longitude }}
+                            radius={8}
+                            fillColor="rgba(220, 38, 38, 0.5)"
+                            strokeColor="rgba(220, 38, 38, 0.8)"
+                            strokeWidth={1}
+                            onPress={() => Alert.alert(
+                                'Rejected point',
+                                `Reason: ${p.reason}${p.timestamp ? `\nTime: ${new Date(p.timestamp).toLocaleString()}` : ''}`
+                            )}
+                        />
+                    ))}
 
                     {/* Activity markers */}
                     {mappableActivities.map((activity, idx) => {
@@ -794,14 +881,22 @@ const RouteMapScreen = ({ navigation, route }) => {
                 {routeQuality && (routeQuality.rawPoints > 0 || routeQuality.rejectedCount > 0) && (
                     <View style={styles.qualityBox}>
                         <View style={styles.qualityHeaderRow}>
-                            <Icon
-                                name={routeQuality.geometryStatus === 'COMPLETE' ? 'check-circle' : 'alert-triangle'}
-                                size={15}
-                                color={routeQuality.geometryStatus === 'COMPLETE' ? colors.success : colors.warning}
-                            />
+                            {routeQuality.routeState === 'ROUTE_PROCESSING' ? (
+                                <ActivityIndicator size="small" color={colors.primary} />
+                            ) : (
+                                <Icon
+                                    name={routeQuality.geometryStatus === 'COMPLETE' ? 'check-circle' : 'alert-triangle'}
+                                    size={15}
+                                    color={routeQuality.geometryStatus === 'COMPLETE' ? colors.success : colors.warning}
+                                />
+                            )}
                             <Text style={styles.qualityHeader}>
-                                {routeQuality.geometryStatus === 'COMPLETE'
+                                {routeQuality.routeState === 'ROUTE_PROCESSING'
+                                    ? 'Processing recently synced GPS data — updating shortly'
+                                    : routeQuality.geometryStatus === 'COMPLETE'
                                     ? 'Route matched to real roads'
+                                    : unverifiedSegmentCoords.length > 0
+                                    ? 'Showing unverified GPS path — road match unavailable (dashed gray)'
                                     : 'Road geometry unavailable — route not drawn'}
                             </Text>
                         </View>
@@ -813,7 +908,19 @@ const RouteMapScreen = ({ navigation, route }) => {
                             <Text style={styles.qualityItem}>Segments: {routeQuality.segmentCount}</Text>
                             <Text style={styles.qualityItem}>GPS gaps: {routeQuality.gapCount}</Text>
                             {routeQuality.rejectedCount > 0 && (
-                                <Text style={styles.qualityItem}>Rejected: {routeQuality.rejectedCount}</Text>
+                                <View style={styles.rejectedRow}>
+                                    <Text style={styles.qualityItem}>Rejected: {routeQuality.rejectedCount}</Text>
+                                    {rejectedPoints.length > 0 && (
+                                        <TouchableOpacity
+                                            onPress={() => setShowRejected((v) => !v)}
+                                            style={styles.rejectedToggle}
+                                        >
+                                            <Text style={styles.rejectedToggleText}>
+                                                {showRejected ? 'Hide on map' : 'Show on map'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
                             )}
                             {routeQuality.lowAccuracyCount > 0 && (
                                 <Text style={styles.qualityItem}>Low accuracy: {routeQuality.lowAccuracyCount}</Text>
@@ -1067,15 +1174,12 @@ const styles = StyleSheet.create({
     statLbl: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
 
     // Route quality — the figures that describe the day, always on screen.
-    routeUnavailable: {
-        position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
-        flexDirection: 'row', alignItems: 'center', gap: 6,
-        backgroundColor: colors.warningLight, borderRadius: 8,
-        padding: spacing.sm, borderWidth: 1, borderColor: `${colors.warning}44`,
+    rejectedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    rejectedToggle: {
+        paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6,
+        backgroundColor: `${colors.danger}15`,
     },
-    routeUnavailableText: {
-        flex: 1, fontSize: typography.sizes.xs, color: colors.textDark, lineHeight: 15,
-    },
+    rejectedToggleText: { fontSize: typography.sizes.xs, color: colors.danger, fontWeight: typography.weights.semibold },
     qualityBox: {
         backgroundColor: '#F8FAFC', borderRadius: 10, padding: spacing.md,
         marginHorizontal: spacing.md, marginBottom: spacing.md, gap: 6,
