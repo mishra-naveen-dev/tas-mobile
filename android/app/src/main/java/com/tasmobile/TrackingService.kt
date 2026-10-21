@@ -118,6 +118,21 @@ class TrackingService : Service() {
         private const val PREFS = "tas_tracking_prefs"
         private const val KEY_SEQUENCE = "sequence_no"
         private const val KEY_BUFFER = "gps_buffer_json"
+        private const val KEY_PERSISTED_AT = "persisted_at_ms"
+
+        // Same threshold DailyPunchPrompt.js (mobile JS) already uses to nudge
+        // "you've been punched in over 11 hours, don't forget to punch out" -
+        // reused here as the ceiling for how old a persisted session is
+        // allowed to be before a null-intent OS restart (see onStartCommand's
+        // START_STICKY branch) is still trusted to resume it. Without this, an
+        // employee who swiped the app away mid-shift instead of punching out
+        // (or whose process got killed before clearParams() ever ran) could
+        // have tracking silently resume - and the persistent "Route Tracking
+        // Active" notification reappear - hours or days later with no punch
+        // of theirs behind it, triggered purely by the OS restarting a killed
+        // service. A stale restart now clears params and stops instead.
+        private const val STALE_SESSION_HOURS = 11
+        private const val STALE_SESSION_MS = STALE_SESSION_HOURS * 60 * 60 * 1000L
 
         private const val TAG = "TasTracking"
     }
@@ -130,6 +145,7 @@ class TrackingService : Service() {
     private var baseUrl: String = ""
     private var token: String = ""
     private var sessionId: Int = -1
+    private var persistedAt: Long = 0L
 
     // Config-driven intervals (seconds) — see companion defaults above.
     private var intervalMovingS = DEFAULT_INTERVAL_MOVING_S
@@ -229,9 +245,24 @@ class TrackingService : Service() {
 
             // Null intent => the OS restarted us after the process was killed
             // (START_STICKY). Restore the saved session/config and resume
-            // capturing, and let the server know this happened.
+            // capturing, and let the server know this happened - but only if
+            // that session is recent. Without the staleness check, an
+            // abandoned session (app swiped away mid-shift instead of a
+            // proper punch-out, or the process died before clearParams() ran)
+            // could have the OS silently resume it - and the persistent
+            // notification reappear - long after, with no punch behind it.
             else -> {
-                if (restoreParams() && sessionId >= 0) {
+                val hasSession = restoreParams() && sessionId >= 0
+                val stale = hasSession && (System.currentTimeMillis() - persistedAt) > STALE_SESSION_MS
+
+                if (stale) {
+                    Log.w(TAG, "Discarding stale session $sessionId on restart - " +
+                        "persisted ${(System.currentTimeMillis() - persistedAt) / 60000} min ago.")
+                    postHeartbeat("SERVICE_RESTART_STALE", "Discarded a stale persisted session instead of resuming it")
+                    clearParams()
+                }
+
+                if (hasSession && !stale) {
                     if (startForegroundTracking()) {
                         startLocationUpdates()
                         registerNetworkCallback()
@@ -633,7 +664,15 @@ class TrackingService : Service() {
     private fun persistBufferLocked() {
         val arr = JSONArray()
         for (p in buffer) arr.put(p)
-        prefs().edit().putString(KEY_BUFFER, arr.toString()).apply()
+        // Also refreshes KEY_PERSISTED_AT (see STALE_SESSION_MS) on every real
+        // GPS fix, not just at session start - a long but genuinely active
+        // shift (12+ hours is common for field employees) must never be
+        // mistaken for an abandoned one just because persistParams() itself
+        // was only called once, at punch-in.
+        prefs().edit()
+            .putString(KEY_BUFFER, arr.toString())
+            .putLong(KEY_PERSISTED_AT, System.currentTimeMillis())
+            .apply()
     }
 
     private fun restoreBuffer() {
@@ -662,6 +701,7 @@ class TrackingService : Service() {
             .putString(EXTRA_BASE_URL, baseUrl)
             .putString(EXTRA_TOKEN, token)
             .putInt(EXTRA_SESSION_ID, sessionId)
+            .putLong(KEY_PERSISTED_AT, System.currentTimeMillis())
             .putInt(EXTRA_INTERVAL_MOVING_S, intervalMovingS)
             .putInt(EXTRA_INTERVAL_WALKING_S, intervalWalkingS)
             .putInt(EXTRA_INTERVAL_STATIONARY_S, intervalStationaryS)
@@ -678,6 +718,7 @@ class TrackingService : Service() {
         baseUrl = p.getString(EXTRA_BASE_URL, "") ?: ""
         token = p.getString(EXTRA_TOKEN, "") ?: ""
         sessionId = p.getInt(EXTRA_SESSION_ID, -1)
+        persistedAt = p.getLong(KEY_PERSISTED_AT, 0L)
         intervalMovingS = p.getInt(EXTRA_INTERVAL_MOVING_S, DEFAULT_INTERVAL_MOVING_S)
         intervalWalkingS = p.getInt(EXTRA_INTERVAL_WALKING_S, DEFAULT_INTERVAL_WALKING_S)
         intervalStationaryS = p.getInt(EXTRA_INTERVAL_STATIONARY_S, DEFAULT_INTERVAL_STATIONARY_S)
@@ -691,7 +732,7 @@ class TrackingService : Service() {
 
     private fun clearParams() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().clear().apply()
-        baseUrl = ""; token = ""; sessionId = -1
+        baseUrl = ""; token = ""; sessionId = -1; persistedAt = 0L
     }
 
     // ---- foreground notification ----
