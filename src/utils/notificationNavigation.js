@@ -29,6 +29,7 @@ export function navigateForNotification(navigationRef, payload) {
             }
             return;
         case 'PUNCH_INACTIVITY':
+        case 'DAILY_PUNCH_REMINDER':
             nav.navigate('EmployeeTabs', { screen: 'EmployeePunch' });
             return;
         default:
