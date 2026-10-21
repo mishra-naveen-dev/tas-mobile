@@ -53,6 +53,30 @@ describe('OfflineQueue', () => {
     expect(queue.find((q) => q.id === id).partitionKey).toBe('PUNCH_OUT:default');
   });
 
+  test('enqueue() schedules the native background-sync job when TrackingBridge is available', async () => {
+    // NativeModules.TrackingBridge must be set BEFORE OfflineQueue.js is
+    // (re-)required — it destructures TrackingBridge off NativeModules at
+    // module load time, so loadFreshQueue()'s own jest.resetModules() must
+    // run first, or this ends up mutating a different module instance than
+    // the one OfflineQueue.js actually reads from.
+    jest.resetModules();
+    const { NativeModules } = require('react-native');
+    NativeModules.TrackingBridge = { scheduleBackgroundSync: jest.fn() };
+    // eslint-disable-next-line global-require
+    const Q = require('../src/services/OfflineQueue');
+    await Q.enqueue('PUNCH_IN', { client_transaction_id: 'ctx-bg-1' });
+    expect(NativeModules.TrackingBridge.scheduleBackgroundSync).toHaveBeenCalledTimes(1);
+  });
+
+  test('enqueue() never throws when TrackingBridge is missing (e.g. a platform with no native module)', async () => {
+    jest.resetModules();
+    const { NativeModules } = require('react-native');
+    delete NativeModules.TrackingBridge;
+    // eslint-disable-next-line global-require
+    const Q = require('../src/services/OfflineQueue');
+    await expect(Q.enqueue('PUNCH_IN', { client_transaction_id: 'ctx-bg-2' })).resolves.toBeDefined();
+  });
+
   test('classifyError: network failure and 5xx/429/401/403 are retryable; other 4xx are permanent', () => {
     const Q = loadFreshQueue();
     expect(Q.classifyError(networkError())).toBe('retryable');

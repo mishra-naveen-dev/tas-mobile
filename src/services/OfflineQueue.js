@@ -1,7 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import { AppState } from 'react-native';
+import { AppState, NativeModules } from 'react-native';
 import { serverStatus } from '../utils/serverStatus';
+
+const { TrackingBridge } = NativeModules;
 
 /**
  * Generic offline outbox for write actions that must not be lost when a
@@ -216,6 +218,12 @@ export async function enqueue(kind, payload) {
   queue.push(item);
   await persist();
   notify();
+  // Best-effort — ensures a WorkManager job is pending to drain this even if
+  // the app process gets fully killed before connectivity returns, when
+  // every JS-side auto-sync trigger below (NetInfo/serverStatus/AppState)
+  // would otherwise not exist to fire at all. Android-only (no equivalent
+  // native module on other platforms); never blocks queuing on failure.
+  try { TrackingBridge?.scheduleBackgroundSync?.(); } catch {}
   return item.id;
 }
 

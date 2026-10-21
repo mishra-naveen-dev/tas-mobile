@@ -35,6 +35,15 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- Started by OfflineSyncWorker (WorkManager, NetworkType.CONNECTED
+             constraint) to run the headless JS task that drains
+             OfflineQueue.js's outbox even when the app isn't otherwise
+             running — see OfflineSyncTaskService / BackgroundSyncTask.js. -->
+        <service
+            android:name=".OfflineSyncTaskService"
+            android:enabled="true"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:label="@string/app_name"

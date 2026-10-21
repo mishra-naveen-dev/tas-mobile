@@ -2,6 +2,11 @@ package com.tasmobile
 
 import android.content.Intent
 import android.os.Build
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -103,5 +108,26 @@ class TrackingModule(private val reactContext: ReactApplicationContext) :
             action = TrackingService.ACTION_STOP
         }
         reactContext.startService(intent)
+    }
+
+    /**
+     * Call whenever something is added to OfflineQueue.js's outbox (see its
+     * enqueue()) — ensures a WorkManager job is pending that will drain the
+     * queue the next time the device has internet, even if the app process
+     * is fully killed before that happens. enqueueUniqueWork + REPLACE means
+     * calling this repeatedly (once per queued item) never stacks up
+     * duplicate pending jobs; it just keeps one job pending against
+     * whatever is currently in the queue. See OfflineSyncWorker.
+     */
+    @ReactMethod
+    fun scheduleBackgroundSync() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+        val request = OneTimeWorkRequestBuilder<OfflineSyncWorker>()
+            .setConstraints(constraints)
+            .build()
+        WorkManager.getInstance(reactContext)
+            .enqueueUniqueWork("offline_sync", ExistingWorkPolicy.REPLACE, request)
     }
 }

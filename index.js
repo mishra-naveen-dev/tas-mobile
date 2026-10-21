@@ -5,6 +5,10 @@
 import { AppRegistry } from 'react-native';
 import App from './App';
 import { name as appName } from './app.json';
+// Registers the 'OfflineSyncTask' headless task (see BackgroundSyncTask.js)
+// — must happen unconditionally at bundle load, since OfflineSyncTaskService
+// (native) can boot a headless JS context without ever rendering <App/>.
+import './src/services/BackgroundSyncTask';
 
 // Disable all console output in production builds.
 // The babel-plugin-transform-remove-console already strips console calls

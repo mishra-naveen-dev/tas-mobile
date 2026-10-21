@@ -183,6 +183,13 @@ dependencies {
     // Fused location provider — used by the native TrackingService to capture
     // GPS every 10s while punched in, even when the app is closed/screen off.
     implementation("com.google.android.gms:play-services-location:20.0.0")
+    // WorkManager — schedules OfflineSyncWorker (NetworkType.CONNECTED
+    // constraint) so queued punches/corrections (OfflineQueue.js) still sync
+    // even if the app process was fully killed when connectivity returned.
+    // WorkManager's own request queue is persisted (survives app/process
+    // death and device reboot), unlike every JS-side sync trigger, which
+    // only exists while the JS engine is alive.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
      // Firebase
     implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
     implementation("com.google.firebase:firebase-analytics")
