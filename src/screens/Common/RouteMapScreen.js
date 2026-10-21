@@ -14,7 +14,7 @@ import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-nativ
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
-import { routeSegmentsFrom, routeQualityFrom } from '../../utils/gpsUtils';
+import { routeSegmentsFrom, unverifiedSegmentsFrom, routeQualityFrom } from '../../utils/gpsUtils';
 import { istDateStr } from '../../utils/businessDate';
 
 const { height } = Dimensions.get('window');
@@ -251,6 +251,7 @@ const RouteMapScreen = ({ navigation, route }) => {
     const [allPunches, setAllPunches] = useState([]);
     const [allCollectionUpdates, setAllCollectionUpdates] = useState([]);
     const [gpsSegments, setGpsSegments] = useState([]);   // trusted coord runs — one Polyline each
+    const [unverifiedSegments, setUnverifiedSegments] = useState([]); // raw GPS fallback runs — one dashed Polyline each
     const [routeQuality, setRouteQuality] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -267,6 +268,7 @@ const RouteMapScreen = ({ navigation, route }) => {
         // switching date/employee can never leave the old trajectory on screen
         // under the new day's heading.
         setGpsSegments([]);
+        setUnverifiedSegments([]);
         setRouteQuality(null);
         try {
             const dateStr = toDateStr(activeDate);
@@ -312,6 +314,7 @@ const RouteMapScreen = ({ navigation, route }) => {
             if (liveRes.status === 'fulfilled') {
                 const data = liveRes.value.data || {};
                 setGpsSegments(routeSegmentsFrom(data));
+                setUnverifiedSegments(unverifiedSegmentsFrom(data));
                 setRouteQuality(routeQualityFrom(data));
             } else {
                 setError('Failed to load the route for this day. Pull down to retry.');
@@ -489,11 +492,12 @@ const RouteMapScreen = ({ navigation, route }) => {
     );
 
     // ── GPS polyline coordinates (flat: fit-to / latest point only) ──────────
-    // Derived from the TRUSTED runs that are actually drawn, so the viewport
-    // frames the route on screen. Never a separate, differently-filtered list.
+    // Includes both trusted (road-matched) AND unverified (raw fallback) runs,
+    // so the viewport frames the whole day's evidence — not just whichever
+    // segments happened to road-match.
     const gpsCoordinates = useMemo(
-        () => gpsSegments.flat(),
-        [gpsSegments]
+        () => [...gpsSegments.flat(), ...unverifiedSegments.flat()],
+        [gpsSegments, unverifiedSegments]
     );
 
     // ── What's DRAWN: one Polyline per continuous piece of road ──────────────
@@ -501,6 +505,15 @@ const RouteMapScreen = ({ navigation, route }) => {
     const gpsSegmentCoords = useMemo(
         () => gpsSegments.filter((c) => c.length > 1),
         [gpsSegments]
+    );
+
+    // ── What's DRAWN as a fallback: one dashed Polyline per segment whose
+    // road-match failed, from that exact segment's own raw GPS trail. Always
+    // shown alongside gpsSegmentCoords (never an either/or), so a day with
+    // some matched and some unmatched segments shows both together.
+    const unverifiedSegmentCoords = useMemo(
+        () => unverifiedSegments.filter((c) => c.length > 1),
+        [unverifiedSegments]
     );
 
     // ── Authoritative distance ────────────────────────────────────────────────
@@ -647,14 +660,22 @@ const RouteMapScreen = ({ navigation, route }) => {
                         with 15 gaps render 16 independent lines and no line
                         anywhere between them.
 
-                        There is deliberately NO fallback here. The previous
-                        screen drew a single flat line through the raw GPS
-                        vertices, and a second "fallback" dashed line through
-                        the punch locations - both are straight lines between
-                        observations with no evidence of the road in between,
-                        which is exactly the reported defect. When the road
-                        network cannot be matched, no path is drawn and the
-                        quality panel below says so. */}
+                        The previous screen drew a single flat line through
+                        the raw GPS vertices, and a second "fallback" dashed
+                        line through the punch locations - both were straight
+                        lines between sparse observations with no evidence of
+                        the road in between, which was the reported defect
+                        this screen replaced. That is NOT what the dashed
+                        fallback below is: unverifiedSegmentCoords is each
+                        unmatched segment's own already-accepted (noise-
+                        filtered, gap-split) GPS trail - every real point in
+                        sequence, not a straight line between a few markers -
+                        shown only when that exact segment's road-match
+                        failed. Matched and unmatched segments are always
+                        drawn together, never either/or: a day with some of
+                        each shows solid blue for the matched stretches and
+                        dashed gray for the rest, so GPS that already synced
+                        is never silently invisible on screen. */}
                     {gpsSegmentCoords.map((coords, idx) => (
                         <Polyline
                             key={`gps-seg-${idx}`}
@@ -665,15 +686,15 @@ const RouteMapScreen = ({ navigation, route }) => {
                         />
                     ))}
 
-                    {gpsSegmentCoords.length === 0 && routeQuality?.hasRawEvidence && (
-                        <View style={styles.routeUnavailable}>
-                            <Icon name="alert-triangle" size={16} color={colors.warning} />
-                            <Text style={styles.routeUnavailableText}>
-                                Road geometry unavailable — no path drawn. The GPS evidence
-                                for this day is still counted below.
-                            </Text>
-                        </View>
-                    )}
+                    {unverifiedSegmentCoords.map((coords, idx) => (
+                        <Polyline
+                            key={`gps-unverified-${idx}`}
+                            coordinates={coords}
+                            strokeColor="#9e9e9e"
+                            strokeWidth={3}
+                            lineDashPattern={[8, 6]}
+                        />
+                    ))}
 
                     {/* Activity markers */}
                     {mappableActivities.map((activity, idx) => {
@@ -802,6 +823,8 @@ const RouteMapScreen = ({ navigation, route }) => {
                             <Text style={styles.qualityHeader}>
                                 {routeQuality.geometryStatus === 'COMPLETE'
                                     ? 'Route matched to real roads'
+                                    : unverifiedSegmentCoords.length > 0
+                                    ? 'Showing unverified GPS path — road match unavailable (dashed gray)'
                                     : 'Road geometry unavailable — route not drawn'}
                             </Text>
                         </View>
