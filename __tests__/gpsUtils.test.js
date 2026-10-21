@@ -7,7 +7,7 @@
  * data already synced - see RouteMapScreen.js for how the two are drawn
  * together (solid blue vs dashed gray), never as an either/or.
  */
-import { routeSegmentsFrom, unverifiedSegmentsFrom } from '../src/utils/gpsUtils';
+import { routeSegmentsFrom, unverifiedSegmentsFrom, rejectedPointsFrom } from '../src/utils/gpsUtils';
 
 const matchedSegment = {
     segment_id: 1,
@@ -55,5 +55,31 @@ describe('unverifiedSegmentsFrom', () => {
     test('returns empty when no segments at all', () => {
         expect(unverifiedSegmentsFrom({ trusted_route_segments: [] })).toEqual([]);
         expect(unverifiedSegmentsFrom({})).toEqual([]);
+    });
+});
+
+describe('rejectedPointsFrom', () => {
+    test('keeps each point\'s own reason, mapped to {latitude, longitude}', () => {
+        const points = rejectedPointsFrom({
+            rejected_points: [
+                { lat: 23.5, lng: 72.5, reason: 'STATIONARY', timestamp: '2026-10-20T10:00:00Z' },
+                { lat: 23.6, lng: 72.6, reason: 'DUPLICATE', timestamp: '2026-10-20T10:00:10Z' },
+            ],
+        });
+        expect(points).toEqual([
+            { latitude: 23.5, longitude: 72.5, reason: 'STATIONARY', timestamp: '2026-10-20T10:00:00Z' },
+            { latitude: 23.6, longitude: 72.6, reason: 'DUPLICATE', timestamp: '2026-10-20T10:00:10Z' },
+        ]);
+    });
+
+    test('drops a point with invalid/missing coordinates instead of throwing', () => {
+        const points = rejectedPointsFrom({
+            rejected_points: [{ lat: null, lng: 72.5, reason: 'STATIONARY' }],
+        });
+        expect(points).toEqual([]);
+    });
+
+    test('returns empty when the field is missing entirely', () => {
+        expect(rejectedPointsFrom({})).toEqual([]);
     });
 });

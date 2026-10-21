@@ -383,6 +383,28 @@ export function unverifiedSegmentsFrom(data) {
 }
 
 /**
+ * Points the backend rejected at ingest (apps.livetracking.models.
+ * RejectedPoint - never counted toward distance or the trusted route),
+ * opt-in for the Route Map's diagnostic overlay. Each one keeps its own
+ * rejection reason (STATIONARY, DUPLICATE, LOCATION_JUMP, ...) so a day with
+ * a high rejected_count can actually be looked at instead of only ever
+ * being a number in the quality panel.
+ *
+ * @param {object|null} data  a /livetracking/daily/ (or route-detail) response
+ * @returns {Array<{latitude, longitude, reason: string, timestamp: string}>}
+ */
+export function rejectedPointsFrom(data) {
+    const points = Array.isArray(data?.rejected_points) ? data.rejected_points : [];
+    return points
+        .map((p) => {
+            const coords = pointCoords(p);
+            if (!coords) return null;
+            return { ...coords, reason: p?.reason || 'UNKNOWN', timestamp: p?.timestamp ?? null };
+        })
+        .filter(Boolean);
+}
+
+/**
  * The quality picture the Route Map shows alongside (or instead of) the route.
  * Every value is read straight off the backend response - the app computes
  * none of it.

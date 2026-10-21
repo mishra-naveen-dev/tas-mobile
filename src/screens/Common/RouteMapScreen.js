@@ -8,13 +8,14 @@ import {
     Dimensions,
     ScrollView,
     Modal,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polyline, Circle, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
-import { routeSegmentsFrom, unverifiedSegmentsFrom, routeQualityFrom } from '../../utils/gpsUtils';
+import { routeSegmentsFrom, unverifiedSegmentsFrom, rejectedPointsFrom, routeQualityFrom } from '../../utils/gpsUtils';
 import { istDateStr } from '../../utils/businessDate';
 
 const { height } = Dimensions.get('window');
@@ -252,6 +253,8 @@ const RouteMapScreen = ({ navigation, route }) => {
     const [allCollectionUpdates, setAllCollectionUpdates] = useState([]);
     const [gpsSegments, setGpsSegments] = useState([]);   // trusted coord runs — one Polyline each
     const [unverifiedSegments, setUnverifiedSegments] = useState([]); // raw GPS fallback runs — one dashed Polyline each
+    const [rejectedPoints, setRejectedPoints] = useState([]); // ingest-rejected fixes — opt-in diagnostic overlay
+    const [showRejected, setShowRejected] = useState(false);  // off by default — diagnostic, not part of the route
     const [routeQuality, setRouteQuality] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -269,6 +272,7 @@ const RouteMapScreen = ({ navigation, route }) => {
         // under the new day's heading.
         setGpsSegments([]);
         setUnverifiedSegments([]);
+        setRejectedPoints([]);
         setRouteQuality(null);
         try {
             const dateStr = toDateStr(activeDate);
@@ -315,6 +319,7 @@ const RouteMapScreen = ({ navigation, route }) => {
                 const data = liveRes.value.data || {};
                 setGpsSegments(routeSegmentsFrom(data));
                 setUnverifiedSegments(unverifiedSegmentsFrom(data));
+                setRejectedPoints(rejectedPointsFrom(data));
                 setRouteQuality(routeQualityFrom(data));
             } else {
                 setError('Failed to load the route for this day. Pull down to retry.');
@@ -696,6 +701,27 @@ const RouteMapScreen = ({ navigation, route }) => {
                         />
                     ))}
 
+                    {/* Diagnostic overlay — off by default (see "Show on map"
+                        in the quality panel below). apps.livetracking.models.
+                        RejectedPoint fixes, never counted toward distance or
+                        the trusted route; shown here only so a high rejected
+                        count can actually be looked at instead of only ever
+                        being a number. */}
+                    {showRejected && rejectedPoints.map((p, idx) => (
+                        <Circle
+                            key={`rejected-${idx}`}
+                            center={{ latitude: p.latitude, longitude: p.longitude }}
+                            radius={8}
+                            fillColor="rgba(220, 38, 38, 0.5)"
+                            strokeColor="rgba(220, 38, 38, 0.8)"
+                            strokeWidth={1}
+                            onPress={() => Alert.alert(
+                                'Rejected point',
+                                `Reason: ${p.reason}${p.timestamp ? `\nTime: ${new Date(p.timestamp).toLocaleString()}` : ''}`
+                            )}
+                        />
+                    ))}
+
                     {/* Activity markers */}
                     {mappableActivities.map((activity, idx) => {
                         const cfg = ACTIVITY_CONFIG(activity._activityType);
@@ -836,7 +862,19 @@ const RouteMapScreen = ({ navigation, route }) => {
                             <Text style={styles.qualityItem}>Segments: {routeQuality.segmentCount}</Text>
                             <Text style={styles.qualityItem}>GPS gaps: {routeQuality.gapCount}</Text>
                             {routeQuality.rejectedCount > 0 && (
-                                <Text style={styles.qualityItem}>Rejected: {routeQuality.rejectedCount}</Text>
+                                <View style={styles.rejectedRow}>
+                                    <Text style={styles.qualityItem}>Rejected: {routeQuality.rejectedCount}</Text>
+                                    {rejectedPoints.length > 0 && (
+                                        <TouchableOpacity
+                                            onPress={() => setShowRejected((v) => !v)}
+                                            style={styles.rejectedToggle}
+                                        >
+                                            <Text style={styles.rejectedToggleText}>
+                                                {showRejected ? 'Hide on map' : 'Show on map'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
                             )}
                             {routeQuality.lowAccuracyCount > 0 && (
                                 <Text style={styles.qualityItem}>Low accuracy: {routeQuality.lowAccuracyCount}</Text>
@@ -1090,15 +1128,12 @@ const styles = StyleSheet.create({
     statLbl: { fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 },
 
     // Route quality — the figures that describe the day, always on screen.
-    routeUnavailable: {
-        position: 'absolute', top: spacing.md, left: spacing.md, right: spacing.md,
-        flexDirection: 'row', alignItems: 'center', gap: 6,
-        backgroundColor: colors.warningLight, borderRadius: 8,
-        padding: spacing.sm, borderWidth: 1, borderColor: `${colors.warning}44`,
+    rejectedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    rejectedToggle: {
+        paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6,
+        backgroundColor: `${colors.danger}15`,
     },
-    routeUnavailableText: {
-        flex: 1, fontSize: typography.sizes.xs, color: colors.textDark, lineHeight: 15,
-    },
+    rejectedToggleText: { fontSize: typography.sizes.xs, color: colors.danger, fontWeight: typography.weights.semibold },
     qualityBox: {
         backgroundColor: '#F8FAFC', borderRadius: 10, padding: spacing.md,
         marginHorizontal: spacing.md, marginBottom: spacing.md, gap: 6,
