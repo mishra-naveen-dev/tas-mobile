@@ -11,12 +11,14 @@ import {
     Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import MapView, { Marker, Polyline, Circle, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import { routeSegmentsFrom, unverifiedSegmentsFrom, rejectedPointsFrom, routeQualityFrom } from '../../utils/gpsUtils';
 import { istDateStr } from '../../utils/businessDate';
+import { serverStatus } from '../../utils/serverStatus';
 
 const { height } = Dimensions.get('window');
 
@@ -342,6 +344,44 @@ const RouteMapScreen = ({ navigation, route }) => {
     }, [activeDate, employeeId]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    // Offline-buffered punches/GPS points sync in the background (OfflineQueue,
+    // TrackingService.kt's own flush) with no signal to a screen that's just
+    // sitting open - without this, "local store synced to server" could be
+    // true while this screen kept showing stale data until a manual pull.
+    // Covers returning to this screen after being elsewhere while a sync
+    // happened; skipped on the very first focus since the effect above
+    // already covers initial load.
+    const hasFocusedBeforeRef = useRef(false);
+    useFocusEffect(
+        useCallback(() => {
+            if (!hasFocusedBeforeRef.current) { hasFocusedBeforeRef.current = true; return; }
+            fetchData();
+        }, [fetchData])
+    );
+
+    // Covers the other case: connectivity returns WHILE this screen is
+    // already open and focused (e.g. walking out of a dead zone mid-review).
+    useEffect(() => {
+        let wasOnline = true;
+        return serverStatus.subscribe(({ online }) => {
+            if (online && !wasOnline) fetchData();
+            wasOnline = online;
+        });
+    }, [fetchData]);
+
+    // The backend's PRIMARY signal that this isn't the final answer yet - a
+    // route whose build was just enqueued (points just synced after being
+    // offline, or a session just ended) reports ROUTE_PROCESSING before its
+    // trusted geometry exists (see classify_route_state). One retry after a
+    // short delay is enough for the common case (route builds finish in a
+    // few seconds); if it's still processing after that, the user still has
+    // the manual refresh button rather than this polling indefinitely.
+    useEffect(() => {
+        if (routeQuality?.routeState !== 'ROUTE_PROCESSING') return undefined;
+        const timer = setTimeout(() => { fetchData(); }, 8000);
+        return () => clearTimeout(timer);
+    }, [routeQuality?.routeState, fetchData]);
 
     // ── Merge punches + collection updates into unified activity list ──────────
     const mergedActivities = useMemo(() => {
@@ -841,13 +881,19 @@ const RouteMapScreen = ({ navigation, route }) => {
                 {routeQuality && (routeQuality.rawPoints > 0 || routeQuality.rejectedCount > 0) && (
                     <View style={styles.qualityBox}>
                         <View style={styles.qualityHeaderRow}>
-                            <Icon
-                                name={routeQuality.geometryStatus === 'COMPLETE' ? 'check-circle' : 'alert-triangle'}
-                                size={15}
-                                color={routeQuality.geometryStatus === 'COMPLETE' ? colors.success : colors.warning}
-                            />
+                            {routeQuality.routeState === 'ROUTE_PROCESSING' ? (
+                                <ActivityIndicator size="small" color={colors.primary} />
+                            ) : (
+                                <Icon
+                                    name={routeQuality.geometryStatus === 'COMPLETE' ? 'check-circle' : 'alert-triangle'}
+                                    size={15}
+                                    color={routeQuality.geometryStatus === 'COMPLETE' ? colors.success : colors.warning}
+                                />
+                            )}
                             <Text style={styles.qualityHeader}>
-                                {routeQuality.geometryStatus === 'COMPLETE'
+                                {routeQuality.routeState === 'ROUTE_PROCESSING'
+                                    ? 'Processing recently synced GPS data — updating shortly'
+                                    : routeQuality.geometryStatus === 'COMPLETE'
                                     ? 'Route matched to real roads'
                                     : unverifiedSegmentCoords.length > 0
                                     ? 'Showing unverified GPS path — road match unavailable (dashed gray)'

@@ -7,7 +7,7 @@
  * data already synced - see RouteMapScreen.js for how the two are drawn
  * together (solid blue vs dashed gray), never as an either/or.
  */
-import { routeSegmentsFrom, unverifiedSegmentsFrom, rejectedPointsFrom } from '../src/utils/gpsUtils';
+import { routeSegmentsFrom, unverifiedSegmentsFrom, rejectedPointsFrom, routeQualityFrom } from '../src/utils/gpsUtils';
 
 const matchedSegment = {
     segment_id: 1,
@@ -81,5 +81,16 @@ describe('rejectedPointsFrom', () => {
 
     test('returns empty when the field is missing entirely', () => {
         expect(rejectedPointsFrom({})).toEqual([]);
+    });
+});
+
+describe('routeQualityFrom routeState', () => {
+    test('carries route_state through verbatim as routeState', () => {
+        expect(routeQualityFrom({ route_state: 'ROUTE_PROCESSING' }).routeState).toBe('ROUTE_PROCESSING');
+        expect(routeQualityFrom({ route_state: 'TRUSTED_ROUTE_AVAILABLE' }).routeState).toBe('TRUSTED_ROUTE_AVAILABLE');
+    });
+
+    test('is null when the backend omits it', () => {
+        expect(routeQualityFrom({}).routeState).toBeNull();
     });
 });

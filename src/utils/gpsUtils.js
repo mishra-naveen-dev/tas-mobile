@@ -426,5 +426,12 @@ export function routeQualityFrom(data) {
         lastGpsUpdate: data?.last_gps_update ?? null,
         trackingStatus: data?.tracking_status ?? null,
         hasRawEvidence: (data?.route?.length ?? 0) > 0,
+        // The PRIMARY signal for "is this the final answer yet" - a route
+        // whose build was just enqueued (a session just ended, or points
+        // just synced after being offline) reports ROUTE_PROCESSING here
+        // before its trusted geometry exists. See apps.livetracking.
+        // services.classify_route_state. Never infer this from a bare
+        // distance number - see that function's own docstring for why.
+        routeState: data?.route_state || null,
     };
 }
