@@ -83,15 +83,21 @@ const NotificationsScreen = ({ navigation }) => {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // "Leave whatever was already loaded" only works when there WAS something
+  // already loaded - on first load (fresh install, or opened before any
+  // successful fetch) a failure left notifications=[] permanently, indistinguishable from "you have no notifications".
+  const [error, setError] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
       const res = await api.getNotifications();
       setNotifications(res?.data?.results || res?.data || []);
+      setError(false);
     } catch {
       // leave whatever was already loaded — a transient failure here
       // shouldn't blank out a list the user was already looking at
+      setError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -222,8 +228,15 @@ const NotificationsScreen = ({ navigation }) => {
           }
           ListEmptyComponent={
             <View style={styles.centered}>
-              <Icon name="bell-off" size={48} color={colors.border} />
-              <Text style={styles.emptyText}>No notifications yet</Text>
+              <Icon name={error ? 'alert-triangle' : 'bell-off'} size={48} color={error ? colors.warning : colors.border} />
+              <Text style={styles.emptyText}>
+                {error ? "Couldn't load notifications." : 'No notifications yet'}
+              </Text>
+              {error && (
+                <TouchableOpacity onPress={() => load()} style={{ marginTop: spacing.sm }}>
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>Retry</Text>
+                </TouchableOpacity>
+              )}
             </View>
           }
         />

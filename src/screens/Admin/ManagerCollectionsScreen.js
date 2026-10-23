@@ -225,19 +225,46 @@ const ManagerCollectionsScreen = ({ navigation }) => {
 
             {loading ? (
                 <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>
+            ) : error && rows.length === 0 ? (
+                // No stale data to fall back to - a real failure state, not
+                // just an empty list, so it gets an icon + explicit Retry
+                // rather than looking identical to "no cases match".
+                <View style={styles.center}>
+                    <Icon name="wifi-off" size={40} color={colors.textLight} />
+                    <Text style={[styles.empty, { marginTop: spacing.sm }]}>{error}</Text>
+                    <TouchableOpacity
+                        style={styles.retryBtn}
+                        onPress={() => load(1, 'initial')}
+                        activeOpacity={0.8}
+                    >
+                        <Icon name="refresh-cw" size={14} color="#fff" />
+                        <Text style={styles.retryBtnText}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
             ) : (
-                <FlatList
-                    data={rows}
-                    keyExtractor={(i) => String(i.id)}
-                    renderItem={renderItem}
-                    contentContainerStyle={styles.list}
-                    keyboardShouldPersistTaps="handled"
-                    onEndReached={onEnd}
-                    onEndReachedThreshold={0.4}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(1, 'refresh'); }} colors={[colors.primary]} />}
-                    ListEmptyComponent={<Text style={styles.empty}>{error || 'No cases match.'}</Text>}
-                    ListFooterComponent={loadingMore ? <ActivityIndicator style={{ margin: spacing.sm }} color={colors.primary} /> : null}
-                />
+                <>
+                    {/* Stale-data case: a background refresh/pagination failed but
+                        there's already a page of cases on screen - a lighter banner
+                        instead of blanking out what's already loaded. */}
+                    {!!error && rows.length > 0 && (
+                        <View style={styles.staleBanner}>
+                            <Icon name="alert-triangle" size={14} color={colors.warning} />
+                            <Text style={styles.staleBannerText}>{error}</Text>
+                        </View>
+                    )}
+                    <FlatList
+                        data={rows}
+                        keyExtractor={(i) => String(i.id)}
+                        renderItem={renderItem}
+                        contentContainerStyle={styles.list}
+                        keyboardShouldPersistTaps="handled"
+                        onEndReached={onEnd}
+                        onEndReachedThreshold={0.4}
+                        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(1, 'refresh'); }} colors={[colors.primary]} />}
+                        ListEmptyComponent={<Text style={styles.empty}>No cases match.</Text>}
+                        ListFooterComponent={loadingMore ? <ActivityIndicator style={{ margin: spacing.sm }} color={colors.primary} /> : null}
+                    />
+                </>
             )}
         </SafeAreaView>
     );
@@ -253,6 +280,17 @@ const styles = StyleSheet.create({
     searchInput: { flex: 1, marginLeft: spacing.xs, fontSize: typography.sizes.sm, color: colors.text, paddingVertical: 0 },
     list: { padding: spacing.md, paddingBottom: 90 },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    retryBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.primary,
+        paddingVertical: 10, paddingHorizontal: 18, borderRadius: 10, marginTop: spacing.md,
+    },
+    retryBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+    staleBanner: {
+        flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+        backgroundColor: `${colors.warning}15`, borderRadius: 10,
+        padding: spacing.sm, marginHorizontal: spacing.md, marginTop: spacing.sm,
+    },
+    staleBannerText: { flex: 1, fontSize: 12, color: colors.textDark },
     card: {
         backgroundColor: colors.surface, borderRadius: 16, padding: spacing.md, marginBottom: spacing.sm,
         borderWidth: 1, borderColor: colors.border,

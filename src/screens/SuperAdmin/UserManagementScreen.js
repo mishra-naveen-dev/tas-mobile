@@ -14,19 +14,26 @@ import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import ScreenHeader from '../../components/ScreenHeader';
 import { SkeletonListItem } from '../../components/SkeletonComponents';
+import ErrorView from '../../components/ErrorView';
 
 const UserManagementScreen = ({ navigation }) => {
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState(0);
+    // Without this, a failed fetch left `users=[]` and rendered exactly
+    // like a genuinely-empty org - "No users found" is a very different
+    // (and false) claim from "the request failed".
+    const [error, setError] = useState(false);
 
     const fetchData = useCallback(async () => {
         try {
             const res = await api.get('/organization/users/');
             setUsers(res.data?.results || res.data || []);
+            setError(false);
         } catch (err) {
             console.error('Error fetching users:', err);
+            setError(true);
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -122,6 +129,8 @@ const UserManagementScreen = ({ navigation }) => {
                         <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
                     ))}
                 </View>
+            ) : error && currentUsers.length === 0 ? (
+                <ErrorView message="Couldn't load users." onRetry={fetchData} />
             ) : (
                 <FlatList
                     data={currentUsers}

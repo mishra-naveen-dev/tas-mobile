@@ -14,6 +14,7 @@ import api from '../../api/api';
 import HeroHeader from '../../components/HeroHeader';
 import { colors, typography, spacing } from '../../theme/tokens';
 import { SkeletonListItem } from '../../components/SkeletonComponents';
+import ErrorView from '../../components/ErrorView';
 
 const SuperAdminEmployeesScreen = ({ navigation }) => {
     const [employees, setEmployees] = useState([]);
@@ -23,6 +24,10 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [filter, setFilter] = useState('all');
     const [userData, setUserData] = useState(null);
+    // Without this, a failed fetch left `employees=[]` and rendered exactly
+    // like a genuinely-zero-employees org - "No employees found" is a very
+    // different (and false) claim from "the request failed".
+    const [error, setError] = useState(false);
 
     const fetchUserData = async () => {
         try {
@@ -40,9 +45,11 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
             if (res.data && Array.isArray(res.data)) {
                 setEmployees(res.data);
                 setFilteredEmployees(res.data);
+                setError(false);
             }
         } catch (err) {
             if (__DEV__) console.log('Error fetching employees:', err);
+            setError(true);
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -197,6 +204,8 @@ const SuperAdminEmployeesScreen = ({ navigation }) => {
                             <SkeletonListItem key={i} style={{ marginBottom: spacing.sm }} />
                         ))}
                     </View>
+                ) : error && filteredEmployees.length === 0 ? (
+                    <ErrorView message="Couldn't load employees." onRetry={() => fetchEmployees()} />
                 ) : (
                     <FlatList
                         data={filteredEmployees}

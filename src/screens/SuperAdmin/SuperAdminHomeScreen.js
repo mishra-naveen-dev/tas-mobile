@@ -35,6 +35,11 @@ const SuperAdminHomeScreen = ({ navigation }) => {
     });
     const [employees, setEmployees] = useState([]);
     const [collStats, setCollStats] = useState(null);
+    // Promise.allSettled means a total outage never throws into the outer
+    // catch - every stat silently fell back to its initial zero and this
+    // screen rendered as a fully successful "0 employees, 0 collections"
+    // dashboard with nothing telling the Super Admin it was lying.
+    const [dataError, setDataError] = useState(false);
 
     const handleLogout = useCallback(() => {
         Alert.alert(
@@ -57,15 +62,7 @@ const SuperAdminHomeScreen = ({ navigation }) => {
         try {
             setLoading(true);
             
-            const [
-                usersRes,
-                devicesRes,
-                approvalsRes,
-                dashboardRes,
-                todayPunchesRes,
-                pendingDevicesRes,
-                collRes,
-            ] = await Promise.allSettled([
+            const results = await Promise.allSettled([
                 api.get('/organization/users/'),
                 api.get('/organization/users/stats/'),
                 api.get('/organization/approval-routes/pending/'),
@@ -74,6 +71,16 @@ const SuperAdminHomeScreen = ({ navigation }) => {
                 api.get('/organization/devices/pending_devices/'),
                 api.getCollectionDashboardStats(),
             ]);
+            setDataError(results.some(r => r.status === 'rejected'));
+            const [
+                usersRes,
+                devicesRes,
+                approvalsRes,
+                dashboardRes,
+                todayPunchesRes,
+                pendingDevicesRes,
+                collRes,
+            ] = results;
 
             let totalEmployees = 0;
             let activeEmployees = 0;
@@ -139,6 +146,7 @@ const SuperAdminHomeScreen = ({ navigation }) => {
             }
         } catch (err) {
             if (__DEV__) console.log('Error fetching stats:', err);
+            setDataError(true);
         } finally {
             setLoading(false);
         }
@@ -283,6 +291,18 @@ const SuperAdminHomeScreen = ({ navigation }) => {
                         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                     }
                 >
+                    {dataError && (
+                        <View style={styles.dataErrorBanner}>
+                            <Icon name="alert-triangle" size={16} color={colors.warning} />
+                            <Text style={styles.dataErrorText}>
+                                Some figures below may be incomplete — couldn't load everything.
+                            </Text>
+                            <TouchableOpacity onPress={onRefresh} accessibilityLabel="Retry">
+                                <Icon name="refresh-cw" size={16} color={colors.primary} />
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
                     <View style={styles.kpiSection}>
                         <View style={styles.kpiRow}>
                             <StatCard title="Total Employees" value={stats.totalEmployees} icon="users" color={colors.primary} />
@@ -461,6 +481,20 @@ const styles = StyleSheet.create({
     scrollContent: {
         paddingHorizontal: spacing.md,
         paddingBottom: 100,
+    },
+    dataErrorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        backgroundColor: `${colors.warning}15`,
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginTop: spacing.md,
+    },
+    dataErrorText: {
+        flex: 1,
+        fontSize: 12,
+        color: colors.textDark,
     },
     kpiSection: {
         marginTop: spacing.md,
