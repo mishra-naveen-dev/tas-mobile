@@ -42,6 +42,11 @@ const AdminApprovalsScreen = ({ navigation }) => {
     const [rejectModal, setRejectModal] = useState({ visible: false, item: null });
     const [rejectReason, setRejectReason] = useState('');
     const [actionLoading, setActionLoading] = useState(false);
+    // Promise.allSettled + unwrap(->[]) meant a total outage silently
+    // produced 4 empty "no pending approvals" tabs - a real business risk
+    // for an admin's daily approval queue (looks identical to "nothing is
+    // actually pending").
+    const [dataError, setDataError] = useState(false);
 
     const handleBack = () => {
         if (navigation.canGoBack()) navigation.goBack();
@@ -51,12 +56,14 @@ const AdminApprovalsScreen = ({ navigation }) => {
     const fetchData = useCallback(async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true); else setLoading(true);
         try {
-            const [correctionRes, allowanceRes, deviceRes, profileRes] = await Promise.allSettled([
+            const results = await Promise.allSettled([
                 api.get('/attendance/correction-requests/'),
                 api.getAllowanceRequests(),
                 api.getAllDevices(),
                 api.getProfileUpdateRequests(),
             ]);
+            const [correctionRes, allowanceRes, deviceRes, profileRes] = results;
+            setDataError(results.some(r => r.status === 'rejected'));
 
             const unwrap = (res) => {
                 if (res.status !== 'fulfilled') return [];
@@ -69,6 +76,7 @@ const AdminApprovalsScreen = ({ navigation }) => {
             setDevices(unwrap(deviceRes));
             setProfiles(unwrap(profileRes));
         } catch (err) {
+            setDataError(true);
             Alert.alert('Error', 'Failed to load approvals');
         } finally {
             setLoading(false);
@@ -246,6 +254,18 @@ const AdminApprovalsScreen = ({ navigation }) => {
                 ))}
             </View>
 
+            {dataError && (
+                <View style={styles.dataErrorBanner}>
+                    <Icon name="alert-triangle" size={16} color={colors.warning} />
+                    <Text style={styles.dataErrorText}>
+                        Some approval types failed to load — this list may be incomplete.
+                    </Text>
+                    <TouchableOpacity onPress={onRefresh} accessibilityLabel="Retry">
+                        <Icon name="refresh-cw" size={16} color={colors.primary} />
+                    </TouchableOpacity>
+                </View>
+            )}
+
             {(statusFilter !== 'ALL' || hasDateFilter) && (
                 <View style={styles.activeFilterBar}>
                     <Text style={styles.activeFilterText} numberOfLines={1}>
@@ -399,6 +419,21 @@ const AdminApprovalsScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
+    dataErrorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        backgroundColor: `${colors.warning}15`,
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginHorizontal: spacing.md,
+        marginTop: spacing.sm,
+    },
+    dataErrorText: {
+        flex: 1,
+        fontSize: 12,
+        color: colors.textDark,
+    },
     header: {
         backgroundColor: colors.primaryDark,
         flexDirection: 'row',

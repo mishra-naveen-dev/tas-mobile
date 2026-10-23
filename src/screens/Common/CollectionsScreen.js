@@ -442,6 +442,12 @@ const CollectionsScreen = ({ route }) => {
     // filtered list below) — powers the header KPIs and the filter-sheet counts
     // so they stay accurate no matter which page/filter is currently loaded.
     const [summary, setSummary] = useState(null);
+    // Distinguishes "the summary fetch failed" from "it succeeded with
+    // total_assigned: 0" - without this, both looked identical to the empty
+    // -list message below, which told a field employee "No customers
+    // assigned to you yet" when the real story was a failed request, not
+    // an actually-empty assignment list.
+    const [summaryError, setSummaryError] = useState(false);
 
     const [view, setView] = useState('list'); // 'list' | 'map'
     const [mapSearch, setMapSearch] = useState('');
@@ -596,8 +602,12 @@ const CollectionsScreen = ({ route }) => {
         try {
             const res = await api.getCollectionDashboardStats();
             setSummary(res.data || null);
+            setSummaryError(false);
         } catch {
-            // Non-critical — header falls back to zeros until the next refresh.
+            // Keep whatever summary was already loaded (stale beats blank) -
+            // but flag the failure so the empty-list message below can tell
+            // "request failed" apart from "genuinely nothing assigned".
+            setSummaryError(true);
         }
     }, []);
 
@@ -1546,11 +1556,13 @@ const CollectionsScreen = ({ route }) => {
                                 <View style={styles.center}>
                                     <Icon name="inbox" size={40} color={colors.textLight} />
                                     <Text style={styles.emptyText}>
-                                        {(summary?.total_assigned || 0) === 0
-                                            ? 'No customers assigned to you yet.'
-                                            : nearMeEnabled
-                                                ? `No customers within ${nearMeRadiusKm} km. Try a larger radius.`
-                                                : 'No records match this filter.'}
+                                        {summaryError && summary == null
+                                            ? "Couldn't check your assignments. Pull down to retry."
+                                            : (summary?.total_assigned || 0) === 0
+                                                ? 'No customers assigned to you yet.'
+                                                : nearMeEnabled
+                                                    ? `No customers within ${nearMeRadiusKm} km. Try a larger radius.`
+                                                    : 'No records match this filter.'}
                                     </Text>
                                 </View>
                             }

@@ -30,6 +30,10 @@ const SuperAdminAnalyticsScreen = ({ navigation }) => {
         todayPunches: 0,
         weekPunches: [],
     });
+    // Without this, a failed fetch left `stats` at its all-zero initial
+    // value and this screen rendered as a fully successful "0 everything"
+    // analytics view.
+    const [dataError, setDataError] = useState(false);
 
     const fetchData = async () => {
         try {
@@ -61,8 +65,10 @@ const SuperAdminAnalyticsScreen = ({ navigation }) => {
                 todayPunches: adminDashData.today_punches || statsData.today_punches || 0,
                 weekPunches,
             });
+            setDataError(false);
         } catch (err) {
             if (__DEV__) console.log('Error fetching analytics:', err.message);
+            setDataError(true);
         } finally {
             setIsLoading(false);
         }
@@ -139,6 +145,17 @@ const SuperAdminAnalyticsScreen = ({ navigation }) => {
                         <SkeletonStatsGrid style={{ marginBottom: spacing.md }} />
                     ) : (
                         <>
+                            {dataError && (
+                                <View style={styles.dataErrorBanner}>
+                                    <Icon name="alert-triangle" size={16} color={colors.warning} />
+                                    <Text style={styles.dataErrorText}>
+                                        Couldn't load analytics — figures below may be stale or incomplete.
+                                    </Text>
+                                    <TouchableOpacity onPress={onRefresh} accessibilityLabel="Retry">
+                                        <Icon name="refresh-cw" size={16} color={colors.primary} />
+                                    </TouchableOpacity>
+                                </View>
+                            )}
                             <View style={styles.summaryRow}>
                                 <MetricCard
                                     title="Active Today"
@@ -248,6 +265,20 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: colors.background,
+    },
+    dataErrorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        backgroundColor: `${colors.warning}15`,
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginBottom: spacing.md,
+    },
+    dataErrorText: {
+        flex: 1,
+        fontSize: 12,
+        color: colors.textDark,
     },
     wrapper: {
         flex: 1,

@@ -41,16 +41,22 @@ const MyRequestsScreen = ({ navigation }) => {
     const [showToPicker, setShowToPicker] = useState(false);
     const [filterModalVisible, setFilterModalVisible] = useState(false);
     const [detail, setDetail] = useState(null);
+    // Same Promise.allSettled + unwrap(->[]) idiom as AdminApprovalsScreen -
+    // a total outage silently produced 4 empty "no requests" tabs with
+    // nothing telling the employee their own request history failed to load.
+    const [dataError, setDataError] = useState(false);
 
     const fetchData = useCallback(async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true); else setLoading(true);
         try {
-            const [correctionRes, allowanceRes, deviceRes, profileRes] = await Promise.allSettled([
+            const results = await Promise.allSettled([
                 api.get('/attendance/correction-requests/'),
                 api.getAllowanceRequests(),
                 api.getAllDevices(),
                 api.getProfileUpdateRequests(),
             ]);
+            const [correctionRes, allowanceRes, deviceRes, profileRes] = results;
+            setDataError(results.some(r => r.status === 'rejected'));
 
             const unwrap = (res) => {
                 if (res.status !== 'fulfilled') return [];
@@ -63,6 +69,7 @@ const MyRequestsScreen = ({ navigation }) => {
             setDevices(unwrap(deviceRes));
             setProfiles(unwrap(profileRes));
         } catch (err) {
+            setDataError(true);
             Alert.alert('Error', 'Failed to load your requests');
         } finally {
             setLoading(false);
@@ -178,6 +185,18 @@ const MyRequestsScreen = ({ navigation }) => {
                     </TouchableOpacity>
                 ))}
             </View>
+
+            {dataError && (
+                <View style={styles.dataErrorBanner}>
+                    <Icon name="alert-triangle" size={16} color={colors.warning} />
+                    <Text style={styles.dataErrorText}>
+                        Some request types failed to load — this list may be incomplete.
+                    </Text>
+                    <TouchableOpacity onPress={() => fetchData(true)} accessibilityLabel="Retry">
+                        <Icon name="refresh-cw" size={16} color={colors.primary} />
+                    </TouchableOpacity>
+                </View>
+            )}
 
             {(statusFilter !== 'ALL' || hasDateFilter) && (
                 <View style={styles.activeFilterBar}>
@@ -302,6 +321,21 @@ const MyRequestsScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
+    dataErrorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        backgroundColor: `${colors.warning}15`,
+        borderRadius: 10,
+        padding: spacing.sm,
+        marginHorizontal: spacing.md,
+        marginTop: spacing.sm,
+    },
+    dataErrorText: {
+        flex: 1,
+        fontSize: 12,
+        color: colors.textDark,
+    },
     header: {
         backgroundColor: colors.primaryDark,
         flexDirection: 'row',

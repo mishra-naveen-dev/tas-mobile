@@ -6,6 +6,7 @@ import DeviceInfo from 'react-native-device-info';
 import { cacheWrite, cacheRead, makeCacheKey } from '../utils/dataCache';
 import { serverStatus } from '../utils/serverStatus';
 import { secureGetItem, secureSetItem, secureMultiRemove } from '../utils/secureStorage';
+import { isServerUnreachable } from '../utils/isServerUnreachable';
 
 const PROD_URL = 'https://api.tas.namracred.co.in/api/v1';
 
@@ -371,6 +372,24 @@ api.interceptors.response.use(
                 return api(originalRequest);
 
             } catch (err) {
+                // The refresh call itself failing because the SERVER is
+                // unreachable (network error, or a 502/503/504 gateway
+                // error) is not the same as the refresh token genuinely
+                // being invalid. Without this check, a field employee's
+                // access token expiring (routine - every token eventually
+                // does) while they're in a connectivity dead zone - this
+                // app's entire user base, by definition - force-logs them
+                // out on the very next API call, with a "Session Expired"
+                // message that wrongly implies it's their fault. Let the
+                // same offline/reconnect handling already used for GET
+                // requests above (serverStatus + startReconnectPolling)
+                // take it from here instead - tokens stay intact, so the
+                // next attempt succeeds on its own once the server is back.
+                if (isServerUnreachable(err)) {
+                    serverStatus.setOffline(null);
+                    startReconnectPolling();
+                    return Promise.reject(error);
+                }
                 isSessionExpiredHandled = true;
                 await clearAuthData();
                 if (sessionExpiredCallback) {
