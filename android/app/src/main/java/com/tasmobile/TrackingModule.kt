@@ -48,12 +48,13 @@ class TrackingModule(private val reactContext: ReactApplicationContext) :
      * TrackingConfiguration's server-side defaults).
      */
     @ReactMethod
-    fun startLiveTracking(baseUrl: String, token: String, sessionId: Int, configJson: String?) {
+    fun startLiveTracking(baseUrl: String, token: String, sessionId: Int, configJson: String?, deviceId: String?) {
         val intent = Intent(reactContext, TrackingService::class.java).apply {
             action = TrackingService.ACTION_START_LIVE
             putExtra(TrackingService.EXTRA_BASE_URL, baseUrl)
             putExtra(TrackingService.EXTRA_TOKEN, token)
             putExtra(TrackingService.EXTRA_SESSION_ID, sessionId)
+            putExtra(TrackingService.EXTRA_DEVICE_ID, deviceId ?: "")
             applyConfigExtras(this, configJson)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

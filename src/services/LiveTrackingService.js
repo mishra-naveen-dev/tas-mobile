@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, NativeModules, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
-import api, { getBaseURL } from '../api/api';
-import { secureGetItem } from '../utils/secureStorage';
+import api, { getBaseURL, getDeviceId } from '../api/api';
+import { secureGetItem, secureSetItem } from '../utils/secureStorage';
 import { serverStatus } from '../utils/serverStatus';
 
 const IS_DEV = __DEV__;
@@ -145,10 +145,16 @@ class LiveTrackingService {
    * back on the PUNCH_IN response) and start capturing. Does NOT call
    * /livetracking/sessions/start/ — the server already opened the session
    * from inside the punch flow. */
-  static async attach(sessionId, { battery_level = null } = {}) {
+  static async attach(sessionId, { battery_level = null, tracking_token = null } = {}) {
     if (!sessionId) {
       if (IS_DEV) console.warn('[Live] attach() called without a session id');
       return { success: false, error: 'No session id' };
+    }
+
+    // A collection visit returns the day's already-running session: keep
+    // streaming into it rather than detaching and restarting the tracker.
+    if (this.isRunning && this.sessionId === sessionId) {
+      return { success: true, sessionId };
     }
 
     // An employee can punch in many times a day; if we're somehow still
@@ -194,12 +200,13 @@ class LiveTrackingService {
       // off, or the app has been closed — none of which a JS timer survives.
       // JS does NOT capture on Android (would double-count).
       try {
-        const token = await secureGetItem('access');
+        const token = await this._trackingToken(tracking_token) || await secureGetItem('access');
         NativeModules.TrackingBridge?.startLiveTracking?.(
           getBaseURL(),
           token || '',
           this.sessionId,
           JSON.stringify(this.config),
+          await getDeviceId(),
         );
         if (IS_DEV) console.log('[Live] Native capture started');
       } catch (e) {
@@ -223,6 +230,22 @@ class LiveTrackingService {
    * /livetracking/sessions/stop/ — the server already closed the session
    * from inside the punch-out flow (or a background watcher already did,
    * for an auto-punch-out). */
+  // The upload-only token from punch-in outlives the 8h app token, so the
+  // native tracker keeps uploading with the app closed. Kept per session so
+  // an app restart (attach without a token) reuses it.
+  static async _trackingToken(fresh) {
+    try {
+      if (fresh) {
+        await secureSetItem('tracking_token', JSON.stringify({ sessionId: this.sessionId, token: fresh }));
+        return fresh;
+      }
+      const saved = JSON.parse((await secureGetItem('tracking_token')) || 'null');
+      return saved?.sessionId === this.sessionId ? saved.token : null;
+    } catch {
+      return fresh || null;
+    }
+  }
+
   static async detach() {
     if (!this.isRunning && !this.sessionId) return { success: true };
     if (IS_DEV) console.log('[Live] Detaching...');

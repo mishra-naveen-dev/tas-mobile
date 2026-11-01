@@ -79,7 +79,7 @@ const generateDeviceFingerprint = async () => {
     }
 };
 
-const getDeviceId = async () => {
+export const getDeviceId = async () => {
     let deviceId = await AsyncStorage.getItem('device_fingerprint');
 
     if (!deviceId) {
