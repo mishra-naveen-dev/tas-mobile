@@ -65,3 +65,18 @@ describe('LiveTrackingService._sync connectivity gate', () => {
     expect(api.sendLivePoints).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('LiveTrackingService.attach same session', () => {
+  test('re-attaching the running session (a collection visit) does not restart tracking', async () => {
+    LiveTrackingService.isRunning = true;
+    LiveTrackingService.sessionId = 202;
+    const detach = jest.spyOn(LiveTrackingService, 'detach');
+
+    const res = await LiveTrackingService.attach(202);
+
+    expect(res).toEqual({ success: true, sessionId: 202 });
+    expect(detach).not.toHaveBeenCalled();
+    detach.mockRestore();
+    LiveTrackingService.isRunning = false;
+  });
+});

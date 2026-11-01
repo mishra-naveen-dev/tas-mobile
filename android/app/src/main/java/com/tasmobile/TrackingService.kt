@@ -72,6 +72,8 @@ class TrackingService : Service() {
         const val EXTRA_BASE_URL = "base_url"
         const val EXTRA_TOKEN = "token"
         const val EXTRA_SESSION_ID = "session_id"
+        // The tracking token is bound to this device (X-DEVICE-ID).
+        const val EXTRA_DEVICE_ID = "device_id"
 
         // Config extras (seconds unless noted) — defaults match
         // apps.livetracking.models.TrackingConfiguration's own defaults, so
@@ -144,6 +146,7 @@ class TrackingService : Service() {
 
     private var baseUrl: String = ""
     private var token: String = ""
+    private var deviceId: String = ""
     private var sessionId: Int = -1
     private var persistedAt: Long = 0L
 
@@ -202,6 +205,7 @@ class TrackingService : Service() {
             ACTION_START_LIVE -> {
                 baseUrl = intent.getStringExtra(EXTRA_BASE_URL) ?: ""
                 token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
+                deviceId = intent.getStringExtra(EXTRA_DEVICE_ID) ?: ""
                 val newSessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
                 if (newSessionId != sessionId) {
                     // A different tracking session. The sequence counter is
@@ -554,6 +558,7 @@ class TrackingService : Service() {
                             doOutput = true
                             setRequestProperty("Content-Type", "application/json")
                             setRequestProperty("Authorization", "Bearer $authToken")
+                            if (deviceId.isNotEmpty()) setRequestProperty("X-DEVICE-ID", deviceId)
                         }
                         conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                         val code = conn.responseCode
@@ -638,6 +643,7 @@ class TrackingService : Service() {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
                     setRequestProperty("Authorization", "Bearer $authToken")
+                    if (deviceId.isNotEmpty()) setRequestProperty("X-DEVICE-ID", deviceId)
                 }
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 conn.responseCode  // drain — not otherwise interested in the result
@@ -700,6 +706,7 @@ class TrackingService : Service() {
         prefs().edit()
             .putString(EXTRA_BASE_URL, baseUrl)
             .putString(EXTRA_TOKEN, token)
+            .putString(EXTRA_DEVICE_ID, deviceId)
             .putInt(EXTRA_SESSION_ID, sessionId)
             .putLong(KEY_PERSISTED_AT, System.currentTimeMillis())
             .putInt(EXTRA_INTERVAL_MOVING_S, intervalMovingS)
@@ -717,6 +724,7 @@ class TrackingService : Service() {
         val p = getSharedPreferences(PREFS, MODE_PRIVATE)
         baseUrl = p.getString(EXTRA_BASE_URL, "") ?: ""
         token = p.getString(EXTRA_TOKEN, "") ?: ""
+        deviceId = p.getString(EXTRA_DEVICE_ID, "") ?: ""
         sessionId = p.getInt(EXTRA_SESSION_ID, -1)
         persistedAt = p.getLong(KEY_PERSISTED_AT, 0L)
         intervalMovingS = p.getInt(EXTRA_INTERVAL_MOVING_S, DEFAULT_INTERVAL_MOVING_S)
@@ -732,7 +740,7 @@ class TrackingService : Service() {
 
     private fun clearParams() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().clear().apply()
-        baseUrl = ""; token = ""; sessionId = -1; persistedAt = 0L
+        baseUrl = ""; token = ""; deviceId = ""; sessionId = -1; persistedAt = 0L
     }
 
     // ---- foreground notification ----

@@ -478,6 +478,7 @@ export const PunchProvider = ({ children }) => {
       if (liveSessionId) {
         LiveTrackingService.attach(liveSessionId, {
           battery_level: locationData.battery_level ?? null,
+          tracking_token: res.data?.tracking_token ?? null,
         }).catch((e) => {
           if (IS_DEV) console.warn('[Punch] Live attach error:', e.message);
         });
@@ -518,14 +519,17 @@ export const PunchProvider = ({ children }) => {
     setIsActive(true);
     setPunchState(STATES.IDLE);
     setSuccess(true);
-    trackingStartTime.current = Date.now();
-    routePoints.current = [];
-
-    LocationService.startTracking().catch((e) => {
-      if (IS_DEV) console.warn('[Punch] Local distance tracking error:', e.message);
-    });
-
     const liveSessionId = responseData?.live_session_id;
+    // A visit inside the running day session keeps its timer and route.
+    if (!liveSessionId || LiveTrackingService.sessionId !== liveSessionId) {
+      trackingStartTime.current = Date.now();
+      routePoints.current = [];
+
+      LocationService.startTracking().catch((e) => {
+        if (IS_DEV) console.warn('[Punch] Local distance tracking error:', e.message);
+      });
+    }
+
     // See the matching comment in punchIn() above — surfaced to the caller
     // so CollectionVisitScreen/EmployeePunchScreen can tell the employee
     // tracking won't run for this shift instead of failing silently.
@@ -533,6 +537,7 @@ export const PunchProvider = ({ children }) => {
     if (liveSessionId) {
       LiveTrackingService.attach(liveSessionId, {
         battery_level: locationData.battery_level ?? null,
+        tracking_token: responseData?.tracking_token ?? null,
       }).catch((e) => {
         if (IS_DEV) console.warn('[Punch] Live attach error:', e.message);
       });
