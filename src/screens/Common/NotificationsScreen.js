@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import api from '../../api/api';
+import { openLatestRelease } from '../../utils/notificationNavigation';
 import { colors, typography, spacing } from '../../theme/tokens';
 import { SkeletonListItem } from '../../components/SkeletonComponents';
 
@@ -116,7 +117,9 @@ const NotificationsScreen = ({ navigation }) => {
     // EmployeeTabs/EmployeeCollections target is always valid for them; the
     // try/catch is just a safety net rather than something expected to fire.
     try {
-      if (item.related_type === 'CollectionRecord' && item.related_id) {
+      if (item.notification_type === 'APP_UPDATE_AVAILABLE') {
+        openLatestRelease();
+      } else if (item.related_type === 'CollectionRecord' && item.related_id) {
         navigation.navigate('EmployeeTabs', {
           screen: 'EmployeeCollections',
           params: { collectionId: item.related_id },
