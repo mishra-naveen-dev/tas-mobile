@@ -146,6 +146,7 @@ class TrackingService : Service() {
 
     private var baseUrl: String = ""
     private var token: String = ""
+    private var lastGpsAvailable: Boolean? = null
     private var deviceId: String = ""
     private var sessionId: Int = -1
     private var persistedAt: Long = 0L
@@ -352,6 +353,10 @@ class TrackingService : Service() {
             }
 
             override fun onLocationAvailability(availability: LocationAvailability) {
+                // Re-registering after every fix re-fires this callback with the
+                // same state; report only real changes (was ~1 heartbeat / 12 s).
+                if (availability.isLocationAvailable == lastGpsAvailable) return
+                lastGpsAvailable = availability.isLocationAvailable
                 if (!availability.isLocationAvailable) {
                     postHeartbeat("GPS_LOST", "FusedLocationProvider reports location unavailable")
                 } else {
