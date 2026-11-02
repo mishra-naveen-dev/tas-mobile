@@ -38,8 +38,11 @@ class ApkUpdateModule(private val reactContext: ReactApplicationContext) :
         try {
             val ctx = reactContext.applicationContext
             val dm = ctx.getSystemService(DownloadManager::class.java)
-            val file = File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
-            file.delete()  // never install a leftover from an earlier, broken attempt
+            val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            // Drop earlier update APKs: an installed one (~60 MB) or a leftover
+            // from an attempt interrupted before the check ran.
+            dir?.listFiles { f -> f.name.endsWith(".apk") }?.forEach { it.delete() }
+            val file = File(dir, fileName)
 
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle(title)
@@ -81,10 +84,16 @@ class ApkUpdateModule(private val reactContext: ReactApplicationContext) :
         }
         try {
             val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.apkprovider", file)
-            ctx.startActivity(Intent(Intent.ACTION_VIEW).apply {
+            val install = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, APK_MIME)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            })
+            }
+            // OEM app stores (e.g. Realme's App Market) also claim APKs and show an
+            // "Open with" chooser; go straight to the system installer when present.
+            ctx.packageManager.queryIntentActivities(install, 0)
+                .firstOrNull { it.activityInfo.packageName.endsWith(".packageinstaller") }
+                ?.let { install.setPackage(it.activityInfo.packageName) }
+            ctx.startActivity(install)
             promise.resolve("INSTALLER_OPENED")
         } catch (e: Exception) {
             promise.reject("INSTALL_FAILED", e.message, e)
