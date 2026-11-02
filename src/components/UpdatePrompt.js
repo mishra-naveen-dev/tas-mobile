@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, Linking, ActivityIndicator, BackHandler, AppState } from 'react-native';
+import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, BackHandler, AppState } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import DeviceInfo from 'react-native-device-info';
 import api from '../api/api';
 import { colors, typography, spacing } from '../theme/tokens';
 import { markUpdateGateResolved, registerUpdateRecheck } from '../utils/updateGate';
+import { downloadAndInstall } from '../utils/appUpdate';
 
 // A sideloaded (non-Play-Store) APK can never silently install an update —
 // Android always requires a human tap to confirm the install, no matter how
@@ -86,14 +87,7 @@ const UpdatePrompt = () => {
     const handleUpdate = async () => {
         setOpening(true);
         try {
-            const versionCode = release.version_code;
-            const res = await api.getMobileReleaseDownloadUrl(versionCode);
-            const url = res.data?.download_url;
-            if (url) {
-                await Linking.openURL(url);
-            }
-        } catch (e) {
-            if (__DEV__) console.warn('[UpdatePrompt] Download link failed:', e.message);
+            await downloadAndInstall(release);
         } finally {
             setOpening(false);
         }
@@ -120,7 +114,7 @@ const UpdatePrompt = () => {
                     )}
 
                     <Text style={styles.hint}>
-                        Downloads the update in your browser. Once it finishes, open it to install — you may need to allow installs from this source if Android asks.
+                        Downloads the update (progress shows in your notifications), then opens the installer. If Android asks, allow installs from this app.
                     </Text>
 
                     <TouchableOpacity style={styles.updateBtn} onPress={handleUpdate} disabled={opening}>

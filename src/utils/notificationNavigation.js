@@ -9,27 +9,28 @@
  * notify_user) is accepted for forward-compatibility but not required yet,
  * since every type handled today already has an explicit target below.
  */
-import { Alert, Linking } from 'react-native';
+import { Alert } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import api from '../api/api';
+import { downloadAndInstall } from './appUpdate';
 
-// Opens the newest release's download link (the same flow as UpdatePrompt's
+// Downloads and installs the newest release (the same flow as UpdatePrompt's
 // "Update Now"). Asks for the latest rather than the notified version: an
 // old notification may point at a version the phone already has.
 export async function openLatestRelease() {
+    let latest;
     try {
         const res = await api.checkMobileRelease(parseInt(DeviceInfo.getBuildNumber(), 10));
-        const latest = res.data?.latest;
-        if (!res.data?.update_available || !latest) {
-            Alert.alert('Up to date', 'You already have the latest version of the app.');
-            return;
-        }
-        const dl = await api.getMobileReleaseDownloadUrl(latest.version_code);
-        if (!dl.data?.download_url) throw new Error('No download link');
-        await Linking.openURL(dl.data.download_url);
+        latest = res.data?.update_available ? res.data.latest : null;
     } catch {
-        Alert.alert('Update', 'Could not open the update link. Please check your internet and try again.');
+        Alert.alert('Update', 'Could not check for updates. Please check your internet and try again.');
+        return;
     }
+    if (!latest) {
+        Alert.alert('Up to date', 'You already have the latest version of the app.');
+        return;
+    }
+    await downloadAndInstall(latest);
 }
 export function navigateForNotification(navigationRef, payload) {
     // Needs no screen, so it works even before navigation is ready (cold start).
