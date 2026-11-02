@@ -674,6 +674,26 @@ jobs:
 
 
       # --------------------------------------------------------
+      # 15a. Never overwrite an already-released version
+      # --------------------------------------------------------
+      #
+      # Every push to main rebuilds, but only a version bump may publish.
+      # Re-uploading a different build under the same key changed released
+      # APKs in place (e.g. 1.60 after a later merge), and a phone resuming
+      # a download across that swap ends up with a corrupt, uninstallable
+      # file. Later publish steps are skipped when the key already exists.
+      - name: Skip if this version is already released
+        id: released
+        run: |
+          S3_KEY="${{ steps.version.outputs.s3_key }}"
+          if aws s3api head-object --bucket "$S3_BUCKET" --key "$S3_KEY" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::s3://${S3_BUCKET}/${S3_KEY} already exists - bump versionCode/versionName to publish a new release. Skipping upload, registration and GitHub Release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --------------------------------------------------------
       # 16. Upload APK to private S3
       # --------------------------------------------------------
       #
@@ -688,6 +708,7 @@ jobs:
       # --------------------------------------------------------
 
       - name: Upload APK to private S3
+        if: steps.released.outputs.exists != 'true'
 
         run: |
 
@@ -726,6 +747,7 @@ jobs:
       # --------------------------------------------------------
 
       - name: Verify S3 upload
+        if: steps.released.outputs.exists != 'true'
 
         run: |
 
@@ -770,6 +792,7 @@ jobs:
       # --------------------------------------------------------
 
       - name: Register release with backend
+        if: steps.released.outputs.exists != 'true'
 
         env:
           MOBILE_RELEASE_REGISTER_TOKEN: ${{ secrets.MOBILE_RELEASE_REGISTER_TOKEN }}
@@ -828,6 +851,7 @@ jobs:
       # --------------------------------------------------------
 
       - name: Rename APK for the release asset
+        if: steps.released.outputs.exists != 'true'
 
         run: |
 
@@ -836,6 +860,7 @@ jobs:
 
 
       - name: Create GitHub Release
+        if: steps.released.outputs.exists != 'true'
 
         uses: softprops/action-gh-release@v2
 
