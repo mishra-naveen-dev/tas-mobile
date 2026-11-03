@@ -313,7 +313,9 @@ const RootNavigator = () => {
                 on Android, sibling views stack by render order regardless of
                 absolute positioning, so this ordering is what actually puts
                 it on top instead of behind the navigator's screens. */}
-            <OfflineBanner />
+            {/* Not on the login screen: a failed sign-in shows its own error,
+                and a leftover "Server unreachable" there only alarms people. */}
+            {isAuthenticated && <OfflineBanner />}
             {/* A Modal over the app rather than a replacement for it, so open
                 screens and half-filled forms survive the lock. Back exits. */}
             <Modal
