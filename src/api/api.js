@@ -190,6 +190,7 @@ api.interceptors.request.use(async (config) => {
 
 let sessionExpiredCallback = null;
 let isSessionExpiredHandled = false;
+let refreshInFlight = null;
 
 // Reconnect polling — exponential backoff (5s -> 60s cap) against the
 // lightweight, unauthenticated /health/live/ probe (no DB hit, unlike
@@ -233,6 +234,14 @@ function startReconnectPolling() {
     }
     _reconnectTimer = setTimeout(attemptReconnect, _reconnectDelay);
 }
+
+// A network drop (e.g. the phone switching SIM/data network) marks us offline
+// in serverStatus; without this nothing re-checks the server once the
+// network is back, so the banner stuck on "Server unreachable" until some
+// unrelated request happened to succeed - forever on the login screen.
+serverStatus.subscribe(({ online, networkAvailable }) => {
+    if (!online && networkAvailable) startReconnectPolling();
+});
 
 export const setSessionExpiredCallback = (callback) => {
     sessionExpiredCallback = callback;
@@ -352,20 +361,25 @@ api.interceptors.response.use(
                     return Promise.reject(error);
                 }
 
-                const res = await axios.post(
-                    `${getBaseURL()}/auth/token/refresh/`,
-                    { refresh }
-                );
-
-                const newAccess = res.data.access;
-                const newRefresh = res.data.refresh || refresh;
-                const newSessionToken = res.data.session_token;
-
-                await secureSetItem('access', newAccess);
-                await secureSetItem('refresh', newRefresh);
-                if (newSessionToken) {
-                    await secureSetItem('session_token', newSessionToken);
+                // Refresh tokens are single-use (rotated + blacklisted), so
+                // requests that 401 together must share one refresh call; a
+                // second call with the same token is rejected and logged the
+                // user out.
+                if (!refreshInFlight) {
+                    refreshInFlight = (async () => {
+                        const res = await axios.post(
+                            `${getBaseURL()}/auth/token/refresh/`,
+                            { refresh }
+                        );
+                        await secureSetItem('access', res.data.access);
+                        await secureSetItem('refresh', res.data.refresh || refresh);
+                        if (res.data.session_token) {
+                            await secureSetItem('session_token', res.data.session_token);
+                        }
+                        return res.data.access;
+                    })().finally(() => { refreshInFlight = null; });
                 }
+                const newAccess = await refreshInFlight;
 
                 originalRequest.headers.Authorization = `Bearer ${newAccess}`;
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Modal, BackHandler } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography } from '../theme/tokens';
 import OfflineBanner from '../components/common/OfflineBanner';
@@ -11,6 +11,7 @@ import OfflineBanner from '../components/common/OfflineBanner';
 // Auth Screens
 import LoginScreen from '../screens/Auth/LoginScreen';
 import ChangePasswordScreen from '../screens/Auth/ChangePasswordScreen';
+import MpinScreen from '../screens/Auth/MpinScreen';
 
 // Employee Screens
 import EmployeeHomeScreen from '../screens/Employee/EmployeeHomeScreen';
@@ -288,6 +289,8 @@ const RootNavigator = () => {
                 </AuthStack.Navigator>
             </LegalGate>
         );
+    } else if (!auth.mpinReady) {
+        content = <MpinScreen mode="create" />;
     } else if (isSuperAdmin) {
         content = <LegalGate><SuperAdminStackNavigator /></LegalGate>;
     } else if (isAdmin) {
@@ -311,6 +314,15 @@ const RootNavigator = () => {
                 absolute positioning, so this ordering is what actually puts
                 it on top instead of behind the navigator's screens. */}
             <OfflineBanner />
+            {/* A Modal over the app rather than a replacement for it, so open
+                screens and half-filled forms survive the lock. Back exits. */}
+            <Modal
+                visible={isAuthenticated && auth.mpinReady && auth.locked}
+                animationType="none"
+                onRequestClose={() => BackHandler.exitApp()}
+            >
+                <MpinScreen mode="unlock" />
+            </Modal>
         </View>
     );
 };
