@@ -6,7 +6,7 @@ import { captureFieldActivityLocation } from '../hooks/useFieldActivityLocation'
 import GeocodingService from '../services/GeocodingService';
 import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
-import { enqueue, isTransientError, registerReplayer, generateTransactionId } from '../services/OfflineQueue';
+import { enqueue, isTransientError, registerReplayer, generateTransactionId, getQueue } from '../services/OfflineQueue';
 import { istDateStr } from '../utils/businessDate';
 
 const IS_DEV = __DEV__;
@@ -18,8 +18,15 @@ const GEOCODE_TIMEOUT_MS = 6000;
 // only ever flipped once the server actually confirms the punch, so the UI
 // never claims "you're punched in and tracking" for something that hasn't
 // landed yet; fetchTodayPunches() picks up the real state once it does.
+// Set by PunchProvider while mounted: a punch-in saved offline and synced
+// later must still show "punched in" and start route tracking, not wait for
+// the app to be reopened (UI plan S4). Module-level because the replayer
+// is registered here, outside any component.
+let onPunchInReplayed = null;
+
 registerReplayer('PUNCH_IN', async (payload) => {
-  await api.post('/attendance/punches/', payload);
+  const res = await api.post('/attendance/punches/', payload);
+  if (onPunchInReplayed) await onPunchInReplayed(res?.data, payload).catch(() => {});
 });
 
 // Same endpoint, same idempotency guard (AttendancePunchViewSet.create()'s
@@ -548,6 +555,19 @@ export const PunchProvider = ({ children }) => {
     await fetchTodayPunches();
     return { trackingWarning };
   }, [fetchTodayPunches]);
+
+  useEffect(() => {
+    onPunchInReplayed = async (responseData, payload) => {
+      // Only a punch-in for today with no punch-out queued after it still
+      // means "on shift now"; an older one is history, not a live session.
+      const eventDate = payload?.device_timestamp ? istDateStr(new Date(payload.device_timestamp)) : null;
+      if (eventDate !== istDateStr()) return;
+      const queue = await getQueue();
+      if (queue.some((q) => q.kind === 'PUNCH_OUT' && q.status !== 'SYNCED')) return;
+      await registerExternalPunchIn(responseData, payload);
+    };
+    return () => { onPunchInReplayed = null; };
+  }, [registerExternalPunchIn]);
 
   const punchOut = useCallback(async () => {
     setPunchState(STATES.PUNCHING_OUT);
