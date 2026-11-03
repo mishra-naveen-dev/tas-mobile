@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
@@ -6,6 +6,7 @@ import { View, StyleSheet, Modal, BackHandler } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { colors, typography } from '../theme/tokens';
 import OfflineBanner from '../components/common/OfflineBanner';
+import SplashScreen from '../components/SplashScreen';
 
 // Auth Screens
 // Auth Screens
@@ -276,6 +277,17 @@ const RootNavigator = () => {
     const isSuperAdmin = auth?.isSuperAdmin ?? false;
     const isAdmin = auth?.isAdmin ?? false;
 
+    // Coming back to a locked app plays the welcome animation before the
+    // MPIN, like a fresh open. On a fresh open App.jsx has just played it,
+    // so it isn't repeated.
+    const lockVisible = isAuthenticated && !!auth.mpinReady && !!auth.locked;
+    const [lockSplash, setLockSplash] = useState(false);
+    const wasLocked = useRef(lockVisible);
+    useEffect(() => {
+        if (lockVisible && !wasLocked.current) setLockSplash(true);
+        wasLocked.current = lockVisible;
+    }, [lockVisible]);
+
     let content;
     if (!isAuthenticated) {
         content = <AuthStackNavigator />;
@@ -319,11 +331,13 @@ const RootNavigator = () => {
             {/* A Modal over the app rather than a replacement for it, so open
                 screens and half-filled forms survive the lock. Back exits. */}
             <Modal
-                visible={isAuthenticated && auth.mpinReady && auth.locked}
+                visible={lockVisible}
                 animationType="none"
                 onRequestClose={() => BackHandler.exitApp()}
             >
-                <MpinScreen mode="unlock" />
+                {lockSplash
+                    ? <SplashScreen onComplete={() => setLockSplash(false)} />
+                    : <MpinScreen mode="unlock" />}
             </Modal>
         </View>
     );
