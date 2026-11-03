@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, NativeModules, PermissionsAndroid } from 'react-native';
+import { ensureBatteryExemption } from '../utils/batteryExemption';
 import Geolocation from 'react-native-geolocation-service';
 import api, { getBaseURL, getDeviceId } from '../api/api';
 import { secureGetItem, secureSetItem } from '../utils/secureStorage';
@@ -209,6 +210,7 @@ class LiveTrackingService {
           await getDeviceId(),
         );
         if (IS_DEV) console.log('[Live] Native capture started');
+        ensureBatteryExemption().catch(() => {});
       } catch (e) {
         if (IS_DEV) console.warn('[Live] Native start failed, falling back to JS timer:', e.message);
         this.usingJsFallback = true;

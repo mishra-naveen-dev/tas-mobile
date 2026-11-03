@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Ask once to be exempt from battery optimisation, so Doze/OEM battery
+         managers don't stop route tracking (TrackingModule.requestBatteryExemption) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Android 13+ requires runtime permission for the foreground-service notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Collection Visit photo capture (react-native-image-picker) -->
