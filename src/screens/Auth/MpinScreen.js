@@ -76,6 +76,7 @@ const MpinScreen = ({ mode }) => {
         <SafeAreaView style={styles.container}>
             <View style={styles.inner}>
                 <View style={styles.header}>
+                    <Text style={styles.company}>Namra Finance Limited</Text>
                     <Icon name="lock" size={36} color="#FFFFFF" />
                     {!creating && !!name && <Text style={styles.subtitle}>Welcome back, {name}</Text>}
                 </View>
@@ -120,6 +121,11 @@ const MpinScreen = ({ mode }) => {
                         </TouchableOpacity>
                     )}
                 </GlassCard>
+
+                <View style={styles.footer}>
+                    <Text style={styles.footerText}>© 2026 Namra Finance Limited. All rights reserved.</Text>
+                    <Text style={styles.footerText}>Developed by Naveen Mishra</Text>
+                </View>
             </View>
         </SafeAreaView>
     );
@@ -129,6 +135,15 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.primaryDark },
     inner: { flex: 1, justifyContent: 'center', padding: spacing.xl },
     header: { alignItems: 'center', marginBottom: spacing.xl },
+    company: {
+        fontSize: typography.sizes.xl,
+        fontWeight: typography.weights.bold,
+        color: '#FFFFFF',
+        letterSpacing: 1,
+        marginBottom: spacing.lg,
+    },
+    footer: { alignItems: 'center', marginTop: spacing.lg },
+    footerText: { fontSize: typography.sizes.xs, color: 'rgba(255, 255, 255, 0.8)', marginTop: spacing.xxs },
     subtitle: {
         fontSize: typography.sizes.md,
         color: 'rgba(255, 255, 255, 0.9)',
