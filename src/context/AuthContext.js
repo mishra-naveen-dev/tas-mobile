@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
+import { Alert, AppState } from 'react-native';
+import { hasMpin, saveMpin, checkMpin, clearMpin, LOCK_AFTER_BACKGROUND_MS } from '../utils/mpin';
 import api, { setSessionExpiredCallback, resetSessionHandler, loadCustomBaseURL } from '../api/api';
 import { secureGetItem, secureSetItem, secureMultiRemove } from '../utils/secureStorage';
 import { parseApiError } from '../core/error/AppErrorHandler';
@@ -68,6 +69,11 @@ export const AuthProvider = ({ children }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [isInitialized, setIsInitialized] = useState(false);
     const [navigationRef, setNavigationRef] = useState(null);
+    // mpinReady: this user has set an MPIN on this device. locked: the MPIN
+    // screen covers the app (cold start, or back after 5+ min away).
+    const [mpinReady, setMpinReady] = useState(false);
+    const [locked, setLocked] = useState(false);
+    const backgroundedAt = useRef(null);
 
     const role = useMemo(() => user?.role || null, [user]);
 
@@ -123,7 +129,11 @@ export const AuthProvider = ({ children }) => {
 
                 if (storedUser) {
                     try {
-                        setUser(normalizeUser(JSON.parse(storedUser)));
+                        const restored = normalizeUser(JSON.parse(storedUser));
+                        setUser(restored);
+                        const ready = await hasMpin(restored?.id);
+                        setMpinReady(ready);
+                        setLocked(ready);
                     } catch {
                         setUser(null);
                     }
@@ -184,6 +194,8 @@ export const AuthProvider = ({ children }) => {
             if (userData) {
                 const normalized = normalizeUser(userData);
                 await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(normalized));
+                setMpinReady(await hasMpin(normalized?.id));
+                setLocked(false);  // the password was just entered
                 setUser(normalized);
             }
 
@@ -223,8 +235,49 @@ export const AuthProvider = ({ children }) => {
         setAccessToken(null);
         setRefreshToken(null);
         setUser(null);
+        setLocked(false);
         resetSessionHandler();
     }, []);
+
+    const createMpin = useCallback(async (pin) => {
+        await saveMpin(user?.id, pin);
+        setMpinReady(true);
+        setLocked(false);
+    }, [user]);
+
+    /** Wrong 5 times in a row (counted across restarts) → password login. */
+    const unlockWithMpin = useCallback(async (pin) => {
+        const res = await checkMpin(pin);
+        if (res.ok) {
+            setLocked(false);
+        } else if (res.attemptsLeft === 0) {
+            await clearMpin();
+            setMpinReady(false);
+            await logout();
+        }
+        return res;
+    }, [logout]);
+
+    const forgotMpin = useCallback(async () => {
+        await clearMpin();
+        setMpinReady(false);
+        await logout();
+    }, [logout]);
+
+    // Lock again when the app comes back after LOCK_AFTER_BACKGROUND_MS away.
+    // Background GPS tracking is native and keeps running while locked.
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (next) => {
+            if (next === 'background') {
+                backgroundedAt.current = Date.now();
+            } else if (next === 'active' && backgroundedAt.current) {
+                const away = Date.now() - backgroundedAt.current;
+                backgroundedAt.current = null;
+                if (mpinReady && accessToken && away >= LOCK_AFTER_BACKGROUND_MS) setLocked(true);
+            }
+        });
+        return () => sub.remove();
+    }, [mpinReady, accessToken]);
 
     // Handle session expiration - only once
     useEffect(() => {
@@ -303,7 +356,17 @@ export const AuthProvider = ({ children }) => {
         logout,
         updateUser,
         refreshUser,
+        mpinReady,
+        locked,
+        createMpin,
+        unlockWithMpin,
+        forgotMpin,
     }), [
+        mpinReady,
+        locked,
+        createMpin,
+        unlockWithMpin,
+        forgotMpin,
         user,
         role,
         accessToken,
@@ -357,6 +420,11 @@ export const useAuth = () => {
             logout: () => Promise.resolve(),
             updateUser: () => {},
             refreshUser: () => Promise.resolve(null),
+            mpinReady: false,
+            locked: false,
+            createMpin: () => Promise.resolve(),
+            unlockWithMpin: () => Promise.resolve({ ok: false, attemptsLeft: 0 }),
+            forgotMpin: () => Promise.resolve(),
         };
     }
 
