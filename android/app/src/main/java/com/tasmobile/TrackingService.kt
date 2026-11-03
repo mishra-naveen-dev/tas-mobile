@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.location.Location
 import android.net.ConnectivityManager
@@ -69,6 +70,16 @@ class TrackingService : Service() {
         const val ACTION_START_LIVE = "com.tasmobile.TRACKING_START_LIVE"
         const val ACTION_STOP = "com.tasmobile.TRACKING_STOP"
         const val ACTION_UPDATE_CONFIG = "com.tasmobile.TRACKING_UPDATE_CONFIG"
+        // Sent by BootReceiver; handled like the OS's own START_STICKY restart.
+        const val ACTION_RESUME_AFTER_BOOT = "com.tasmobile.TRACKING_RESUME_AFTER_BOOT"
+
+        /** A punched-in session was saved and hasn't gone stale, so a reboot should resume it. */
+        fun hasResumableSession(context: Context): Boolean {
+            val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            return p.getInt(EXTRA_SESSION_ID, -1) >= 0
+                && !p.getString(EXTRA_TOKEN, "").isNullOrEmpty()
+                && System.currentTimeMillis() - p.getLong(KEY_PERSISTED_AT, 0L) <= STALE_SESSION_MS
+        }
 
         const val EXTRA_BASE_URL = "base_url"
         const val EXTRA_TOKEN = "token"
@@ -250,7 +261,8 @@ class TrackingService : Service() {
             }
 
             // Null intent => the OS restarted us after the process was killed
-            // (START_STICKY). Restore the saved session/config and resume
+            // (START_STICKY); ACTION_RESUME_AFTER_BOOT => BootReceiver after a
+            // reboot (Fix Plan Part 2, A2). Restore the saved session/config and resume
             // capturing, and let the server know this happened - but only if
             // that session is recent. Without the staleness check, an
             // abandoned session (app swiped away mid-shift instead of a
@@ -272,7 +284,11 @@ class TrackingService : Service() {
                     if (startForegroundTracking()) {
                         startLocationUpdates()
                         registerNetworkCallback()
-                        postHeartbeat("SERVICE_RESTARTED", "TrackingService resumed after process restart (START_STICKY)")
+                        if (intent?.action == ACTION_RESUME_AFTER_BOOT) {
+                            postHeartbeat("SERVICE_RESTARTED_AFTER_BOOT", "TrackingService resumed after the phone restarted")
+                        } else {
+                            postHeartbeat("SERVICE_RESTARTED", "TrackingService resumed after process restart (START_STICKY)")
+                        }
                     } else {
                         // The OS refused to let this restart reach the foreground -
                         // tracking is genuinely stopped until the app itself is
