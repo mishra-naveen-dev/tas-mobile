@@ -193,11 +193,12 @@ const DailySummaryScreen = ({ navigation }) => {
             const punchParams = { date_from: dateStr, date_to: dateStr };
             if (adminMode) { /* keep unscoped — server returns all */ }
 
-            const [punchRes, liveRes, summaryRes, visitRes] = await Promise.allSettled([
+            const [punchRes, liveRes, summaryRes, visitRes, trackingRes] = await Promise.allSettled([
                 api.getPunchHistory(punchParams),
                 api.getLiveDailyRoute(liveParams),
                 api.getDailySummary({ date: dateStr }),
                 api.getVisitSummary({ date_from: dateStr, date_to: dateStr }),
+                api.getTrackingDailySummary({ date: dateStr }),
             ]);
 
             // ── Punch records ──────────────────────────────────────────────────
@@ -224,17 +225,16 @@ const DailySummaryScreen = ({ navigation }) => {
             // the Home card and both maps read. Never recomputed here from
             // the live route (that produced a different, noise-filtered but
             // non-road-matched figure that disagreed with the rest of the app).
-            if (summaryRes.status === 'fulfilled') {
-                setDuration(summaryRes.value?.data?.duration || null);
-                const trustedDistance = summaryRes.value?.data?.total_distance_today;
-                setLiveRoute(trustedDistance != null ? {
-                    distance: Number(trustedDistance),
-                    points:   routePointCount,
-                    sessions: routeSessionCount,
-                } : null);
-            } else {
-                setLiveRoute(null);
-            }
+            // Same endpoint and value as Home (Fix Plan 2.4). distance is null
+            // when GPS exists but no route could be measured: "—", never 0.
+            setDuration(summaryRes.status === 'fulfilled' ? (summaryRes.value?.data?.duration || null) : null);
+            const tracking = trackingRes.status === 'fulfilled' ? trackingRes.value?.data : null;
+            setLiveRoute(tracking && (tracking.distance || tracking.raw_points > 0) ? {
+                distance: tracking.distance?.kilometers ?? null,
+                dayStatus: tracking.day_status,
+                points:   routePointCount,
+                sessions: routeSessionCount,
+            } : null);
 
             // ── P2P-aware collection visits (VISIT rule's COLLECTION bucket:
             // P2P/NOT_PAID outcomes count, COLLECTED/PARTIALLY_COLLECTED don't) ──
@@ -387,8 +387,11 @@ const DailySummaryScreen = ({ navigation }) => {
                                 <KpiTile
                                     icon="navigation"
                                     label="Distance"
-                                    value={liveRoute ? `${liveRoute.distance} km` : '—'}
-                                    sub={liveRoute ? `${liveRoute.points} pts` : 'No GPS track'}
+                                    value={liveRoute?.distance != null ? `${liveRoute.distance} km` : '—'}
+                                    sub={!liveRoute ? 'No GPS track'
+                                        : liveRoute.distance == null
+                                            ? (liveRoute.dayStatus === 'NEEDS_REVIEW' ? 'Needs review' : 'Route pending')
+                                            : `${liveRoute.points} pts`}
                                     color="#7c3aed"
                                     bg="#F5F3FF"
                                 />
