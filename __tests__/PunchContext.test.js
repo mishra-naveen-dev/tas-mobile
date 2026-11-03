@@ -40,7 +40,7 @@ jest.mock('../src/services/LiveTrackingService', () => ({ attach: jest.fn(() => 
 jest.mock('../src/hooks/useFieldActivityLocation', () => ({ captureFieldActivityLocation: jest.fn() }));
 jest.mock('../src/services/OfflineQueue', () => ({
   enqueue: jest.fn(),
-  isNetworkError: jest.fn(() => false),
+  isTransientError: jest.fn(() => false),
   registerReplayer: jest.fn(),
   generateTransactionId: jest.fn(() => 'txn-test'),
 }));

@@ -15,7 +15,7 @@ import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
-import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
+import { enqueue, isTransientError, generateTransactionId } from '../../services/OfflineQueue';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
@@ -625,7 +625,7 @@ const EmployeePunchScreen = ({ navigation }) => {
       resetForm();
       Alert.alert('Success', successMessage);
     } catch (err) {
-      if (isNetworkError(err)) {
+      if (isTransientError(err)) {
         await enqueue('COLLECTION_VISIT', {
           collectionId,
           loanId: resolvedRecord?.loan_id || form.loan_id,

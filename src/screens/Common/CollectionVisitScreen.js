@@ -17,7 +17,7 @@ import { usePunch } from '../../context/PunchContext';
 import { useAuth } from '../../context/AuthContext';
 import { captureFieldActivityLocation } from '../../hooks/useFieldActivityLocation';
 import GeocodingService from '../../services/GeocodingService';
-import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
+import { enqueue, isTransientError, generateTransactionId } from '../../services/OfflineQueue';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 import { isPhone } from '../../common/helpers/validationHelpers';
 import { colors, typography, spacing } from '../../theme/tokens';
@@ -514,7 +514,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
         [{ text: 'OK', onPress: () => navigation.goBack() }],
       );
     } catch (err) {
-      if (isNetworkError(err)) {
+      if (isTransientError(err)) {
         await enqueue('COLLECTION_VISIT', {
           collectionId,
           loanId: record?.loan_id || loanId,

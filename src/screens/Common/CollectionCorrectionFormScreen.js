@@ -17,7 +17,7 @@ import {
 } from '../../services/PhotoCapture';
 import api from '../../api/api';
 import LocationService from '../../services/LocationService';
-import { enqueue, registerReplayer, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
+import { enqueue, registerReplayer, isTransientError, generateTransactionId } from '../../services/OfflineQueue';
 
 import { colors, typography, spacing } from '../../theme/tokens';
 
@@ -165,7 +165,7 @@ const CollectionCorrectionFormScreen = ({ navigation, route }) => {
                 ]);
             }
         } catch (err) {
-            if (isNetworkError(err)) {
+            if (isTransientError(err)) {
                 await enqueue('COLLECTION_CORRECTION', {
                     editMode,
                     correctionId: editMode ? correctionId : undefined,

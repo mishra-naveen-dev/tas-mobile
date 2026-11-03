@@ -6,7 +6,7 @@ import { captureFieldActivityLocation } from '../hooks/useFieldActivityLocation'
 import GeocodingService from '../services/GeocodingService';
 import LiveTrackingService from '../services/LiveTrackingService';
 import { parseApiError } from '../core/error/AppErrorHandler';
-import { enqueue, isNetworkError, registerReplayer, generateTransactionId } from '../services/OfflineQueue';
+import { enqueue, isTransientError, registerReplayer, generateTransactionId } from '../services/OfflineQueue';
 import { istDateStr } from '../utils/businessDate';
 
 const IS_DEV = __DEV__;
@@ -491,7 +491,7 @@ export const PunchProvider = ({ children }) => {
       return { success: true, data: res.data, trackingWarning };
     } catch (err) {
       if (IS_DEV) console.error('[Punch] Error:', err?.response?.data || err.message);
-      if (isNetworkError(err)) {
+      if (isTransientError(err)) {
         await enqueue('PUNCH_IN', payload);
         setPunchState(STATES.IDLE);
         setErrorMessage(null);
@@ -672,7 +672,7 @@ export const PunchProvider = ({ children }) => {
       return { success: true };
     } catch (err) {
       if (IS_DEV) console.error('[Punch] Punch out failed:', err?.response?.data || err.message);
-      if (isNetworkError(err) && payload) {
+      if (isTransientError(err) && payload) {
         await enqueue('PUNCH_OUT', payload);
         setIsActive(false);
         setPunchState(STATES.IDLE);
