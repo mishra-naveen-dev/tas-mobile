@@ -6,8 +6,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.location.Location
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -17,7 +21,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
@@ -64,6 +71,8 @@ class TrackingService : Service() {
     companion object {
         const val CHANNEL_ID = "tas_tracking"
         const val NOTIFICATION_ID = 1001
+        private const val ALERT_CHANNEL_ID = "tas_tracking_alerts"
+        private const val LOCATION_OFF_NOTIFICATION_ID = 1002
         const val ACTION_START = "com.tasmobile.TRACKING_START"
         const val ACTION_START_LIVE = "com.tasmobile.TRACKING_START_LIVE"
         const val ACTION_STOP = "com.tasmobile.TRACKING_STOP"
@@ -228,6 +237,7 @@ class TrackingService : Service() {
                 if (startForegroundTracking()) {
                     startLocationUpdates()
                     registerNetworkCallback()
+                    watchLocationSwitch()
                 }
             }
 
@@ -242,6 +252,7 @@ class TrackingService : Service() {
             ACTION_STOP -> {
                 stopLocationUpdates()
                 unregisterNetworkCallback()
+                unwatchLocationSwitch()
                 clearParams()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -271,6 +282,7 @@ class TrackingService : Service() {
                     if (startForegroundTracking()) {
                         startLocationUpdates()
                         registerNetworkCallback()
+                        watchLocationSwitch()
                         postHeartbeat("SERVICE_RESTARTED", "TrackingService resumed after process restart (START_STICKY)")
                     } else {
                         // The OS refused to let this restart reach the foreground -
@@ -413,6 +425,71 @@ class TrackingService : Service() {
             try { connectivityManager?.unregisterNetworkCallback(it) } catch (e: Exception) { }
         }
         networkCallback = null
+    }
+
+    // ---- location switched off by the officer (Fix Plan Part 2, A4) ----
+    //
+    // GPS_LOST above also fires indoors; this is the explicit "location
+    // services are off" state, which only the officer can fix - so tell
+    // them, and tell the server why the route has a hole.
+
+    private var locationSwitchReceiver: BroadcastReceiver? = null
+    private var locationWasOn: Boolean? = null
+
+    private fun watchLocationSwitch() {
+        if (locationSwitchReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) = onLocationSwitch()
+        }
+        ContextCompat.registerReceiver(
+            this, receiver, IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION),
+            ContextCompat.RECEIVER_NOT_EXPORTED,  // system broadcasts still arrive
+        )
+        locationSwitchReceiver = receiver
+        onLocationSwitch()  // already off at punch-in counts too
+    }
+
+    private fun unwatchLocationSwitch() {
+        locationSwitchReceiver?.let { try { unregisterReceiver(it) } catch (e: Exception) { } }
+        locationSwitchReceiver = null
+        locationWasOn = null
+        getSystemService(NotificationManager::class.java)?.cancel(LOCATION_OFF_NOTIFICATION_ID)
+    }
+
+    private fun onLocationSwitch() {
+        val lm = getSystemService(LocationManager::class.java) ?: return
+        val on = LocationManagerCompat.isLocationEnabled(lm)
+        if (on == locationWasOn) return
+        locationWasOn = on
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        if (on) {
+            postHeartbeat("LOCATION_ON", "Location services switched back on")
+            nm.cancel(LOCATION_OFF_NOTIFICATION_ID)
+            return
+        }
+        postHeartbeat("LOCATION_OFF", "Location services switched off on the phone")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(NotificationChannel(
+                ALERT_CHANNEL_ID, "Tracking alerts", NotificationManager.IMPORTANCE_HIGH,
+            ).apply { description = "When your route cannot be recorded" })
+        }
+        val openSettings = PendingIntent.getActivity(
+            this, 1, Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, ALERT_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        nm.notify(LOCATION_OFF_NOTIFICATION_ID, builder
+            .setContentTitle("Location is off")
+            .setContentText("Your travel is not being recorded. Tap to turn location on.")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentIntent(openSettings)
+            .setAutoCancel(true)
+            .build())
     }
 
     /** Add a fix to the buffer; upload a batch once it's full enough. */
@@ -827,6 +904,7 @@ class TrackingService : Service() {
     override fun onDestroy() {
         stopLocationUpdates()
         unregisterNetworkCallback()
+        unwatchLocationSwitch()
         super.onDestroy()
     }
 }
