@@ -16,6 +16,7 @@ jest.mock('../src/api/api', () => ({
   getBaseURL: () => 'https://example.test/api/v1',
 }));
 jest.mock('react-native-geolocation-service', () => ({}));
+jest.mock('../src/utils/batteryExemption', () => ({ ensureBatteryExemption: jest.fn(async () => {}) }));
 jest.mock('../src/utils/secureStorage', () => ({ secureGetItem: jest.fn() }));
 
 const api = require('../src/api/api').default;

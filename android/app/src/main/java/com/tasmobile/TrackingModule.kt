@@ -1,12 +1,16 @@
 package com.tasmobile
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -101,6 +105,30 @@ class TrackingModule(private val reactContext: ReactApplicationContext) :
         } catch (e: Exception) {
             // Malformed config JSON — service keeps its current/default intervals.
         }
+    }
+
+    /**
+     * Opens Android's "let this app ignore battery optimisation" dialog unless
+     * already exempt (Fix Plan Part 2, A1): Doze and OEM battery managers
+     * otherwise stop the tracker on long idle stretches. Resolves true when
+     * already exempt.
+     */
+    @ReactMethod
+    fun requestBatteryExemption(promise: Promise) {
+        val pkg = reactContext.packageName
+        if (reactContext.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(pkg) == true) {
+            promise.resolve(true)
+            return
+        }
+        try {
+            reactContext.startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$pkg"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        } catch (e: Exception) {
+            // Some OEM builds remove this screen; the JS guide still points to settings.
+        }
+        promise.resolve(false)
     }
 
     @ReactMethod
