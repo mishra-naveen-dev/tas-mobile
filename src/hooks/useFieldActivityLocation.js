@@ -98,7 +98,10 @@ export async function captureFieldActivityLocation() {
     gps_provider: location.gps_provider || location.provider || (location.locationSource === 'CACHED' ? 'cached' : 'gps'),
     provider: location.provider || (location.locationSource === 'CACHED' ? 'cached' : 'gps'),
     network_status: networkStatus,
-    device_timestamp: new Date(location.timestamp || Date.now()).toISOString(),
+    // The moment of the action (this runs when Punch/Save is tapped), not
+    // the fix time: a reused cached fix must not back-date the activity.
+    // captured_at below keeps when the fix itself was taken (Fix Plan 3.1).
+    device_timestamp: new Date().toISOString(),
     // Explicit audit trail per activity: own capture time + age in seconds,
     // so each of several same-spot activities carries its own timestamp even
     // when coordinates are almost identical — never reused from Activity 1.

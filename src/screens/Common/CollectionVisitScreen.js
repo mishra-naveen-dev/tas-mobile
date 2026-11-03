@@ -476,9 +476,9 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     return true;
   };
 
-  const buildFormData = (extra = {}, clientTransactionId) => buildCompleteVisitFormData({
+  const buildFormData = (extra = {}, clientTransactionId, savedLocation) => buildCompleteVisitFormData({
     form,
-    localLocation,
+    localLocation: savedLocation,
     customerName: record?.customer_name || customerName,
     customerAddress: record?.address || customerAddress,
     photos,
@@ -500,8 +500,9 @@ const CollectionVisitScreen = ({ navigation, route }) => {
     // live attempt below and the offline-queued retry, if it falls through
     // to that — see CollectionUpdate.client_transaction_id server-side.
     const clientTransactionId = generateTransactionId();
+    const savedLocation = { ...localLocation, saved_at: new Date().toISOString() };
     try {
-      const fd = buildFormData(extra, clientTransactionId);
+      const fd = buildFormData(extra, clientTransactionId, savedLocation);
       const res = await api.completeVisit(collectionId, fd);
       const { trackingWarning } = await registerExternalPunchIn(res.data, localLocation);
       const savedLoanId = record?.loan_id || loanId;
@@ -519,7 +520,7 @@ const CollectionVisitScreen = ({ navigation, route }) => {
           collectionId,
           loanId: record?.loan_id || loanId,
           form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
-          localLocation,
+          localLocation: savedLocation,
           customerName: record?.customer_name || customerName,
           customerAddress: record?.address || customerAddress,
           photos,

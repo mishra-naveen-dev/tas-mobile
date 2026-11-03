@@ -143,7 +143,15 @@ export const buildCompleteVisitFormData = ({
   put('mock_detection_method', localLocation.mock_detection_method);
   put('gps_provider', localLocation.gps_provider);
   put('network_status', localLocation.network_status);
-  put('device_timestamp', localLocation.device_timestamp);
+  // When Save was tapped (stamped once by the screen, carried unchanged into
+  // the offline queue), not when the GPS fix was taken - several visits
+  // from one cached fix must still carry their own times (Fix Plan 3.1).
+  // Visits queued by older builds have no saved_at and keep the fix time.
+  put('device_timestamp', localLocation.saved_at || localLocation.device_timestamp);
+  put('captured_at', localLocation.captured_at);
+  put('location_age_seconds', localLocation.saved_at && localLocation.captured_at
+    ? Math.max(0, Math.round((Date.parse(localLocation.saved_at) - Date.parse(localLocation.captured_at)) / 1000))
+    : localLocation.location_age_seconds);
   put('location_address', localLocation.address);
   put('location_source', localLocation.location_source);
 
