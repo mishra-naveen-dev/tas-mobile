@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationAvailability
@@ -309,10 +310,27 @@ class TrackingService : Service() {
 
     /** Config-driven, speed-adaptive interval (ms) for the NEXT location request —
      * classification happens after each fix in enqueue()/classifyAndReschedule(). */
+    // Battery saver throttles GPS and network anyway; asking for the normal
+    // rate only drains the battery for fixes Android won't deliver, so use
+    // the low-battery interval and tell the server why (Part 2, A5).
+    private var lastPowerSave: Boolean? = null
+
+    private fun isPowerSave(): Boolean {
+        val on = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+        if (on != lastPowerSave) {
+            if (lastPowerSave != null || on) {
+                postHeartbeat(if (on) "POWER_SAVE_ON" else "POWER_SAVE_OFF",
+                    if (on) "Battery saver on - tracking at the low-battery interval" else "Battery saver off")
+            }
+            lastPowerSave = on
+        }
+        return on
+    }
+
     private fun intervalForState(speedKmh: Double?): Long {
         val battery = batteryPercent()
         val seconds = when {
-            battery in 1..lowBatteryThresholdPct -> intervalLowBatteryS
+            battery in 1..lowBatteryThresholdPct || isPowerSave() -> intervalLowBatteryS
             speedKmh != null && speedKmh > MOVING_SPEED_KMH -> intervalMovingS
             speedKmh != null && speedKmh > WALKING_SPEED_KMH -> intervalWalkingS
             else -> intervalStationaryS
