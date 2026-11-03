@@ -601,10 +601,15 @@ const EmployeePunchScreen = ({ navigation }) => {
     // live attempt and the offline-queued retry (if it falls through to
     // that) — see CollectionUpdate.client_transaction_id server-side.
     const clientTransactionId = generateTransactionId();
+    const savedLocation = {
+      ...localLocation,
+      address: localLocation.address || localLocation.current_address,
+      saved_at: new Date().toISOString(),
+    };
     try {
       const fd = buildCompleteVisitFormData({
         form,
-        localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+        localLocation: savedLocation,
         customerName: resolvedRecord?.customer_name || form.customer_name,
         customerAddress: resolvedRecord?.address,
         photos,
@@ -630,7 +635,7 @@ const EmployeePunchScreen = ({ navigation }) => {
           collectionId,
           loanId: resolvedRecord?.loan_id || form.loan_id,
           form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
-          localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+          localLocation: savedLocation,
           customerName: resolvedRecord?.customer_name || form.customer_name,
           customerAddress: resolvedRecord?.address,
           photos,
