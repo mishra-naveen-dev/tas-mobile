@@ -98,7 +98,9 @@ describe('OfflineQueue', () => {
     const queue = await Q.getQueue();
     expect(queue).toHaveLength(1);
     expect(queue[0].status).toBe('RETRY_PENDING');
-    expect(queue[0].attempts).toBe(1);
+    // S1: no answer from the server is not an attempt; only the retry count moves.
+    expect(queue[0].attempts).toBe(0);
+    expect(queue[0].networkRetries).toBe(1);
     expect(queue[0].nextRetryAt).toBeGreaterThan(Date.now());
   });
 
@@ -143,9 +145,49 @@ describe('OfflineQueue', () => {
     expect(after[0].attempts).toBe(attemptsBefore);
   });
 
-  test('exhausting MAX_ATTEMPTS on a retryable error eventually dead-letters it too', async () => {
+  test('network failures never dead-letter: 12 in a row (limit is 8) still leave it RETRY_PENDING (S1)', async () => {
     const Q = loadFreshQueue();
     Q.registerReplayer('COLLECTION_VISIT', async () => { throw networkError(); });
+    await Q.enqueue('COLLECTION_VISIT', { collectionId: 1 });
+    for (let i = 0; i < 12; i += 1) {
+      const queue = await Q.getQueue();
+      if (queue[0]) queue[0].nextRetryAt = 0;
+      // eslint-disable-next-line no-await-in-loop
+      await Q.processQueue();
+    }
+    const queue = await Q.getQueue();
+    expect(queue[0].status).toBe('RETRY_PENDING');
+    expect(queue[0].attempts).toBe(0);
+    // Backoff stays capped at 30 min (+ jitter) however long the outage.
+    expect(queue[0].nextRetryAt - Date.now()).toBeLessThanOrEqual(30 * 60 * 1000 * 1.15 + 1000);
+  });
+
+  test('a device-pending 403 pauses the whole queue without using up attempts (S7)', async () => {
+    const Q = loadFreshQueue();
+    const seen = [];
+    Q.registerReplayer('COLLECTION_VISIT', async (p) => {
+      seen.push(p.collectionId);
+      throw httpError(403, { code: 'DEVICE_PENDING_APPROVAL' });
+    });
+    await Q.enqueue('COLLECTION_VISIT', { collectionId: 1 });
+    await Q.enqueue('COLLECTION_VISIT', { collectionId: 2 });
+    await Q.processQueue();
+    const queue = await Q.getQueue();
+    expect(seen).toEqual([1]); // stopped after the first; item 2 untouched
+    expect(queue.map((q) => [q.status, q.attempts])).toEqual([['RETRY_PENDING', 0], ['PENDING', 0]]);
+  });
+
+  test('isTransientError: queue at submit on no answer, 5xx, 408, 429; not on other 4xx (S2)', () => {
+    const Q = loadFreshQueue();
+    [networkError(), httpError(500), httpError(502), httpError(503), httpError(504), httpError(408), httpError(429)]
+      .forEach((e) => expect(Q.isTransientError(e)).toBe(true));
+    [httpError(400), httpError(403), httpError(404), httpError(409)]
+      .forEach((e) => expect(Q.isTransientError(e)).toBe(false));
+  });
+
+  test('exhausting MAX_ATTEMPTS on a retryable server error eventually dead-letters it too', async () => {
+    const Q = loadFreshQueue();
+    Q.registerReplayer('COLLECTION_VISIT', async () => { throw httpError(500); });
     await Q.enqueue('COLLECTION_VISIT', { collectionId: 1 });
 
     for (let i = 0; i < 8; i += 1) {

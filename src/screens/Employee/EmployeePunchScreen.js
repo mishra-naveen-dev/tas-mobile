@@ -15,7 +15,7 @@ import { isPhone } from '../../common/helpers/validationHelpers';
 import api from '../../api/api';
 import { colors, typography, spacing } from '../../theme/tokens';
 import VoiceNoteRecorder from '../../components/VoiceNoteRecorder';
-import { enqueue, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
+import { enqueue, isTransientError, generateTransactionId } from '../../services/OfflineQueue';
 import { parseApiError } from '../../core/error/AppErrorHandler';
 import {
   STATUS_OPTIONS, VISIT_TYPE_OPTIONS, DPD_BUCKET_OPTIONS, YES_NO_OPTIONS,
@@ -601,10 +601,15 @@ const EmployeePunchScreen = ({ navigation }) => {
     // live attempt and the offline-queued retry (if it falls through to
     // that) — see CollectionUpdate.client_transaction_id server-side.
     const clientTransactionId = generateTransactionId();
+    const savedLocation = {
+      ...localLocation,
+      address: localLocation.address || localLocation.current_address,
+      saved_at: new Date().toISOString(),
+    };
     try {
       const fd = buildCompleteVisitFormData({
         form,
-        localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+        localLocation: savedLocation,
         customerName: resolvedRecord?.customer_name || form.customer_name,
         customerAddress: resolvedRecord?.address,
         photos,
@@ -625,12 +630,12 @@ const EmployeePunchScreen = ({ navigation }) => {
       resetForm();
       Alert.alert('Success', successMessage);
     } catch (err) {
-      if (isNetworkError(err)) {
+      if (isTransientError(err)) {
         await enqueue('COLLECTION_VISIT', {
           collectionId,
           loanId: resolvedRecord?.loan_id || form.loan_id,
           form: { ...form, promise_date: form.promise_date ? form.promise_date.toISOString() : null },
-          localLocation: { ...localLocation, address: localLocation.address || localLocation.current_address },
+          localLocation: savedLocation,
           customerName: resolvedRecord?.customer_name || form.customer_name,
           customerAddress: resolvedRecord?.address,
           photos,

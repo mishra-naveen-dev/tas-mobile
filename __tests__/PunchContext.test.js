@@ -15,6 +15,7 @@ import { PunchProvider, usePunch } from '../src/context/PunchContext';
 import api from '../src/api/api';
 import LocationService from '../src/services/LocationService';
 import LiveTrackingService from '../src/services/LiveTrackingService';
+import { registerReplayer, getQueue } from '../src/services/OfflineQueue';
 
 jest.mock('../src/api/api', () => ({
   __esModule: true,
@@ -40,9 +41,10 @@ jest.mock('../src/services/LiveTrackingService', () => ({ attach: jest.fn(() => 
 jest.mock('../src/hooks/useFieldActivityLocation', () => ({ captureFieldActivityLocation: jest.fn() }));
 jest.mock('../src/services/OfflineQueue', () => ({
   enqueue: jest.fn(),
-  isNetworkError: jest.fn(() => false),
+  isTransientError: jest.fn(() => false),
   registerReplayer: jest.fn(),
   generateTransactionId: jest.fn(() => 'txn-test'),
+  getQueue: jest.fn(() => Promise.resolve([])),
 }));
 
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -208,5 +210,43 @@ describe('PunchContext punchIn tracking_warning passthrough', () => {
 
     expect(result.success).toBe(true);
     expect(result.trackingWarning).toBe('Tracking session could not be created. Please contact support.');
+  });
+});
+
+
+describe('a punch-in queued offline and synced later (UI plan S4)', () => {
+  // Captured before any clearAllMocks: registered once at module load.
+  const replayPunchIn = registerReplayer.mock.calls.find(([kind]) => kind === 'PUNCH_IN')[1];
+  const dayAgo = () => new Date(Date.now() - 26 * 3600 * 1000).toISOString();
+
+  const mountAndReplay = async (payload, queue = []) => {
+    api.get.mockResolvedValue({ data: [] });
+    api.getActiveLiveSession.mockResolvedValue({ data: { active: false } });
+    api.post.mockResolvedValue({ data: { live_session_id: 77, tracking_token: 'tok' } });
+    getQueue.mockResolvedValue(queue);
+    await act(async () => { create(<PunchProvider><></></PunchProvider>); });
+    await flush();
+    await act(async () => { await replayPunchIn(payload); });
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    api.getLastAutoClosure.mockResolvedValue({ data: { pending: false } });
+  });
+
+  test("today's punch-in starts route tracking once it syncs", async () => {
+    await mountAndReplay({ device_timestamp: new Date().toISOString() });
+    expect(LiveTrackingService.attach).toHaveBeenCalledWith(77, expect.objectContaining({ tracking_token: 'tok' }));
+  });
+
+  test("yesterday's punch-in only syncs; it is history, not today's shift", async () => {
+    await mountAndReplay({ device_timestamp: dayAgo() });
+    expect(api.post).toHaveBeenCalled();
+    expect(LiveTrackingService.attach).not.toHaveBeenCalled();
+  });
+
+  test('a punch-out queued after it means the shift already ended', async () => {
+    await mountAndReplay({ device_timestamp: new Date().toISOString() }, [{ kind: 'PUNCH_OUT', status: 'PENDING' }]);
+    expect(LiveTrackingService.attach).not.toHaveBeenCalled();
   });
 });

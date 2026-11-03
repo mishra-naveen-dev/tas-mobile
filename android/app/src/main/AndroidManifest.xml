@@ -7,6 +7,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Ask once to be exempt from battery optimisation, so Doze/OEM battery
+         managers don't stop route tracking (TrackingModule.requestBatteryExemption) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Resume tracking after a reboot mid-shift (BootReceiver) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Android 13+ requires runtime permission for the foreground-service notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Collection Visit photo capture (react-native-image-picker) -->
@@ -54,6 +59,17 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- BOOT_COMPLETED is sent only by the system, so exporting is safe. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <!-- Started by OfflineSyncWorker (WorkManager, NetworkType.CONNECTED
              constraint) to run the headless JS task that drains

@@ -17,7 +17,7 @@ import api from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import { colors, typography, spacing } from '../../theme/tokens';
 import GeocodingService from '../../services/GeocodingService';
-import { enqueue, registerReplayer, isNetworkError, generateTransactionId } from '../../services/OfflineQueue';
+import { enqueue, registerReplayer, isTransientError, generateTransactionId } from '../../services/OfflineQueue';
 
 // payload is already plain/JSON-safe (correction_date is a string, not a
 // Date) by the time it's built below, so it can be queued and replayed as-is.
@@ -357,7 +357,7 @@ const PunchCorrectionScreen = ({ navigation, route }) => {
                 ]);
             }
         } catch (err) {
-            if (!editMode && isNetworkError(err)) {
+            if (!editMode && isTransientError(err)) {
                 await enqueue('CORRECTION_REQUEST', payload);
                 Alert.alert(
                     'Saved — will sync automatically',

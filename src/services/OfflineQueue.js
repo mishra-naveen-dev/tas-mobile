@@ -59,9 +59,19 @@ export const QUEUE_STATUS = {
 // the "Pending Sync" section), short enough to never look like clutter.
 const SYNCED_PRUNE_DELAY_MS = 5 * 1000;
 
+// Counts only answers from the server; network failures retry forever (S1).
 const MAX_ATTEMPTS = 8;
 const BASE_BACKOFF_MS = 5 * 1000;
 const CAP_BACKOFF_MS = 30 * 60 * 1000;
+
+// Account-state answers (device awaiting approval, terms not accepted,
+// logged out) fail every item the same way until a person fixes them, so
+// they pause the whole queue instead of burning each item's attempts (S7).
+const PAUSE_403_CODES = new Set([
+  'DEVICE_PENDING_APPROVAL', 'LEGAL_ACKNOWLEDGEMENT_REQUIRED', 'DEVICE_NOT_BINDED',
+  'DEVICE_ID_REQUIRED', 'DEVICE_BLOCKED', 'DEVICE_REJECTED', 'USER_BLOCKED',
+  'ACCOUNT_BLOCKED_MULTI_DEVICE',
+]);
 
 let queue = null; // in-memory mirror, lazily hydrated from AsyncStorage
 let processing = false;
@@ -261,6 +271,19 @@ export function classifyError(err) {
   return 'permanent';
 }
 
+/** Worth queueing when a live submit fails (S2): no answer at all, or a
+ * gateway/overload answer during a deploy or restart. Replays carry a
+ * transaction id, so a 5xx after the server already saved it stays safe. */
+export function isTransientError(err) {
+  const status = err?.response?.status;
+  return isNetworkError(err) || status >= 500 || status === 408 || status === 429;
+}
+
+function pausesQueue(err) {
+  const status = err?.response?.status;
+  return status === 401 || (status === 403 && PAUSE_403_CODES.has(err.response.data?.code));
+}
+
 function backoffMs(attempts) {
   const raw = Math.min(BASE_BACKOFF_MS * 2 ** (attempts - 1), CAP_BACKOFF_MS);
   const jitter = 0.85 + Math.random() * 0.3; // spread out simultaneous retries a bit
@@ -366,16 +389,27 @@ export async function processQueue() {
         await persistNow();
         notify();
       } catch (err) {
-        item.attempts += 1;
         item.lastError = err?.response?.data?.error || err?.message || 'Sync failed';
         item.errorClass = classifyError(err);
+        if (pausesQueue(err)) {
+          item.status = QUEUE_STATUS.RETRY_PENDING;
+          item.nextRetryAt = 0; // retried on the next trigger (login, approval, app opened)
+          await persist();
+          notify();
+          break;
+        }
+        if (err?.response) {
+          item.attempts += 1;
+        } else {
+          item.networkRetries = (item.networkRetries || 0) + 1;
+        }
         if (item.errorClass === 'permanent' || item.attempts >= MAX_ATTEMPTS) {
           item.status = QUEUE_STATUS.FAILED;
           item.nextRetryAt = 0;
           failed.push(item);
         } else {
           item.status = QUEUE_STATUS.RETRY_PENDING;
-          item.nextRetryAt = Date.now() + backoffMs(item.attempts);
+          item.nextRetryAt = Date.now() + backoffMs(item.attempts + (item.networkRetries || 0));
         }
         blockedPartitions.add(item.partitionKey);
         await persist();

@@ -6,8 +6,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.location.Location
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -17,7 +21,11 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
@@ -64,10 +72,22 @@ class TrackingService : Service() {
     companion object {
         const val CHANNEL_ID = "tas_tracking"
         const val NOTIFICATION_ID = 1001
+        private const val ALERT_CHANNEL_ID = "tas_tracking_alerts"
+        private const val LOCATION_OFF_NOTIFICATION_ID = 1002
         const val ACTION_START = "com.tasmobile.TRACKING_START"
         const val ACTION_START_LIVE = "com.tasmobile.TRACKING_START_LIVE"
         const val ACTION_STOP = "com.tasmobile.TRACKING_STOP"
         const val ACTION_UPDATE_CONFIG = "com.tasmobile.TRACKING_UPDATE_CONFIG"
+        // Sent by BootReceiver; handled like the OS's own START_STICKY restart.
+        const val ACTION_RESUME_AFTER_BOOT = "com.tasmobile.TRACKING_RESUME_AFTER_BOOT"
+
+        /** A punched-in session was saved and hasn't gone stale, so a reboot should resume it. */
+        fun hasResumableSession(context: Context): Boolean {
+            val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            return p.getInt(EXTRA_SESSION_ID, -1) >= 0
+                && !p.getString(EXTRA_TOKEN, "").isNullOrEmpty()
+                && System.currentTimeMillis() - p.getLong(KEY_PERSISTED_AT, 0L) <= STALE_SESSION_MS
+        }
 
         const val EXTRA_BASE_URL = "base_url"
         const val EXTRA_TOKEN = "token"
@@ -115,7 +135,7 @@ class TrackingService : Service() {
         private const val MOVING_SPEED_KMH = 15.0
         private const val WALKING_SPEED_KMH = 3.0
 
-        const val BUFFER_CAP = 600              // drop oldest beyond this if server is down
+        const val BUFFER_CAP = 20_000           // ~2 days offline; drop oldest beyond this
 
         private const val PREFS = "tas_tracking_prefs"
         private const val KEY_SEQUENCE = "sequence_no"
@@ -162,15 +182,12 @@ class TrackingService : Service() {
     private var batchIntervalMs = DEFAULT_BATCH_UPLOAD_INTERVAL_S * 1000L
     private var offlineMaxBatchSize = DEFAULT_OFFLINE_MAX_BATCH_SIZE
 
-    // Buffer of captured fixes, uploaded in batches to keep server load low.
-    private val buffer = ArrayList<JSONObject>()
-    private val bufferLock = Any()
-    // flush() no longer clears `buffer` upfront (see flush() doc), which
-    // removed the implicit mutex that used to make a second concurrent call
-    // (periodic timer, network-restored callback, and the threshold check in
-    // addPoint() can all fire close together) harmlessly see an empty buffer
-    // and return. Without this, two overlapping flush() calls could both
-    // snapshot the same unconfirmed chunk and race each other removing it.
+    // Captured fixes waiting for upload, persisted in SQLite (see GpsBuffer)
+    // so they survive the process being killed while offline.
+    private lateinit var buffer: GpsBuffer
+    // The periodic timer, network-restored callback and the threshold check
+    // in enqueue() can all fire close together; without this, two
+    // overlapping flush() calls could send the same unconfirmed chunk twice.
     private val isFlushing = java.util.concurrent.atomic.AtomicBoolean(false)
 
     // Per-session sequence counter for the (session, sequence_no) idempotency
@@ -196,7 +213,8 @@ class TrackingService : Service() {
         super.onCreate()
         fused = LocationServices.getFusedLocationProviderClient(this)
         connectivityManager = getSystemService(ConnectivityManager::class.java)
-        restoreBuffer()
+        buffer = GpsBuffer(this)
+        migrateLegacyBuffer()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -208,17 +226,17 @@ class TrackingService : Service() {
                 token = intent.getStringExtra(EXTRA_TOKEN) ?: ""
                 deviceId = intent.getStringExtra(EXTRA_DEVICE_ID) ?: ""
                 val newSessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
-                if (newSessionId != sessionId) {
+                // A fresh process has sessionId -1; the app re-attaching to the
+                // same session after the OS killed us must keep its backlog.
+                val previousSessionId = if (sessionId >= 0) sessionId else prefs().getInt(EXTRA_SESSION_ID, -1)
+                if (newSessionId != previousSessionId) {
                     // A different tracking session. The sequence counter is
                     // scoped to (session, sequence_no) on the server, so it
                     // restarts; anything still buffered belongs to the previous
                     // session and is dropped rather than replayed into this one
                     // (which would splice two journeys into one route).
-                    synchronized(bufferLock) { if (buffer.isNotEmpty()) {
-                        Log.w(TAG, "Dropping ${buffer.size} buffered fix(es) from the previous session.")
-                        buffer.clear()
-                        persistBufferLocked()
-                    } }
+                    val dropped = buffer.clear()
+                    if (dropped > 0) Log.w(TAG, "Dropping $dropped buffered fix(es) from the previous session.")
                     synchronized(sequenceLock) { sequenceNo = 1 }
                     prefs().edit().putInt(KEY_SEQUENCE, 1).apply()
                 }
@@ -228,6 +246,7 @@ class TrackingService : Service() {
                 if (startForegroundTracking()) {
                     startLocationUpdates()
                     registerNetworkCallback()
+                    watchLocationSwitch()
                 }
             }
 
@@ -242,6 +261,10 @@ class TrackingService : Service() {
             ACTION_STOP -> {
                 stopLocationUpdates()
                 unregisterNetworkCallback()
+                unwatchLocationSwitch()
+                // clearParams() forgets the session id, so a leftover backlog
+                // could no longer be told apart from the next session's.
+                buffer.clear()
                 clearParams()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -249,7 +272,8 @@ class TrackingService : Service() {
             }
 
             // Null intent => the OS restarted us after the process was killed
-            // (START_STICKY). Restore the saved session/config and resume
+            // (START_STICKY); ACTION_RESUME_AFTER_BOOT => BootReceiver after a
+            // reboot (Fix Plan Part 2, A2). Restore the saved session/config and resume
             // capturing, and let the server know this happened - but only if
             // that session is recent. Without the staleness check, an
             // abandoned session (app swiped away mid-shift instead of a
@@ -271,7 +295,12 @@ class TrackingService : Service() {
                     if (startForegroundTracking()) {
                         startLocationUpdates()
                         registerNetworkCallback()
-                        postHeartbeat("SERVICE_RESTARTED", "TrackingService resumed after process restart (START_STICKY)")
+                        watchLocationSwitch()
+                        if (intent?.action == ACTION_RESUME_AFTER_BOOT) {
+                            postHeartbeat("SERVICE_RESTARTED_AFTER_BOOT", "TrackingService resumed after the phone restarted")
+                        } else {
+                            postHeartbeat("SERVICE_RESTARTED", "TrackingService resumed after process restart (START_STICKY)")
+                        }
                     } else {
                         // The OS refused to let this restart reach the foreground -
                         // tracking is genuinely stopped until the app itself is
@@ -309,10 +338,27 @@ class TrackingService : Service() {
 
     /** Config-driven, speed-adaptive interval (ms) for the NEXT location request —
      * classification happens after each fix in enqueue()/classifyAndReschedule(). */
+    // Battery saver throttles GPS and network anyway; asking for the normal
+    // rate only drains the battery for fixes Android won't deliver, so use
+    // the low-battery interval and tell the server why (Part 2, A5).
+    private var lastPowerSave: Boolean? = null
+
+    private fun isPowerSave(): Boolean {
+        val on = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+        if (on != lastPowerSave) {
+            if (lastPowerSave != null || on) {
+                postHeartbeat(if (on) "POWER_SAVE_ON" else "POWER_SAVE_OFF",
+                    if (on) "Battery saver on - tracking at the low-battery interval" else "Battery saver off")
+            }
+            lastPowerSave = on
+        }
+        return on
+    }
+
     private fun intervalForState(speedKmh: Double?): Long {
         val battery = batteryPercent()
         val seconds = when {
-            battery in 1..lowBatteryThresholdPct -> intervalLowBatteryS
+            battery in 1..lowBatteryThresholdPct || isPowerSave() -> intervalLowBatteryS
             speedKmh != null && speedKmh > MOVING_SPEED_KMH -> intervalMovingS
             speedKmh != null && speedKmh > WALKING_SPEED_KMH -> intervalWalkingS
             else -> intervalStationaryS
@@ -415,6 +461,71 @@ class TrackingService : Service() {
         networkCallback = null
     }
 
+    // ---- location switched off by the officer (Fix Plan Part 2, A4) ----
+    //
+    // GPS_LOST above also fires indoors; this is the explicit "location
+    // services are off" state, which only the officer can fix - so tell
+    // them, and tell the server why the route has a hole.
+
+    private var locationSwitchReceiver: BroadcastReceiver? = null
+    private var locationWasOn: Boolean? = null
+
+    private fun watchLocationSwitch() {
+        if (locationSwitchReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) = onLocationSwitch()
+        }
+        ContextCompat.registerReceiver(
+            this, receiver, IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION),
+            ContextCompat.RECEIVER_NOT_EXPORTED,  // system broadcasts still arrive
+        )
+        locationSwitchReceiver = receiver
+        onLocationSwitch()  // already off at punch-in counts too
+    }
+
+    private fun unwatchLocationSwitch() {
+        locationSwitchReceiver?.let { try { unregisterReceiver(it) } catch (e: Exception) { } }
+        locationSwitchReceiver = null
+        locationWasOn = null
+        getSystemService(NotificationManager::class.java)?.cancel(LOCATION_OFF_NOTIFICATION_ID)
+    }
+
+    private fun onLocationSwitch() {
+        val lm = getSystemService(LocationManager::class.java) ?: return
+        val on = LocationManagerCompat.isLocationEnabled(lm)
+        if (on == locationWasOn) return
+        locationWasOn = on
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        if (on) {
+            postHeartbeat("LOCATION_ON", "Location services switched back on")
+            nm.cancel(LOCATION_OFF_NOTIFICATION_ID)
+            return
+        }
+        postHeartbeat("LOCATION_OFF", "Location services switched off on the phone")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(NotificationChannel(
+                ALERT_CHANNEL_ID, "Tracking alerts", NotificationManager.IMPORTANCE_HIGH,
+            ).apply { description = "When your route cannot be recorded" })
+        }
+        val openSettings = PendingIntent.getActivity(
+            this, 1, Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, ALERT_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        nm.notify(LOCATION_OFF_NOTIFICATION_ID, builder
+            .setContentTitle("Location is off")
+            .setContentText("Your travel is not being recorded. Tap to turn location on.")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentIntent(openSettings)
+            .setAutoCancel(true)
+            .build())
+    }
+
     /** Add a fix to the buffer; upload a batch once it's full enough. */
     private fun enqueue(loc: Location) {
         if (sessionId < 0) return
@@ -443,23 +554,17 @@ class TrackingService : Service() {
             // stretch of the route and distort its distance.
             put("sequence", nextSequence())
         }
-        val shouldFlush: Boolean
-        synchronized(bufferLock) {
-            buffer.add(point)
-            // Overflow drops the OLDEST buffered fix, but never silently: the
-            // first fix of a new upload window has to start where the previous
-            // upload left off, or the route is drawn as if the employee jumped
-            // from the end of the last flush straight to here - a line across
-            // road nobody observed. See flush() for the boundary marker.
-            if (buffer.size > BUFFER_CAP) {
-                buffer.removeAt(0)
-                Log.w(TAG, "GPS buffer full (${BUFFER_CAP}); dropped the oldest unsent fix - " +
-                    "the route will show a gap there, which is honest: those fixes were never uploaded.")
-            }
-            persistBufferLocked()
-            shouldFlush = buffer.size >= batchMaxPoints
+        // Overflow drops the OLDEST buffered fix, but never silently: the
+        // route will show a gap there, which is honest - those fixes were
+        // never uploaded.
+        if (buffer.add(point.toString(), BUFFER_CAP) > 0) {
+            Log.w(TAG, "GPS buffer full ($BUFFER_CAP); dropped the oldest unsent fix.")
         }
-        if (shouldFlush) flush()
+        // Refreshed on every real fix, not just at punch-in, so a long but
+        // genuinely active shift (12+ hours is common for field employees) is
+        // never mistaken for an abandoned one (see STALE_SESSION_MS).
+        prefs().edit().putLong(KEY_PERSISTED_AT, System.currentTimeMillis()).apply()
+        if (buffer.count() >= batchMaxPoints) flush()
     }
 
     /**
@@ -490,29 +595,15 @@ class TrackingService : Service() {
         }
     }
 
-    /** POST all buffered fixes as one batch. Nothing is removed from `buffer`
-     * (or its persisted copy) until the server actually confirms it. */
+    /** POST all buffered fixes, oldest first. A fix only leaves `buffer` once
+     * a 2xx response confirms the server has it; treating "handed to the
+     * network" as "stored" let a process death mid-send lose data. */
     private fun flush() {
         if (baseUrl.isEmpty() || token.isEmpty() || sessionId < 0) return
         // Another flush() is already draining the buffer - let it finish
         // rather than racing it for the same unconfirmed chunk. It will pick
         // up whatever arrived since on its own next call.
         if (!isFlushing.compareAndSet(false, true)) return
-
-        val fullBatch: List<JSONObject>
-        synchronized(bufferLock) {
-            if (buffer.isEmpty()) {
-                isFlushing.set(false)
-                return
-            }
-            // Snapshot only - buffer is NOT cleared/removed from here. A
-            // point only leaves `buffer` (and its persisted copy) once a 2xx
-            // response confirms the server actually has it; treating
-            // "handed to the network" the same as "confirmed stored" was
-            // exactly the gap that let a process death mid-send lose data
-            // that looked like it had already been sent.
-            fullBatch = ArrayList(buffer)
-        }
 
         val url = baseUrl.trimEnd('/') + "/livetracking/points/"
         val authToken = token
@@ -525,18 +616,18 @@ class TrackingService : Service() {
         // instead of waiting one flush cycle per chunk. A chunk is only
         // removed from `buffer` after the server accepts it; on any failure
         // the untried remainder simply stays in `buffer` where it already
-        // was (same idempotency guarantee as before either way -
-        // client_point_id + sequence_no make a resend a safe no-op
+        // was (client_point_id + sequence_no make a resend a safe no-op
         // server-side, so re-attempting a chunk whose success/failure was
         // ambiguous, e.g. a timeout after the server actually wrote it, is
         // always safe).
         thread {
             try {
-                var remaining: List<JSONObject> = fullBatch
                 var chunkSize = offlineMaxBatchSize.coerceAtLeast(1)
 
-                while (remaining.isNotEmpty()) {
-                    val chunk = remaining.take(chunkSize)
+                while (true) {
+                    val rows = buffer.oldest(chunkSize)
+                    if (rows.isEmpty()) break
+                    val chunk = rows.map { JSONObject(it.second) }
                     val points = JSONArray()
                     for (p in chunk) points.put(p)
                     // A batch whose oldest point is well older than one normal
@@ -576,17 +667,8 @@ class TrackingService : Service() {
                                 try { noteServerMaxSequence(JSONObject(response).optInt("max_sequence", 0)) }
                                 catch (e: Exception) { /* response shape changed; keep local counter */ }
                             }
-                            remaining = remaining.drop(chunk.size)
-                            // Confirmed stored server-side - now safe to drop from
-                            // the real buffer and its persisted copy. Removing by
-                            // count off the front is correct because
-                            // addPoint()'s own overflow-drop is the only other
-                            // thing that touches buffer's front, and it runs
-                            // under the same lock.
-                            synchronized(bufferLock) {
-                                repeat(chunk.size) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
-                                persistBufferLocked()
-                            }
+                            // Confirmed stored server-side - now safe to drop.
+                            buffer.deleteUpTo(rows.last().first)
                         } else if (code == 400 && chunkSize > 1) {
                             // Even our configured chunk size is too large for this
                             // batch (e.g. a stale offline_max_batch_size) — halve
@@ -600,19 +682,7 @@ class TrackingService : Service() {
                         // Network error / 5xx / a 400 even at chunk size 1
                         // (malformed data, not a size problem) — stop this pass.
                         // Nothing to re-queue: whatever hasn't been confirmed
-                        // sent was never removed from `buffer` in the first
-                        // place. Only new points that arrived from addPoint()
-                        // during this attempt could have pushed it over
-                        // BUFFER_CAP, so just re-check that and stop here; it
-                        // retries on the next scheduled flush.
-                        synchronized(bufferLock) {
-                            if (buffer.size > BUFFER_CAP) {
-                                val overflow = buffer.size - BUFFER_CAP
-                                repeat(overflow) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
-                                Log.w(TAG, "GPS buffer overflowed during flush; dropped $overflow oldest unsent fix(es).")
-                                persistBufferLocked()
-                            }
-                        }
+                        // sent is still in `buffer`; retry on the next flush.
                         return@thread
                     } finally {
                         conn?.disconnect()
@@ -660,47 +730,20 @@ class TrackingService : Service() {
         }
     }
 
-    // ---- GPS buffer persistence (survive process death while offline) ----
-    //
-    // `buffer` used to be purely in-memory: if the OS killed this service's
-    // process (battery optimization, memory pressure, the
-    // ForegroundServiceStartNotAllowedException crash fixed elsewhere) while
-    // fixes were sitting unsent, every one of them was gone with no trace -
-    // not even a gap marker, since the points were never persisted anywhere
-    // to begin with. Writing the buffer to SharedPreferences on every
-    // mutation (same mechanism already used for params/sequence below) means
-    // a process restart reloads whatever was pending and resumes from there
-    // instead of silently losing it. Must be called while already holding
-    // bufferLock.
-    private fun persistBufferLocked() {
-        val arr = JSONArray()
-        for (p in buffer) arr.put(p)
-        // Also refreshes KEY_PERSISTED_AT (see STALE_SESSION_MS) on every real
-        // GPS fix, not just at session start - a long but genuinely active
-        // shift (12+ hours is common for field employees) must never be
-        // mistaken for an abandoned one just because persistParams() itself
-        // was only called once, at punch-in.
-        prefs().edit()
-            .putString(KEY_BUFFER, arr.toString())
-            .putLong(KEY_PERSISTED_AT, System.currentTimeMillis())
-            .apply()
-    }
+    // ---- one-time move of the old SharedPreferences buffer ----
 
-    private fun restoreBuffer() {
+    /** Builds up to 1.62 kept unsent fixes as one JSON string in prefs; move
+     * them into `buffer` once so an update installed while offline loses none. */
+    private fun migrateLegacyBuffer() {
         val raw = prefs().getString(KEY_BUFFER, null) ?: return
         try {
             val arr = JSONArray(raw)
-            synchronized(bufferLock) {
-                for (i in 0 until arr.length()) {
-                    buffer.add(arr.getJSONObject(i))
-                }
-            }
-            if (arr.length() > 0) {
-                Log.i(TAG, "Restored ${arr.length()} unsent GPS fix(es) buffered before the process died.")
-            }
+            for (i in 0 until arr.length()) buffer.add(arr.getJSONObject(i).toString(), BUFFER_CAP)
+            if (arr.length() > 0) Log.i(TAG, "Moved ${arr.length()} unsent GPS fix(es) into the SQLite buffer.")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to restore persisted GPS buffer - starting empty.", e)
+            Log.e(TAG, "Failed to read the old GPS buffer - dropping it.", e)
         }
+        prefs().edit().remove(KEY_BUFFER).apply()
     }
 
     // ---- params persistence (survive process death / START_STICKY restart) ----
@@ -827,6 +870,7 @@ class TrackingService : Service() {
     override fun onDestroy() {
         stopLocationUpdates()
         unregisterNetworkCallback()
+        unwatchLocationSwitch()
         super.onDestroy()
     }
 }
